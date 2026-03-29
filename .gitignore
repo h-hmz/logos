@@ -1,0 +1,18 @@
+# Secrets
+backend/.env
+
+# ADK
+backend/agents/.adk/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Go
+backend/logos.exe
+backend/logos
+
+# OS
+.DS_Store
+Thumbs.db
