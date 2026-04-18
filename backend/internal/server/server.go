@@ -158,6 +158,7 @@ type createDebateResponse struct {
 }
 
 func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
 	var req createDebateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -498,6 +499,7 @@ func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	defer r.Body.Close()
 	var req interjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -566,6 +568,7 @@ type suggestTopicResponse struct {
 }
 
 func (s *Server) suggestTopic(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
 	var req suggestTopicRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")

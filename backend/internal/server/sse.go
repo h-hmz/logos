@@ -4,6 +4,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -30,23 +31,30 @@ func newSSEWriter(w http.ResponseWriter) (*sseWriter, bool) {
 	return &sseWriter{w: w, flusher: f}, true
 }
 
+// sendEvent marshals payload and writes it as the named SSE event.
+// Marshal failures are logged; a best-effort fallback event is still sent so the
+// client observes the event boundary rather than silently stalling.
+func (s *sseWriter) sendEvent(event string, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("sse marshal %s: %v", event, err)
+		data = []byte(`{"error":"marshal failed"}`)
+	}
+	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data)
+	s.flusher.Flush()
+}
+
 // SendToken sends an SSE "token" event with a text chunk.
 func (s *sseWriter) SendToken(text string) {
-	data, _ := json.Marshal(map[string]string{"text": text})
-	fmt.Fprintf(s.w, "event: token\ndata: %s\n\n", data)
-	s.flusher.Flush()
+	s.sendEvent("token", map[string]string{"text": text})
 }
 
 // SendDone sends an SSE "done" event with the final JSON payload.
 func (s *sseWriter) SendDone(payload any) {
-	data, _ := json.Marshal(payload)
-	fmt.Fprintf(s.w, "event: done\ndata: %s\n\n", data)
-	s.flusher.Flush()
+	s.sendEvent("done", payload)
 }
 
 // SendError sends an SSE "error" event.
 func (s *sseWriter) SendError(msg string) {
-	data, _ := json.Marshal(map[string]string{"error": msg})
-	fmt.Fprintf(s.w, "event: error\ndata: %s\n\n", data)
-	s.flusher.Flush()
+	s.sendEvent("error", map[string]string{"error": msg})
 }
