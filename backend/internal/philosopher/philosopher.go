@@ -20,7 +20,10 @@ import (
 // Data holds the fields loaded from a philosopher YAML file.
 type Data struct {
 	Name             string `yaml:"name"              json:"name"`
-	School           string `yaml:"school"             json:"school"`
+	School           string `yaml:"school"            json:"school"`
+	Era              string `yaml:"era"               json:"era"`
+	Dates            string `yaml:"dates"             json:"dates"`
+	OneLiner         string `yaml:"one_liner"         json:"one_liner"`
 	Identity         string `yaml:"identity"`
 	KeyThinkers      string `yaml:"key_thinkers"`
 	EpistemicSources string `yaml:"epistemic_sources,omitempty"`

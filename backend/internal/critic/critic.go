@@ -42,7 +42,9 @@ func exchangeBlock(a, b philosopher.Data, numRounds int) string {
 	return strings.Join(lines, "\n")
 }
 
-// MakeCritic creates the critic agent that reviews the full debate.
+// MakeCritic creates the critic agent that reviews the full debate. The agent
+// emits a structured JSON object (schema below) so the frontend can render
+// it as a findings grid rather than free-form prose.
 func MakeCritic(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string, maxWords int) (agent.Agent, error) {
 	instruction := fmt.Sprintf(`You are the **Debate Critic**, an expert in logic, argumentation theory, and critical thinking.
 
@@ -55,24 +57,36 @@ You do NOT take sides. Evaluate the *quality of reasoning* across the full debat
 ## Full Debate Transcript
 %s
 
-## Your Analysis
+## Output Format — STRICT
+Return ONLY a JSON object (no prose, no markdown fences, no preamble). Use this exact schema:
 
-For **%s (%s)**:
-1. **Strongest argument**: Which of their points was most logically compelling and why?
-2. **Key weakness**: The most significant flaw or gap across their arguments.
-3. **Fallacies detected**: List any logical fallacies with the specific instance.
-4. **Challenge**: One pointed question they must address.
+{
+  "intro": "<one-sentence framing of the overall exchange>",
+  "debater_a": {
+    "name": %q,
+    "strongest": "<their most compelling point and why>",
+    "weakness": "<the most significant flaw or gap>",
+    "fallacies": [
+      { "name": "<fallacy name from the taxonomy above, or 'unargued premise'>", "instance": "<short quoted or paraphrased instance>" }
+    ],
+    "challenge": "<one pointed question they must address>"
+  },
+  "debater_b": {
+    "name": %q,
+    "strongest": "...",
+    "weakness": "...",
+    "fallacies": [ { "name": "...", "instance": "..." } ],
+    "challenge": "..."
+  },
+  "overall": "<one-paragraph assessment of the debate quality>"
+}
 
-For **%s (%s)**:
-1. **Strongest argument**: Which of their points was most logically compelling and why?
-2. **Key weakness**: The most significant flaw or gap across their arguments.
-3. **Fallacies detected**: List any logical fallacies with the specific instance.
-4. **Challenge**: One pointed question they must address.
-
-End with a one-paragraph overall assessment of the debate quality.
-Keep your response under %d words.
-`, FallacyTaxonomy, exchangeBlock(a, b, numRounds),
-		a.Name, a.School, b.Name, b.School, maxWords)
+Rules:
+- Empty fallacies list is allowed — use [].
+- Do NOT wrap the JSON in code fences.
+- Do NOT prepend or append any commentary.
+- Keep the total JSON under roughly %d words of content (excluding field names).
+`, FallacyTaxonomy, exchangeBlock(a, b, numRounds), a.Name, b.Name, maxWords)
 
 	m, err := modelcache.Get(ctx, modelID)
 	if err != nil {
@@ -81,7 +95,7 @@ Keep your response under %d words.
 
 	return llmagent.New(llmagent.Config{
 		Name:        "Critic",
-		Description: "Reviews the full debate for logical fallacies and reasoning quality.",
+		Description: "Reviews the full debate for logical fallacies and reasoning quality (JSON output).",
 		Model:       m,
 		Instruction: instruction,
 		OutputKey:   "critic_feedback",

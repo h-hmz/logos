@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -63,14 +64,23 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 // ── GET /philosophers ───────────────────────────────────────────────────────
 
 type philosopherItem struct {
-	Name   string `json:"name"`
-	School string `json:"school"`
+	Name     string `json:"name"`
+	School   string `json:"school"`
+	Era      string `json:"era,omitempty"`
+	Dates    string `json:"dates,omitempty"`
+	OneLiner string `json:"one_liner,omitempty"`
 }
 
 func (s *Server) listPhilosophers(w http.ResponseWriter, r *http.Request) {
 	items := make([]philosopherItem, len(s.philosophers))
 	for i, p := range s.philosophers {
-		items[i] = philosopherItem{Name: p.Name, School: p.School}
+		items[i] = philosopherItem{
+			Name:     p.Name,
+			School:   p.School,
+			Era:      p.Era,
+			Dates:    p.Dates,
+			OneLiner: p.OneLiner,
+		}
 	}
 	writeJSON(w, http.StatusOK, items)
 }
@@ -198,7 +208,9 @@ type turnResult struct {
 	Key               string `json:"key"`
 	Label             string `json:"label"`
 	Author            string `json:"author"`
+	Role              string `json:"role"`
 	Content           string `json:"content"`
+	Structured        any    `json:"structured,omitempty"`
 	StepIndex         int    `json:"step_index"`
 	TotalSteps        int    `json:"total_steps"`
 	Done              bool   `json:"done"`
@@ -206,6 +218,78 @@ type turnResult struct {
 	TurnOutputTokens  int    `json:"turn_output_tokens"`
 	TotalInputTokens  int    `json:"total_input_tokens"`
 	TotalOutputTokens int    `json:"total_output_tokens"`
+}
+
+// roleForStep maps a pipeline step key to the frontend-facing role label.
+// Matches the derivation in frontend/src/step-role.ts.
+func roleForStep(key string, a, b philosopher.Data) string {
+	switch key {
+	case "moderator_intro":
+		return "moderator"
+	case "critic_feedback":
+		return "critic"
+	case "final_verdict":
+		return "judge"
+	}
+	if strings.HasPrefix(key, philosopher.Key(a.Name)) {
+		return "a"
+	}
+	if strings.HasPrefix(key, philosopher.Key(b.Name)) {
+		return "b"
+	}
+	return "moderator"
+}
+
+// extractJSON strips common wrappers (```json … ``` fences, leading prose)
+// and returns the substring from the first '{' to the matching '}'. Returns
+// the empty string if no balanced object is found.
+func extractJSON(s string) string {
+	t := strings.TrimSpace(s)
+	if strings.HasPrefix(t, "```") {
+		// drop the opening fence line
+		if nl := strings.IndexByte(t, '\n'); nl >= 0 {
+			t = t[nl+1:]
+		}
+		if end := strings.LastIndex(t, "```"); end >= 0 {
+			t = t[:end]
+		}
+	}
+	start := strings.IndexByte(t, '{')
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	inStr := false
+	esc := false
+	for i := start; i < len(t); i++ {
+		c := t[i]
+		if inStr {
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return t[start : i+1]
+			}
+		}
+	}
+	return ""
 }
 
 func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
@@ -294,11 +378,27 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	stepIndex := ds.Current
 	ds.Current++
 
+	role := roleForStep(step.Key, ds.DebaterA, ds.DebaterB)
+
+	var structured any
+	if step.Key == "critic_feedback" || step.Key == "final_verdict" {
+		if raw := extractJSON(content); raw != "" {
+			var parsed any
+			if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+				structured = parsed
+			} else {
+				log.Printf("failed to parse %s JSON: %v", step.Key, err)
+			}
+		}
+	}
+
 	result := turnResult{
 		Key:               step.Key,
 		Label:             step.Label,
 		Author:            step.Agent.Name(),
+		Role:              role,
 		Content:           content,
+		Structured:        structured,
 		StepIndex:         stepIndex,
 		TotalSteps:        len(ds.Steps),
 		Done:              ds.Current >= len(ds.Steps),

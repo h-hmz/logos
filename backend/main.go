@@ -13,7 +13,7 @@ import (
 
 func main() {
 	// Resolve data directory — defaults to the directory containing the binary.
-	// When using "go run", the binary is in a tmp dir, so fall back to ".".
+	// When using "go run", the binary is in a tmp dir so fall back to ".".
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		exe, _ := os.Executable()
