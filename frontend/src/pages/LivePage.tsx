@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bust } from '../components/Bust'
+import { InlineMd } from '../components/InlineMd'
 import { TokenPill } from '../components/TokenPill'
 import {
   streamTurn,
@@ -428,7 +429,7 @@ function ModeratorCurtain({ text, streaming, meta, error }: CurtainProps) {
         <h2>Welcome to the agora.</h2>
       </div>
       <div className="body-text">
-        {text}
+        <InlineMd text={text} />
         {streaming && <span className="cursor">·</span>}
       </div>
       {error && <div className="live-error" style={{ marginTop: 12 }}>{error}</div>}
@@ -473,14 +474,14 @@ function CriticCurtain({ streaming, meta, error, finding, a, b }: CriticCurtainP
 function CriticBody({ finding, a, b }: { finding: CriticFinding; a: EnrichedPhilosopher; b: EnrichedPhilosopher }) {
   return (
     <div className="critic-body">
-      {finding.intro && <p className="t-lead">{finding.intro}</p>}
+      {finding.intro && <p className="t-lead"><InlineMd text={finding.intro} /></p>}
       <div className="critic-grid">
         <CriticSideCard who={a.name} initials={a.initials} side={finding.debater_a} />
         <CriticSideCard who={b.name} initials={b.initials} side={finding.debater_b} />
       </div>
       {finding.overall && (
         <p className="critic-overall" style={{ marginTop: 16, fontStyle: 'italic' }}>
-          {finding.overall}
+          <InlineMd text={finding.overall} />
         </p>
       )}
     </div>
@@ -506,13 +507,13 @@ function CriticSideCard({
       {side.strongest && (
         <div className="critic-row">
           <div className="k">Strongest</div>
-          <div className="v">{side.strongest}</div>
+          <div className="v"><InlineMd text={side.strongest} /></div>
         </div>
       )}
       {side.weakness && (
         <div className="critic-row">
           <div className="k">Weakness</div>
-          <div className="v">{side.weakness}</div>
+          <div className="v"><InlineMd text={side.weakness} /></div>
         </div>
       )}
       {side.fallacies && side.fallacies.length > 0 && (
@@ -532,7 +533,7 @@ function CriticSideCard({
         <div className="critic-row">
           <div className="k">Challenge</div>
           <div className="v" style={{ fontStyle: 'italic' }}>
-            &ldquo;{side.challenge}&rdquo;
+            &ldquo;<InlineMd text={side.challenge} />&rdquo;
           </div>
         </div>
       )}
@@ -584,7 +585,7 @@ function JudgeCurtain({ streaming, done, meta, error, verdict, a, b, onSeeVerdic
           )}
           {verdict.synthesis && (
             <p className="t-lead" style={{ marginTop: 8 }}>
-              {verdict.synthesis}
+              <InlineMd text={verdict.synthesis} />
             </p>
           )}
         </div>
@@ -649,7 +650,7 @@ function TurnBlock({ who, side, label, text, streaming, tokens, active, error }:
         <div className="body">
           {paragraphs.map((p, i) => (
             <p key={i} className={i === 0 ? 'drop' : ''}>
-              {p}
+              <InlineMd text={p} />
               {streaming && i === paragraphs.length - 1 && <span className="cursor">·</span>}
             </p>
           ))}

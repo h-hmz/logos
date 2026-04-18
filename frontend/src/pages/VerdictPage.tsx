@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bust } from '../components/Bust'
+import { InlineMd } from '../components/InlineMd'
 import type { DebateSession, JudgeVerdict, TurnResult } from '../api'
 import { enrich } from '../philosopher-meta'
 import { roleForLabel } from '../step-role'
@@ -140,7 +141,7 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
             <div className="section">
               <div className="hair">I</div>
               <h3>The verdict</h3>
-              <div className="verdict-article">{judgeTurn.content}</div>
+              <div className="verdict-article"><InlineMd text={judgeTurn.content} /></div>
             </div>
           )}
 
@@ -196,8 +197,8 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
               <ol className="clash-list">
                 {verdict.clashes.map((c, i) => (
                   <li key={i}>
-                    {c.title && <div className="clash-title">{c.title}</div>}
-                    {c.description && <div className="clash-desc">{c.description}</div>}
+                    {c.title && <div className="clash-title"><InlineMd text={c.title} /></div>}
+                    {c.description && <div className="clash-desc"><InlineMd text={c.description} /></div>}
                   </li>
                 ))}
               </ol>
@@ -220,7 +221,7 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
                         ? 'Both'
                         : 'Neither'}
                     </span>
-                    {s.description && <span className="shift-desc"> — {s.description}</span>}
+                    {s.description && <span className="shift-desc"> — <InlineMd text={s.description} /></span>}
                   </li>
                 ))}
               </ul>
@@ -243,7 +244,7 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
               </div>
               {verdict.ranking.note && (
                 <p className="verdict-article" style={{ marginTop: 10 }}>
-                  {verdict.ranking.note}
+                  <InlineMd text={verdict.ranking.note} />
                 </p>
               )}
             </div>
@@ -253,7 +254,7 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
             <div id="synthesis" className="section">
               <div className="hair">V</div>
               <h3>Synthesis</h3>
-              <p className="verdict-article drop">{verdict.synthesis}</p>
+              <p className="verdict-article drop"><InlineMd text={verdict.synthesis} /></p>
             </div>
           )}
 
@@ -275,7 +276,7 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
               </div>
               {verdict.confidence_note && (
                 <p style={{ marginTop: 10, fontStyle: 'italic', color: 'var(--ink-2)' }}>
-                  {verdict.confidence_note}
+                  <InlineMd text={verdict.confidence_note} />
                 </p>
               )}
             </div>
@@ -287,7 +288,7 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
               <h3>Open questions</h3>
               <ul className="open-list">
                 {verdict.open.map((q, i) => (
-                  <li key={i}>{q}</li>
+                  <li key={i}><InlineMd text={q} /></li>
                 ))}
               </ul>
             </div>
@@ -395,7 +396,7 @@ function PositionCard({
         <span className="t-sc">{initials}</span>
         <span className="name">{name ?? who}</span>
       </div>
-      {thesis && <p className="position-thesis">{thesis}</p>}
+      {thesis && <p className="position-thesis"><InlineMd text={thesis} /></p>}
     </div>
   )
 }
