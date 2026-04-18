@@ -19,15 +19,27 @@ export interface PhilosopherMeta {
 const HATCHES: Hatch[] = ['h-cross', 'h-diag', 'h-dots', 'h-horz']
 
 const META: Record<string, PhilosopherMeta> = {
+  'Confucius':          { era: 'Ancient',      dates: 'c. 551',  hatch: 'h-cross', oneliner: 'To govern well, first rectify names.' },
+  'Laozi':              { era: 'Ancient',      dates: 'c. 6c.',  hatch: 'h-dots',  oneliner: 'The Tao that can be named is not the eternal Tao.' },
+  'Socrates':           { era: 'Ancient',      dates: 'c. 470',  hatch: 'h-dots',  oneliner: 'The unexamined life is not worth living.' },
+  'Aristotle':          { era: 'Ancient',      dates: '384',     hatch: 'h-diag',  oneliner: 'We are what we repeatedly do; excellence is a habit, not an act.' },
+  'Epicurus':           { era: 'Ancient',      dates: '341',     hatch: 'h-horz',  oneliner: 'The highest pleasure is tranquility, not indulgence.' },
+  'Diogenes of Sinope': { era: 'Ancient',      dates: 'c. 412',  hatch: 'h-cross', oneliner: 'I am a citizen of the world — and convention is the enemy of virtue.' },
   'Marcus Aurelius':    { era: 'Ancient',      dates: 'c. 121',  hatch: 'h-horz',  oneliner: 'Virtue is the sole good; accept what you cannot govern.' },
   'Nagarjuna':          { era: 'Ancient',      dates: 'c. 150',  hatch: 'h-dots',  oneliner: 'Emptiness is not nothing — it is interdependence.' },
-  'Adi Shankara':       { era: 'Ancient',      dates: 'c. 700',  hatch: 'h-cross', oneliner: 'The self and the absolute are not two.' },
   'Thomas Aquinas':     { era: 'Medieval',     dates: '1225',    hatch: 'h-diag',  oneliner: 'Faith and reason, rightly understood, cannot conflict.' },
   'Al-Ghazali':         { era: 'Medieval',     dates: '1058',    hatch: 'h-cross', oneliner: 'The heart has reasons the intellect must then verify.' },
   'Ibn Rushd':          { era: 'Medieval',     dates: '1126',    hatch: 'h-diag',  oneliner: 'If Revelation and Reason disagree, re-read the former.' },
+  'Ibn Sina':           { era: 'Medieval',     dates: '980',     hatch: 'h-cross', oneliner: 'The soul knows itself directly — existence precedes every essence we can name.' },
+  'Ibn Khaldun':        { era: 'Medieval',     dates: '1332',    hatch: 'h-horz',  oneliner: 'Civilisations rise by solidarity and fall by luxury.' },
+  'Adam Smith':          { era: 'Modern',       dates: '1723',    hatch: 'h-dots',  oneliner: 'Not from the benevolence of the butcher do we expect our dinner, but from his self-interest.' },
+  'Immanuel Kant':       { era: 'Modern',       dates: '1724',    hatch: 'h-cross', oneliner: 'Act only on maxims you could will to be universal law.' },
+  'Friedrich Nietzsche': { era: 'Modern',       dates: '1844',    hatch: 'h-diag',  oneliner: 'God is dead — and we have killed him.' },
+  'B.R. Ambedkar':      { era: 'Modern',       dates: '1891',    hatch: 'h-horz',  oneliner: 'Caste is not a division of labour — it is a division of labourers, graded by contempt.' },
   'Karl Marx':          { era: 'Modern',       dates: '1818',    hatch: 'h-horz',  oneliner: 'All history is the history of class struggle.' },
   'John Stuart Mill':   { era: 'Modern',       dates: '1806',    hatch: 'h-dots',  oneliner: 'Over himself, over his own body and mind, the individual is sovereign.' },
   'Simone de Beauvoir': { era: 'Modern',       dates: '1908',    hatch: 'h-diag',  oneliner: 'One is not born, but becomes, a woman.' },
+  'Frantz Fanon':       { era: 'Contemporary', dates: '1925',    hatch: 'h-diag',  oneliner: 'The colonised man liberates himself by any means necessary.' },
 }
 
 function hashCode(s: string): number {
@@ -61,7 +73,7 @@ export interface EnrichedPhilosopher extends PhilosopherMeta {
 }
 
 export function avatarFor(name: string): string {
-  const slug = name.toLowerCase().replace(/[\s-]+/g, '_')
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
   return `/avatars/${slug}.jpg`
 }
 

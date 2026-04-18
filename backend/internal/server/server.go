@@ -338,9 +338,14 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	runCfg := agent.RunConfig{}
+	if sse {
+		runCfg.StreamingMode = agent.StreamingModeSSE
+	}
+
 	var content string
 	var turnInput, turnOutput int
-	for event, err := range rn.Run(ctx, "web", ds.SessionID, msg, agent.RunConfig{}) {
+	for event, err := range rn.Run(ctx, "web", ds.SessionID, msg, runCfg) {
 		if err != nil {
 			errMsg := fmt.Sprintf("runner error: %v", err)
 			log.Print(errMsg)
