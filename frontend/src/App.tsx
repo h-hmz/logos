@@ -7,6 +7,18 @@ import type { DebateSession, TurnResult } from './api'
 
 const DEBATE_STORAGE_KEY = (id: string) => `logos_debate_${id}`
 const TURNS_STORAGE_KEY = (id: string) => `logos_turns_${id}`
+const THEME_STORAGE_KEY = 'logos_theme'
+type Theme = 'light' | 'dark'
+
+function initialTheme(): Theme {
+  const attr = document.documentElement.getAttribute('data-theme')
+  if (attr === 'dark' || attr === 'light') return attr
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY)
+    if (stored === 'dark' || stored === 'light') return stored
+  } catch { /* noop */ }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 function parseHash(): Route {
   const h = window.location.hash.replace(/^#/, '')
@@ -27,6 +39,16 @@ export default function App() {
   const [route, setRoute] = useState<Route>(() => parseHash())
   const [debate, setDebate] = useState<DebateSession | null>(null)
   const [turns, setTurns] = useState<Record<number, TurnResult>>({})
+  const [theme, setTheme] = useState<Theme>(() => initialTheme())
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem(THEME_STORAGE_KEY, theme) } catch { /* noop */ }
+  }, [theme])
+
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === 'light' ? 'dark' : 'light'))
+  }, [])
 
   const navigate = useCallback((r: Route) => {
     window.location.hash = hashFor(r)
@@ -99,7 +121,7 @@ export default function App() {
   const debateId = debate?.id
   return (
     <div className="app">
-      <Masthead route={route} debateId={debateId} navigate={navigate} />
+      <Masthead route={route} debateId={debateId} navigate={navigate} theme={theme} onToggleTheme={toggleTheme} />
       {content}
     </div>
   )

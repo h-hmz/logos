@@ -7,9 +7,11 @@ interface MastheadProps {
   route: Route
   debateId?: string
   navigate: (r: Route) => void
+  theme: 'light' | 'dark'
+  onToggleTheme: () => void
 }
 
-export function Masthead({ route, debateId, navigate }: MastheadProps) {
+export function Masthead({ route, debateId, navigate, theme, onToggleTheme }: MastheadProps) {
   const page = route.page
   const liveHref = debateId ? { page: 'live' as const, id: debateId } : null
   const verdictHref = debateId ? { page: 'verdict' as const, id: debateId } : null
@@ -52,6 +54,15 @@ export function Masthead({ route, debateId, navigate }: MastheadProps) {
         >
           Verdict
         </a>
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={onToggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Light' : 'Dark'}
+        >
+          {theme === 'dark' ? '☉' : '☾'}
+        </button>
       </nav>
     </header>
   )
