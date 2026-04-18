@@ -110,6 +110,20 @@ export async function createDebate(params: CreateDebateParams): Promise<DebateSe
   return res.json()
 }
 
+export async function suggestTopics(debaterA: string, debaterB: string): Promise<string[]> {
+  const res = await fetch('/suggest-topic', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ debater_a: debaterA, debater_b: debaterB }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
+    throw new Error(err.detail ?? 'Failed to suggest topics')
+  }
+  const data = await res.json()
+  return (data.topics ?? []) as string[]
+}
+
 export async function nextTurn(debateId: string): Promise<TurnResult> {
   const res = await fetch(`/debates/${debateId}/next`, { method: 'POST' })
   if (!res.ok) {

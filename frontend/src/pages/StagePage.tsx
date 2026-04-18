@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bust } from '../components/Bust'
 import { RuleOrnament } from '../components/RuleOrnament'
-import { createDebate, fetchModels, fetchPhilosophers, type DebateSession, type Model, type Philosopher } from '../api'
+import { createDebate, fetchModels, fetchPhilosophers, suggestTopics, type DebateSession, type Model, type Philosopher } from '../api'
 import { enrich, ERAS, type EnrichedPhilosopher } from '../philosopher-meta'
 
 interface Props {
@@ -34,6 +34,8 @@ export function StagePage({ onDebateCreated }: Props) {
   const [era, setEra] = useState<'All' | string>('All')
   const [slot, setSlot] = useState<'a' | 'b'>('a')
   const [loading, setLoading] = useState(false)
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -58,6 +60,25 @@ export function StagePage({ onDebateCreated }: Props) {
     if (pickB && pickB.name === p.name) { setPickB(null); setSlot('b'); return }
     if (slot === 'a') { setPickA(p); setSlot('b') } else { setPickB(p); setSlot('a') }
   }
+
+  const handleSuggest = async () => {
+    if (!pickA || !pickB || pickA.name === pickB.name || suggesting) return
+    setSuggesting(true)
+    setError(null)
+    try {
+      const topics = await suggestTopics(pickA.name, pickB.name)
+      setSuggestedTopics(topics)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unknown error')
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
+  // Clear pairing-specific suggestions when either corner changes.
+  useEffect(() => {
+    setSuggestedTopics([])
+  }, [pickA?.name, pickB?.name])
 
   const handleBegin = async () => {
     if (!canBegin || !pickA || !pickB) return
@@ -123,17 +144,39 @@ export function StagePage({ onDebateCreated }: Props) {
               placeholder="e.g. Is capitalism inevitable?"
               autoFocus
             />
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-              {SUGGESTED_TOPICS.map((t) => (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
+              {(suggestedTopics.length > 0 ? suggestedTopics : SUGGESTED_TOPICS).map((t) => (
                 <button
                   key={t}
                   type="button"
                   className="chip"
-                  onClick={() => { if (!topic.trim()) setTopic(t) }}
+                  onClick={() => setTopic(t)}
                 >
                   {t}
                 </button>
               ))}
+              {pickA && pickB && pickA.name !== pickB.name && (
+                <button
+                  type="button"
+                  className="chip"
+                  onClick={handleSuggest}
+                  disabled={suggesting}
+                  style={{
+                    fontStyle: 'italic',
+                    textTransform: 'none',
+                    letterSpacing: '0.02em',
+                    color: 'var(--accent-ink)',
+                    borderStyle: 'dashed',
+                  }}
+                  title={`Propose topics for ${pickA.name} vs. ${pickB.name}`}
+                >
+                  {suggesting
+                    ? 'thinking…'
+                    : suggestedTopics.length > 0
+                    ? 'suggest again →'
+                    : 'suggest for this pairing →'}
+                </button>
+              )}
             </div>
 
             <div className="corners" style={{ marginTop: 22 }}>

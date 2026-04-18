@@ -8,6 +8,7 @@ export default defineConfig({
       '/models': 'http://localhost:8000',
       '/philosophers': 'http://localhost:8000',
       '/debates': 'http://localhost:8000',
+      '/suggest-topic': 'http://localhost:8000',
     },
   },
 })
