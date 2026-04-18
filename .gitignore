@@ -16,3 +16,6 @@ backend/logos
 # OS
 .DS_Store
 Thumbs.db
+
+# Project roadmap
+ROADMAP.md

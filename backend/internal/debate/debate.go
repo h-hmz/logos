@@ -35,8 +35,17 @@ type State struct {
 	Current           int
 	TotalInputTokens  int
 	TotalOutputTokens int
+	Interjections     []Interjection
 
-	Mu sync.Mutex // serializes /next calls within a debate
+	Mu sync.Mutex // serializes /next and /interject calls within a debate
+}
+
+// Interjection is a user-authored challenge injected between two pipeline steps.
+// It does not advance Current; it is consumed by the step at BeforeStepIndex.
+type Interjection struct {
+	Text            string `json:"text"`
+	BeforeStepIndex int    `json:"before_step_index"`
+	ConsumedByKey   string `json:"consumed_by_key,omitempty"`
 }
 
 // Store is a thread-safe in-memory store for active debates.
@@ -107,13 +116,14 @@ Keep under %d words. Be theatrical — this is a clash of worldviews.`,
 		}
 
 		agentA, err := philosopher.Make(ctx, philosopher.MakeOpts{
-			Data:           a,
-			AgentName:      fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			OutputKey:      fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			Situation:      roundSituation(r),
-			OpponentArgKey: bPrevKey,
-			ModelID:        modelID,
-			MaxWords:       maxWords,
+			Data:                a,
+			AgentName:           fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
+			OutputKey:           fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
+			Situation:           roundSituation(r),
+			OpponentArgKey:      bPrevKey,
+			ModelID:             modelID,
+			MaxWords:            maxWords,
+			IncludeInterjection: true,
 		})
 		if err != nil {
 			return nil, err
@@ -125,13 +135,14 @@ Keep under %d words. Be theatrical — this is a clash of worldviews.`,
 		})
 
 		agentB, err := philosopher.Make(ctx, philosopher.MakeOpts{
-			Data:           b,
-			AgentName:      fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
-			OutputKey:      fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
-			Situation:      fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
-			OpponentArgKey: fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			ModelID:        modelID,
-			MaxWords:       maxWords,
+			Data:                b,
+			AgentName:           fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
+			OutputKey:           fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
+			Situation:           fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
+			OpponentArgKey:      fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
+			ModelID:             modelID,
+			MaxWords:            maxWords,
+			IncludeInterjection: true,
 		})
 		if err != nil {
 			return nil, err

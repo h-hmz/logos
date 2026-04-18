@@ -1,10 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +23,42 @@ import (
 	"github.com/h-hmz/logos/internal/modelcache"
 	"github.com/h-hmz/logos/internal/philosopher"
 )
+
+var roundStepKeyRe = regexp.MustCompile(`_r\d+$`)
+
+const (
+	interjectionMaxLen = 800
+)
+
+// formatInterjection wraps user text into the session-state block the next
+// philosopher turn reads via {pending_interjection}. Empty text → empty string.
+func formatInterjection(text string) string {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"## Audience Challenge\nA member of the audience has raised the following point:\n\n> %s\n\nAddress this challenge directly and specifically before continuing your argument.",
+		strings.ReplaceAll(t, "\n", "\n> "),
+	)
+}
+
+// writeSessionState merges a state delta into the debate's session by appending
+// a synthetic event. The ADK applies Actions.StateDelta on AppendEvent.
+func writeSessionState(ctx context.Context, ds *debate.State, delta map[string]any) error {
+	getResp, err := ds.SessionService.Get(ctx, &session.GetRequest{
+		AppName:   "logos",
+		UserID:    "web",
+		SessionID: ds.SessionID,
+	})
+	if err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+	ev := session.NewEvent(uuid.NewString())
+	ev.Author = "system"
+	ev.Actions.StateDelta = delta
+	return ds.SessionService.AppendEvent(ctx, getResp.Session, ev)
+}
 
 // Server holds the shared state for the HTTP handlers.
 type Server struct {
@@ -53,6 +91,7 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry) *chi.Mux {
 	r.Get("/philosophers", s.listPhilosophers)
 	r.Post("/debates", s.createDebate)
 	r.Post("/debates/{debateID}/next", s.nextTurn)
+	r.Post("/debates/{debateID}/interject", s.interject)
 	r.Post("/suggest-topic", s.suggestTopic)
 
 	return r
@@ -172,7 +211,10 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 	createResp, err := svc.Create(ctx, &session.CreateRequest{
 		AppName: "logos",
 		UserID:  "web",
-		State:   map[string]any{"topic": req.Topic},
+		State: map[string]any{
+			"topic":                          req.Topic,
+			philosopher.InterjectionStateKey: "",
+		},
 	})
 	if err != nil {
 		log.Printf("session create error: %v", err)
@@ -386,6 +428,21 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	stepIndex := ds.Current
 	ds.Current++
 
+	// If an interjection was pending for this step, mark it consumed and clear
+	// the session-state key so the next philosopher doesn't re-address it.
+	for i := range ds.Interjections {
+		it := &ds.Interjections[i]
+		if it.BeforeStepIndex == stepIndex && it.ConsumedByKey == "" {
+			it.ConsumedByKey = step.Key
+			if err := writeSessionState(ctx, ds, map[string]any{
+				philosopher.InterjectionStateKey: "",
+			}); err != nil {
+				log.Printf("clear interjection state: %v", err)
+			}
+			break
+		}
+	}
+
 	role := roleForStep(step.Key, ds.DebaterA, ds.DebaterB)
 
 	var structured any
@@ -421,6 +478,80 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJSON(w, http.StatusOK, result)
 	}
+}
+
+// ── POST /debates/{debateID}/interject ──────────────────────────────────────
+
+type interjectRequest struct {
+	Text string `json:"text"`
+}
+
+type interjectResponse struct {
+	Interjection debate.Interjection `json:"interjection"`
+}
+
+func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
+	debateID := chi.URLParam(r, "debateID")
+	ds, ok := s.store.Get(debateID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Debate not found")
+		return
+	}
+
+	var req interjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "interjection text is empty")
+		return
+	}
+	if len(text) > interjectionMaxLen {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("interjection exceeds %d characters", interjectionMaxLen))
+		return
+	}
+
+	ds.Mu.Lock()
+	defer ds.Mu.Unlock()
+
+	if ds.Current >= len(ds.Steps) {
+		writeError(w, http.StatusBadRequest, "Debate is already complete")
+		return
+	}
+	if ds.Current == 0 {
+		writeError(w, http.StatusBadRequest, "Cannot interject before the moderator has spoken")
+		return
+	}
+	next := ds.Steps[ds.Current]
+	role := roleForStep(next.Key, ds.DebaterA, ds.DebaterB)
+	if (role != "a" && role != "b") || !roundStepKeyRe.MatchString(next.Key) {
+		writeError(w, http.StatusBadRequest, "Interjections are only allowed before a round turn")
+		return
+	}
+	for _, it := range ds.Interjections {
+		if it.BeforeStepIndex == ds.Current && it.ConsumedByKey == "" {
+			writeError(w, http.StatusBadRequest, "An interjection is already pending for this gap")
+			return
+		}
+	}
+
+	if err := writeSessionState(r.Context(), ds, map[string]any{
+		philosopher.InterjectionStateKey: formatInterjection(text),
+	}); err != nil {
+		log.Printf("interject: write session state: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to stage interjection")
+		return
+	}
+
+	it := debate.Interjection{
+		Text:            text,
+		BeforeStepIndex: ds.Current,
+	}
+	ds.Interjections = append(ds.Interjections, it)
+
+	writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})
 }
 
 // ── POST /suggest-topic ─────────────────────────────────────────────────────

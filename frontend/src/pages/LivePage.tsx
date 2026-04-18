@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Bust } from '../components/Bust'
 import { InlineMd } from '../components/InlineMd'
 import { TokenPill } from '../components/TokenPill'
 import {
+  interject,
   streamTurn,
   type CriticFinding,
   type DebateSession,
+  type Interjection,
   type JudgeVerdict,
   type TurnResult,
 } from '../api'
@@ -30,6 +32,15 @@ interface TurnBuffer {
 }
 
 const STORAGE_KEY = (id: string) => `logos_step_${id}`
+const INTERJECTIONS_KEY = (id: string) => `logos_interjections_${id}`
+const INTERJECTION_MAX_LEN = 800
+
+// An upcoming step accepts an interjection iff it's a philosopher round turn.
+// Round step keys look like "{name}_r{n}"; critic responses end in "_critic_response".
+const roundKeyRe = /_r\d+$/
+function stepAcceptsInterjection(stepKey: string): boolean {
+  return roundKeyRe.test(stepKey) && !stepKey.endsWith('_critic_response')
+}
 
 export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Props) {
   const a = useMemo(() => enrich(debate.debater_a), [debate.debater_a])
@@ -58,6 +69,17 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     return b
   })
   const [turnResults, setTurnResults] = useState<Record<number, TurnResult>>(initialTurns)
+  const [interjections, setInterjections] = useState<Record<number, Interjection>>(() => {
+    try {
+      const raw = localStorage.getItem(INTERJECTIONS_KEY(debate.id))
+      if (!raw) return {}
+      const parsed = JSON.parse(raw) as Interjection[]
+      const map: Record<number, Interjection> = {}
+      for (const it of parsed) map[it.before_step_index] = it
+      return map
+    } catch { return {} }
+  })
+  const [composerOpen, setComposerOpen] = useState(false)
   const [auto, setAuto] = useState(true)
   const [totalIn, setTotalIn] = useState(() => {
     let max = 0
@@ -74,6 +96,23 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY(debate.id), String(idx)) } catch { /* noop */ }
+  }, [idx, debate.id])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        INTERJECTIONS_KEY(debate.id),
+        JSON.stringify(Object.values(interjections)),
+      )
+    } catch { /* noop */ }
+  }, [interjections, debate.id])
+
+  const submitInterjection = useCallback(async (text: string) => {
+    const stepIndex = idx
+    const result = await interject(debate.id, text)
+    setInterjections((prev) => ({ ...prev, [stepIndex]: result }))
+    setAuto(false)
+    setComposerOpen(false)
   }, [idx, debate.id])
 
   const activeStep = debate.steps[idx]
@@ -238,21 +277,23 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
           const buf = buffers[i]
           const role = roleForLabel(step.label, nameA, nameB)
           const key = `step-${i}`
+          const interjection = interjections[i]
+          const audience = interjection ? (
+            <AudienceCurtain key={`interj-${i}`} text={interjection.text} />
+          ) : null
+          let body: JSX.Element
           if (role === 'moderator') {
-            return (
+            body = (
               <ModeratorCurtain
-                key={key}
                 text={buf.text}
                 streaming={buf.streaming && !buf.done}
                 error={buf.error}
                 meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
               />
             )
-          }
-          if (role === 'critic') {
-            return (
+          } else if (role === 'critic') {
+            body = (
               <CriticCurtain
-                key={key}
                 streaming={buf.streaming && !buf.done}
                 error={buf.error}
                 meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
@@ -261,11 +302,9 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 b={b}
               />
             )
-          }
-          if (role === 'judge') {
-            return (
+          } else if (role === 'judge') {
+            body = (
               <JudgeCurtain
-                key={key}
                 streaming={buf.streaming && !buf.done}
                 done={buf.done}
                 error={buf.error}
@@ -276,22 +315,32 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 onSeeVerdict={() => navigate({ page: 'verdict', id: debate.id })}
               />
             )
+          } else {
+            const who = role === 'a' ? a : b
+            body = (
+              <TurnBlock
+                who={who}
+                side={role}
+                label={trimmedLabel(step.label, nameA, nameB)}
+                text={buf.text}
+                streaming={buf.streaming && !buf.done}
+                tokens={buf.tokens}
+                active={i === idx - 1 || (i === idx && buf.streaming)}
+                error={buf.error}
+              />
+            )
           }
-          const who = role === 'a' ? a : b
           return (
-            <TurnBlock
-              key={key}
-              who={who}
-              side={role}
-              label={trimmedLabel(step.label, nameA, nameB)}
-              text={buf.text}
-              streaming={buf.streaming && !buf.done}
-              tokens={buf.tokens}
-              active={i === idx - 1 || (i === idx && buf.streaming)}
-              error={buf.error}
-            />
+            <Fragment key={key}>
+              {audience}
+              {body}
+            </Fragment>
           )
         })}
+        {/* Pending interjection not yet followed by a step (upcoming step hasn't started). */}
+        {interjections[idx] && !buffers[idx] && (
+          <AudienceCurtain text={interjections[idx].text} />
+        )}
 
         {idx >= debate.total_steps && (
           <div
@@ -310,6 +359,13 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         <div ref={bottomRef} />
       </section>
 
+      {composerOpen && (
+        <InterjectionComposer
+          onSubmit={submitInterjection}
+          onCancel={() => setComposerOpen(false)}
+        />
+      )}
+
       <NextBar
         debate={debate}
         a={a}
@@ -320,6 +376,15 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         onBack={back}
         onAdvance={advance}
         streaming={!!buffers[idx]?.streaming && !buffers[idx]?.done}
+        canInterject={
+          idx > 0 &&
+          idx < debate.total_steps &&
+          !buffers[idx]?.streaming &&
+          !interjections[idx] &&
+          !composerOpen &&
+          stepAcceptsInterjection(debate.steps[idx]?.key ?? '')
+        }
+        onInterject={() => setComposerOpen(true)}
       />
     </main>
   )
@@ -616,6 +681,98 @@ function JudgeCurtain({ streaming, done, meta, error, verdict, a, b, onSeeVerdic
   )
 }
 
+// ── Audience curtain ──────────────────────────────────────────────────────────
+
+function AudienceCurtain({ text }: { text: string }) {
+  return (
+    <div className="curtain audience">
+      <div className="title-row">
+        <div className="role">The Audience</div>
+        <h2>A voice from the crowd.</h2>
+      </div>
+      <div className="body-text" style={{ fontStyle: 'italic' }}>
+        <InlineMd text={text} />
+      </div>
+      <div className="curtain-meta">◆ Interjection</div>
+    </div>
+  )
+}
+
+// ── Interjection composer ─────────────────────────────────────────────────────
+
+interface InterjectionComposerProps {
+  onSubmit: (text: string) => Promise<void>
+  onCancel: () => void
+}
+
+function InterjectionComposer({ onSubmit, onCancel }: InterjectionComposerProps) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => { textareaRef.current?.focus() }, [])
+
+  const trimmed = text.trim()
+  const canSubmit = !busy && trimmed.length > 0 && trimmed.length <= INTERJECTION_MAX_LEN
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return
+    setBusy(true)
+    setError(null)
+    try {
+      await onSubmit(trimmed)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to submit')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="interjection-composer">
+      <div className="interjection-composer-inner">
+        <div className="t-sc" style={{ marginBottom: 6 }}>Your interjection</div>
+        <textarea
+          ref={textareaRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              handleSubmit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              onCancel()
+            }
+          }}
+          placeholder="Raise a question or a counter-argument. The next philosopher will address it directly."
+          rows={4}
+          disabled={busy}
+          maxLength={INTERJECTION_MAX_LEN + 50}
+        />
+        <div className="interjection-footer">
+          <span className={`counter ${trimmed.length > INTERJECTION_MAX_LEN ? 'over' : ''}`}>
+            {trimmed.length} / {INTERJECTION_MAX_LEN}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button type="button" className="btn ghost small" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn accent small"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+          >
+            {busy ? 'Submitting…' : 'Interject'}
+          </button>
+        </div>
+        {error && <div className="live-error" style={{ marginTop: 8 }}>{error}</div>}
+      </div>
+    </div>
+  )
+}
+
 // ── Philosopher turn block ────────────────────────────────────────────────────
 
 interface TurnBlockProps {
@@ -673,9 +830,11 @@ interface NextBarProps {
   onBack: () => void
   onAdvance: () => void
   streaming: boolean
+  canInterject: boolean
+  onInterject: () => void
 }
 
-function NextBar({ debate, a, b, idx, auto, setAuto, onBack, onAdvance, streaming }: NextBarProps) {
+function NextBar({ debate, a, b, idx, auto, setAuto, onBack, onAdvance, streaming, canInterject, onInterject }: NextBarProps) {
   const total = debate.total_steps
   const atEnd = idx >= total
   const step = debate.steps[Math.min(idx, total - 1)]
@@ -706,6 +865,15 @@ function NextBar({ debate, a, b, idx, auto, setAuto, onBack, onAdvance, streamin
             <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
             Auto-advance
           </label>
+          <button
+            type="button"
+            className="btn ghost small"
+            onClick={onInterject}
+            disabled={!canInterject}
+            title="Raise a question or counter-argument"
+          >
+            ⚡ Interject
+          </button>
           <button
             type="button"
             className="btn ghost small"

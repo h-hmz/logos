@@ -74,6 +74,12 @@ export interface TurnResult {
   total_output_tokens: number
 }
 
+export interface Interjection {
+  text: string
+  before_step_index: number
+  consumed_by_key?: string
+}
+
 export interface CreateDebateParams {
   topic: string
   debater_a: string
@@ -122,6 +128,20 @@ export async function suggestTopics(debaterA: string, debaterB: string): Promise
   }
   const data = await res.json()
   return (data.topics ?? []) as string[]
+}
+
+export async function interject(debateId: string, text: string): Promise<Interjection> {
+  const res = await fetch(`/debates/${debateId}/interject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
+    throw new Error(err.detail ?? 'Failed to interject')
+  }
+  const data = await res.json()
+  return data.interjection as Interjection
 }
 
 export async function nextTurn(debateId: string): Promise<TurnResult> {

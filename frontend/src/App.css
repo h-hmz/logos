@@ -411,6 +411,44 @@ button { font-family: inherit; }
 .critic-fallacies li::before { content: '·'; position: absolute; left: 0; color: var(--accent); }
 .critic-overall { color: #d9ccb0; max-width: 820px; }
 
+/* Audience curtain — user-authored interjections */
+.curtain.audience {
+  background: linear-gradient(180deg, #f3e9d2 0%, #e5d5aa 100%);
+  color: var(--ink-2);
+  border-color: var(--accent-2);
+  border-top: 2px solid var(--accent-2);
+  border-bottom: 2px solid var(--accent-2);
+}
+.curtain.audience .role { color: var(--accent-ink); }
+.curtain.audience h2 { color: var(--ink); }
+.curtain.audience .body-text { color: var(--ink-2); max-width: 780px; font-size: 19px; }
+.curtain.audience .curtain-meta { color: var(--accent-ink); }
+
+/* Interjection composer — floats above the next-bar */
+.interjection-composer {
+  position: fixed; bottom: 96px; left: 0; right: 0; z-index: 31;
+  padding: 0 48px; pointer-events: none;
+}
+.interjection-composer-inner {
+  max-width: 900px; margin: 0 auto; pointer-events: auto;
+  background: var(--panel); border: 1px solid var(--accent-2); padding: 16px 20px;
+  box-shadow: 0 10px 40px rgba(26,22,18,0.18);
+}
+.interjection-composer textarea {
+  width: 100%; box-sizing: border-box;
+  font-family: var(--serif); font-size: 16px; line-height: 1.55;
+  background: var(--bg-2); color: var(--ink);
+  border: 1px solid var(--ink); padding: 10px 12px; resize: vertical;
+}
+.interjection-composer textarea:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
+.interjection-footer {
+  display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap;
+}
+.interjection-footer .counter {
+  font-family: var(--mono); font-size: 11px; color: var(--ink-soft); letter-spacing: 0.08em;
+}
+.interjection-footer .counter.over { color: var(--accent); }
+
 /* Judge curtain preview (before the full verdict page) */
 .judge-preview { max-width: 820px; }
 .judge-winner { font-family: var(--serif-d); font-size: 22px; color: var(--accent-2); }
