@@ -152,10 +152,3 @@ the associated instruction templates) when only metadata is needed.
 - [backend/internal/server/server.go](../backend/internal/server/server.go) —
   handlers refactored around `repo.Get` → `Hydrate` → run → `repo.Update`.
 - [backend/main.go](../backend/main.go) — wires `NewMemoryRepo()`.
-
-## Follow-ups
-
-- ADR 0002 (planned): Firestore-backed `Repository` implementation and
-  deployment topology on Cloud Run.
-- Revisit if event-level history becomes a product need — at that point
-  reconsider implementing a custom `session.Service`.

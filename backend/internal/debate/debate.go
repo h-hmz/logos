@@ -34,9 +34,9 @@ type StepMeta struct {
 // Interjection is a user-authored challenge injected between two pipeline steps.
 // It does not advance Current; it is consumed by the step at BeforeStepIndex.
 type Interjection struct {
-	Text            string `json:"text"`
-	BeforeStepIndex int    `json:"before_step_index"`
-	ConsumedByKey   string `json:"consumed_by_key,omitempty"`
+	Text            string `json:"text"                      firestore:"text"`
+	BeforeStepIndex int    `json:"before_step_index"         firestore:"before_step_index"`
+	ConsumedByKey   string `json:"consumed_by_key,omitempty" firestore:"consumed_by_key,omitempty"`
 }
 
 // Persisted is the JSON-serializable state of a debate. It stores debater
@@ -44,20 +44,20 @@ type Interjection struct {
 // StepOutputs holds completed step content keyed by step key; used to seed a
 // fresh session on each subsequent request.
 type Persisted struct {
-	ID                  string            `json:"id"`
-	Topic               string            `json:"topic"`
-	DebaterAName        string            `json:"debater_a"`
-	DebaterBName        string            `json:"debater_b"`
-	NumRounds           int               `json:"num_rounds"`
-	ModelID             string            `json:"model_id"`
-	MaxWords            int               `json:"max_words"`
-	Current             int               `json:"current"`
-	TotalInputTokens    int               `json:"total_input_tokens"`
-	TotalOutputTokens   int               `json:"total_output_tokens"`
-	Interjections       []Interjection    `json:"interjections,omitempty"`
-	StepOutputs         map[string]string `json:"step_outputs,omitempty"`
-	PendingInterjection string            `json:"pending_interjection,omitempty"`
-	Version             int64             `json:"version"`
+	ID                  string            `json:"id"                          firestore:"id"`
+	Topic               string            `json:"topic"                       firestore:"topic"`
+	DebaterAName        string            `json:"debater_a"                   firestore:"debater_a"`
+	DebaterBName        string            `json:"debater_b"                   firestore:"debater_b"`
+	NumRounds           int               `json:"num_rounds"                  firestore:"num_rounds"`
+	ModelID             string            `json:"model_id"                    firestore:"model_id"`
+	MaxWords            int               `json:"max_words"                   firestore:"max_words"`
+	Current             int               `json:"current"                     firestore:"current"`
+	TotalInputTokens    int               `json:"total_input_tokens"          firestore:"total_input_tokens"`
+	TotalOutputTokens   int               `json:"total_output_tokens"         firestore:"total_output_tokens"`
+	Interjections       []Interjection    `json:"interjections,omitempty"     firestore:"interjections,omitempty"`
+	StepOutputs         map[string]string `json:"step_outputs,omitempty"      firestore:"step_outputs,omitempty"`
+	PendingInterjection string            `json:"pending_interjection,omitempty" firestore:"pending_interjection,omitempty"`
+	Version             int64             `json:"version"                     firestore:"version"`
 }
 
 // Clone returns a deep copy safe to mutate without affecting the original.

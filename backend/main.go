@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
@@ -38,7 +41,10 @@ func main() {
 	}
 	log.Printf("Loaded %d philosophers", len(philosophers))
 
-	repo := debate.NewMemoryRepo()
+	repo, err := buildRepo(context.Background())
+	if err != nil {
+		log.Fatalf("storage: %v", err)
+	}
 	router := server.New(philosophers, config.Models(), repo)
 
 	port := os.Getenv("PORT")
@@ -49,5 +55,40 @@ func main() {
 	log.Printf("Logos listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, router); err != nil {
 		log.Fatalf("server: %v", err)
+	}
+}
+
+// buildRepo selects the debate.Repository implementation from STORAGE_BACKEND.
+// Defaults to in-memory. STORAGE_BACKEND=firestore requires GOOGLE_CLOUD_PROJECT
+// and honors optional FIRESTORE_DATABASE (default "(default)") and
+// FIRESTORE_COLLECTION (default "debates").
+func buildRepo(ctx context.Context) (debate.Repository, error) {
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("STORAGE_BACKEND")))
+	switch backend {
+	case "", "memory":
+		log.Printf("storage: in-memory")
+		return debate.NewMemoryRepo(), nil
+	case "firestore":
+		projectID := config.Project()
+		if projectID == "" {
+			return nil, fmt.Errorf("STORAGE_BACKEND=firestore requires GOOGLE_CLOUD_PROJECT")
+		}
+		database := os.Getenv("FIRESTORE_DATABASE")
+		collection := os.Getenv("FIRESTORE_COLLECTION")
+		if collection == "" {
+			collection = "debates"
+		}
+		repo, err := debate.NewFirestoreRepo(ctx, projectID, database, collection)
+		if err != nil {
+			return nil, err
+		}
+		dbLabel := database
+		if dbLabel == "" {
+			dbLabel = "(default)"
+		}
+		log.Printf("storage: firestore project=%s database=%s collection=%s", projectID, dbLabel, collection)
+		return repo, nil
+	default:
+		return nil, fmt.Errorf("unknown STORAGE_BACKEND=%q (want memory|firestore)", backend)
 	}
 }
