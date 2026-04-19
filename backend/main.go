@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
@@ -16,6 +20,16 @@ import (
 )
 
 func main() {
+	if err := run(context.Background(), os.Stdout, os.Args); err != nil {
+		fmt.Fprintf(os.Stderr, "server error: %s\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, w io.Writer, args []string) error {
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	// Resolve data directory — defaults to the directory containing the binary.
 	// When using "go run", the binary is in a tmp dir so fall back to ".".
 	dataDir := os.Getenv("DATA_DIR")
@@ -32,18 +46,18 @@ func main() {
 	philDir := filepath.Join(dataDir, "agents", "philosophers")
 
 	if err := config.Load(envPath, modelsPath); err != nil {
-		log.Fatalf("config: %v", err)
+		return fmt.Errorf("config: %w", err)
 	}
 
 	philosophers, err := philosopher.LoadAll(philDir)
 	if err != nil {
-		log.Fatalf("philosophers: %v", err)
+		return fmt.Errorf("philosophers: %w", err)
 	}
 	log.Printf("Loaded %d philosophers", len(philosophers))
 
-	repo, err := buildRepo(context.Background())
+	repo, err := buildRepo(ctx)
 	if err != nil {
-		log.Fatalf("storage: %v", err)
+		return fmt.Errorf("storage: %w", err)
 	}
 	router := server.New(philosophers, config.Models(), repo)
 
@@ -52,10 +66,35 @@ func main() {
 		port = "8000"
 	}
 
-	log.Printf("Logos listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, router); err != nil {
-		log.Fatalf("server: %v", err)
+	httpServer := &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
 	}
+
+	srvErr := make(chan error, 1)
+
+	go func() {
+		log.Printf("Logos listening on %s", httpServer.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			srvErr <- err
+		}
+	}()
+
+	select {
+	case err := <-srvErr:
+		return fmt.Errorf("server startup failed: %w", err)
+	case <-ctx.Done():
+		log.Println("Interrupt signal received, initiating graceful shutdown...")
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("error during server shutdown: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // buildRepo selects the debate.Repository implementation from STORAGE_BACKEND.
