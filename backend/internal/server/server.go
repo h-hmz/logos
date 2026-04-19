@@ -1,13 +1,14 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -104,38 +105,28 @@ func formatInterjection(text string) string {
 	)
 }
 
-// writeSessionState merges a state delta into the debate's session by appending
-// a synthetic event. The ADK applies Actions.StateDelta on AppendEvent.
-func writeSessionState(ctx context.Context, ds *debate.State, delta map[string]any) error {
-	getResp, err := ds.SessionService.Get(ctx, &session.GetRequest{
-		AppName:   "logos",
-		UserID:    "web",
-		SessionID: ds.SessionID,
-	})
-	if err != nil {
-		return fmt.Errorf("get session: %w", err)
-	}
-	ev := session.NewEvent(uuid.NewString())
-	ev.Author = "system"
-	ev.Actions.StateDelta = delta
-	return ds.SessionService.AppendEvent(ctx, getResp.Session, ev)
-}
-
 // Server holds the shared state for the HTTP handlers.
 type Server struct {
 	philosophers []philosopher.Data
 	philMap      map[string]philosopher.Data // name → data
 	models       []config.ModelEntry
-	store        *debate.Store
+	repo         debate.Repository
+
+	// locks serializes concurrent /next and /interject calls for a given
+	// debate within this instance. Cross-instance safety would require
+	// optimistic concurrency via Persisted.Version at the repo layer.
+	locksMu sync.Mutex
+	locks   map[string]*sync.Mutex
 }
 
 // New creates a chi router with all endpoints registered.
-func New(philosophers []philosopher.Data, models []config.ModelEntry) *chi.Mux {
+func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debate.Repository) *chi.Mux {
 	s := &Server{
 		philosophers: philosophers,
 		philMap:      make(map[string]philosopher.Data, len(philosophers)),
 		models:       models,
-		store:        debate.NewStore(),
+		repo:         repo,
+		locks:        make(map[string]*sync.Mutex),
 	}
 	for _, p := range philosophers {
 		s.philMap[p.Name] = p
@@ -157,6 +148,26 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry) *chi.Mux {
 	r.Post("/suggest-topic", s.suggestTopic)
 
 	return r
+}
+
+// lockFor returns a per-debate mutex, creating it on first use.
+func (s *Server) lockFor(debateID string) *sync.Mutex {
+	s.locksMu.Lock()
+	defer s.locksMu.Unlock()
+	mu, ok := s.locks[debateID]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.locks[debateID] = mu
+	}
+	return mu
+}
+
+// debaters resolves the philosopher.Data pair referenced by a Persisted record.
+func (s *Server) debaters(p *debate.Persisted) (a, b philosopher.Data, ok bool) {
+	var okA, okB bool
+	a, okA = s.philMap[p.DebaterAName]
+	b, okB = s.philMap[p.DebaterBName]
+	return a, b, okA && okB
 }
 
 // ── GET /models ─────────────────────────────────────────────────────────────
@@ -262,50 +273,33 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-	steps, err := debate.BuildSteps(ctx, a, b, req.NumRounds, req.Model, req.MaxWords)
-	if err != nil {
-		log.Printf("BuildSteps error: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to build debate pipeline")
+	stepsMeta := debate.BuildStepMeta(a, b, req.NumRounds)
+
+	p := &debate.Persisted{
+		ID:           uuid.NewString(),
+		Topic:        req.Topic,
+		DebaterAName: a.Name,
+		DebaterBName: b.Name,
+		NumRounds:    req.NumRounds,
+		ModelID:      req.Model,
+		MaxWords:     req.MaxWords,
+		StepOutputs:  map[string]string{},
+	}
+	if err := s.repo.Create(r.Context(), p); err != nil {
+		log.Printf("repo create: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to create debate")
 		return
 	}
-
-	svc := session.InMemoryService()
-	createResp, err := svc.Create(ctx, &session.CreateRequest{
-		AppName: "logos",
-		UserID:  "web",
-		State: map[string]any{
-			"topic":                          req.Topic,
-			philosopher.InterjectionStateKey: "",
-		},
-	})
-	if err != nil {
-		log.Printf("session create error: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to create session")
-		return
-	}
-
-	debateID := uuid.NewString()
-	ds := &debate.State{
-		ID:             debateID,
-		Topic:          req.Topic,
-		DebaterA:       a,
-		DebaterB:       b,
-		Steps:          steps,
-		SessionService: svc,
-		SessionID:      createResp.Session.ID(),
-	}
-	s.store.Put(debateID, ds)
 
 	resp := createDebateResponse{
-		ID:         debateID,
-		Topic:      req.Topic,
+		ID:         p.ID,
+		Topic:      p.Topic,
 		DebaterA:   debaterInfo{Name: a.Name, School: a.School},
 		DebaterB:   debaterInfo{Name: b.Name, School: b.School},
-		TotalSteps: len(steps),
+		TotalSteps: len(stepsMeta),
 	}
-	for _, step := range steps {
-		resp.Steps = append(resp.Steps, stepInfo{Key: step.Key, Label: step.Label})
+	for _, sm := range stepsMeta {
+		resp.Steps = append(resp.Steps, stepInfo{Key: sm.Key, Label: sm.Label})
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -402,28 +396,41 @@ func extractJSON(s string) string {
 
 func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
-	ds, ok := s.store.Get(debateID)
-	if !ok {
+	ctx := r.Context()
+
+	mu := s.lockFor(debateID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	p, err := s.repo.Get(ctx, debateID)
+	if errors.Is(err, debate.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "Debate not found")
 		return
 	}
+	if err != nil {
+		log.Printf("repo get: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to load debate")
+		return
+	}
 
-	// Serialize concurrent /next calls on the same debate
-	ds.Mu.Lock()
-	defer ds.Mu.Unlock()
-
-	if ds.Current >= len(ds.Steps) {
+	if p.Current >= debate.TotalSteps(p.NumRounds) {
 		writeError(w, http.StatusBadRequest, "Debate is already complete")
 		return
 	}
 
-	step := ds.Steps[ds.Current]
-	ctx := r.Context()
+	rt, err := debate.Hydrate(ctx, p, s.philMap)
+	if err != nil {
+		log.Printf("hydrate: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to hydrate debate")
+		return
+	}
+
+	step := rt.Steps[rt.Current]
 
 	rn, err := runner.New(runner.Config{
 		Agent:          step.Agent,
 		AppName:        "logos",
-		SessionService: ds.SessionService,
+		SessionService: rt.SessionService,
 	})
 	if err != nil {
 		log.Printf("runner create error: %v", err)
@@ -453,7 +460,7 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 
 	var content string
 	var turnInput, turnOutput int
-	for event, err := range rn.Run(ctx, "web", ds.SessionID, msg, runCfg) {
+	for event, err := range rn.Run(ctx, "web", rt.SessionID, msg, runCfg) {
 		if err != nil {
 			errMsg := fmt.Sprintf("runner error: %v", err)
 			log.Print(errMsg)
@@ -486,27 +493,38 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ds.TotalInputTokens += turnInput
-	ds.TotalOutputTokens += turnOutput
-	stepIndex := ds.Current
-	ds.Current++
+	// Mutate the persisted snapshot.
+	if p.StepOutputs == nil {
+		p.StepOutputs = map[string]string{}
+	}
+	p.StepOutputs[step.Key] = content
+	p.TotalInputTokens += turnInput
+	p.TotalOutputTokens += turnOutput
+	stepIndex := p.Current
+	p.Current++
 
-	// If an interjection was pending for this step, mark it consumed and clear
-	// the session-state key so the next philosopher doesn't re-address it.
-	for i := range ds.Interjections {
-		it := &ds.Interjections[i]
+	// If an interjection was pending for this step, mark it consumed and drop
+	// the staged text so the next Hydrate doesn't re-seed it.
+	for i := range p.Interjections {
+		it := &p.Interjections[i]
 		if it.BeforeStepIndex == stepIndex && it.ConsumedByKey == "" {
 			it.ConsumedByKey = step.Key
-			if err := writeSessionState(ctx, ds, map[string]any{
-				philosopher.InterjectionStateKey: "",
-			}); err != nil {
-				log.Printf("clear interjection state: %v", err)
-			}
+			p.PendingInterjection = ""
 			break
 		}
 	}
 
-	role := roleForStep(step.Key, ds.DebaterA, ds.DebaterB)
+	if err := s.repo.Update(ctx, p); err != nil {
+		log.Printf("repo update: %v", err)
+		if sse {
+			sw.SendError("failed to save debate state")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to save debate state")
+		}
+		return
+	}
+
+	role := roleForStep(step.Key, rt.DebaterA, rt.DebaterB)
 
 	var structured any
 	if step.Key == "critic_feedback" || step.Key == "final_verdict" {
@@ -528,12 +546,12 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 		Content:           content,
 		Structured:        structured,
 		StepIndex:         stepIndex,
-		TotalSteps:        len(ds.Steps),
-		Done:              ds.Current >= len(ds.Steps),
+		TotalSteps:        debate.TotalSteps(p.NumRounds),
+		Done:              p.Current >= debate.TotalSteps(p.NumRounds),
 		TurnInputTokens:   turnInput,
 		TurnOutputTokens:  turnOutput,
-		TotalInputTokens:  ds.TotalInputTokens,
-		TotalOutputTokens: ds.TotalOutputTokens,
+		TotalInputTokens:  p.TotalInputTokens,
+		TotalOutputTokens: p.TotalOutputTokens,
 	}
 
 	if sse {
@@ -561,9 +579,19 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	debateID := chi.URLParam(r, "debateID")
-	ds, ok := s.store.Get(debateID)
-	if !ok {
+	p, err := s.repo.Get(r.Context(), debateID)
+	if errors.Is(err, debate.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "Debate not found")
+		return
+	}
+	if err != nil {
+		log.Printf("repo get: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to load debate")
+		return
+	}
+	a, b, ok := s.debaters(p)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "unknown philosopher in debate")
 		return
 	}
 
@@ -583,8 +611,8 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := roleForStep(req.StepKey, ds.DebaterA, ds.DebaterB)
-	voice, style, ok := voiceForStep(role, ds.DebaterA, ds.DebaterB)
+	role := roleForStep(req.StepKey, a, b)
+	voice, style, ok := voiceForStep(role, a, b)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "step is not speakable")
 		return
@@ -645,11 +673,7 @@ type interjectResponse struct {
 
 func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
-	ds, ok := s.store.Get(debateID)
-	if !ok {
-		writeError(w, http.StatusNotFound, "Debate not found")
-		return
-	}
+	ctx := r.Context()
 
 	defer r.Body.Close()
 	var req interjectRequest
@@ -667,43 +691,60 @@ func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ds.Mu.Lock()
-	defer ds.Mu.Unlock()
+	mu := s.lockFor(debateID)
+	mu.Lock()
+	defer mu.Unlock()
 
-	if ds.Current >= len(ds.Steps) {
+	p, err := s.repo.Get(ctx, debateID)
+	if errors.Is(err, debate.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "Debate not found")
+		return
+	}
+	if err != nil {
+		log.Printf("repo get: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to load debate")
+		return
+	}
+	a, b, ok := s.debaters(p)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "unknown philosopher in debate")
+		return
+	}
+
+	stepsMeta := debate.BuildStepMeta(a, b, p.NumRounds)
+	if p.Current >= len(stepsMeta) {
 		writeError(w, http.StatusBadRequest, "Debate is already complete")
 		return
 	}
-	if ds.Current == 0 {
+	if p.Current == 0 {
 		writeError(w, http.StatusBadRequest, "Cannot interject before the moderator has spoken")
 		return
 	}
-	next := ds.Steps[ds.Current]
-	role := roleForStep(next.Key, ds.DebaterA, ds.DebaterB)
+	next := stepsMeta[p.Current]
+	role := roleForStep(next.Key, a, b)
 	if (role != "a" && role != "b") || !roundStepKeyRe.MatchString(next.Key) {
 		writeError(w, http.StatusBadRequest, "Interjections are only allowed before a round turn")
 		return
 	}
-	for _, it := range ds.Interjections {
-		if it.BeforeStepIndex == ds.Current && it.ConsumedByKey == "" {
+	for _, it := range p.Interjections {
+		if it.BeforeStepIndex == p.Current && it.ConsumedByKey == "" {
 			writeError(w, http.StatusBadRequest, "An interjection is already pending for this gap")
 			return
 		}
 	}
 
-	if err := writeSessionState(r.Context(), ds, map[string]any{
-		philosopher.InterjectionStateKey: formatInterjection(text),
-	}); err != nil {
-		log.Printf("interject: write session state: %v", err)
+	p.PendingInterjection = formatInterjection(text)
+	it := debate.Interjection{
+		Text:            text,
+		BeforeStepIndex: p.Current,
+	}
+	p.Interjections = append(p.Interjections, it)
+
+	if err := s.repo.Update(ctx, p); err != nil {
+		log.Printf("repo update: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to stage interjection")
 		return
 	}
-
-	it := debate.Interjection{
-		Text:            text,
-		BeforeStepIndex: ds.Current,
-	}
-	ds.Interjections = append(ds.Interjections, it)
 
 	writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})
 }
@@ -883,3 +924,4 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"detail": msg})
 }
+

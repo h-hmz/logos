@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -30,13 +31,15 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 	}
 	models := []config.ModelEntry{{ID: "test-model", Name: "Test Model"}}
 	seedConfig(t, models)
+	repo := debate.NewMemoryRepo()
 	s := &Server{
 		philosophers: phils,
 		philMap:      map[string]philosopher.Data{phils[0].Name: phils[0], phils[1].Name: phils[1]},
 		models:       models,
-		store:        debate.NewStore(),
+		repo:         repo,
+		locks:        make(map[string]*sync.Mutex),
 	}
-	return s, New(phils, models)
+	return s, New(phils, models, repo)
 }
 
 func seedConfig(t *testing.T, models []config.ModelEntry) {
@@ -154,12 +157,18 @@ func TestNextTurn_NotFound(t *testing.T) {
 
 func TestNextTurn_AlreadyComplete(t *testing.T) {
 	s, _ := testServer(t)
-	ds := &debate.State{
-		ID:      "d1",
-		Steps:   []debate.Step{{Key: "moderator_intro", Label: "Introduction"}},
-		Current: 1,
+	p := &debate.Persisted{
+		ID:           "d1",
+		DebaterAName: s.philosophers[0].Name,
+		DebaterBName: s.philosophers[1].Name,
+		NumRounds:    1,
+		ModelID:      "test-model",
+		MaxWords:     100,
+		Current:      debate.TotalSteps(1),
 	}
-	s.store.Put(ds.ID, ds)
+	if err := s.repo.Create(context.Background(), p); err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
 
 	r := chiReq(http.MethodPost, "/debates/d1/next", nil, map[string]string{"debateID": "d1"})
 	rr := httptest.NewRecorder()
@@ -183,18 +192,18 @@ func TestInterject_NotFound(t *testing.T) {
 func TestInterject_ValidationErrors(t *testing.T) {
 	s, _ := testServer(t)
 	phils := s.philosophers
-	ds := &debate.State{
-		ID:       "d1",
-		DebaterA: phils[0],
-		DebaterB: phils[1],
-		Steps: []debate.Step{
-			{Key: "moderator_intro", Label: "Introduction"},
-			{Key: philosopher.Key(phils[0].Name) + "_r1", Label: "A r1"},
-			{Key: philosopher.Key(phils[1].Name) + "_r1", Label: "B r1"},
-		},
-		Current: 1,
+	p := &debate.Persisted{
+		ID:           "d1",
+		DebaterAName: phils[0].Name,
+		DebaterBName: phils[1].Name,
+		NumRounds:    1,
+		ModelID:      "test-model",
+		MaxWords:     100,
+		Current:      1, // before {a}_r1
 	}
-	s.store.Put(ds.ID, ds)
+	if err := s.repo.Create(context.Background(), p); err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
 
 	long := strings.Repeat("x", interjectionMaxLen+1)
 	cases := []struct {
@@ -220,14 +229,18 @@ func TestInterject_ValidationErrors(t *testing.T) {
 
 func TestInterject_BeforeModerator(t *testing.T) {
 	s, _ := testServer(t)
-	ds := &debate.State{
-		ID:       "d1",
-		DebaterA: s.philosophers[0],
-		DebaterB: s.philosophers[1],
-		Steps:    []debate.Step{{Key: "moderator_intro"}, {Key: philosopher.Key(s.philosophers[0].Name) + "_r1"}},
-		Current:  0,
+	p := &debate.Persisted{
+		ID:           "d1",
+		DebaterAName: s.philosophers[0].Name,
+		DebaterBName: s.philosophers[1].Name,
+		NumRounds:    1,
+		ModelID:      "test-model",
+		MaxWords:     100,
+		Current:      0,
 	}
-	s.store.Put(ds.ID, ds)
+	if err := s.repo.Create(context.Background(), p); err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
 	r := chiReq(http.MethodPost, "/debates/d1/interject", strings.NewReader(`{"text":"hi"}`), map[string]string{"debateID": "d1"})
 	rr := httptest.NewRecorder()
 	s.interject(rr, r)
@@ -241,17 +254,19 @@ func TestInterject_BeforeModerator(t *testing.T) {
 
 func TestInterject_WrongStepKind(t *testing.T) {
 	s, _ := testServer(t)
-	ds := &debate.State{
-		ID:       "d1",
-		DebaterA: s.philosophers[0],
-		DebaterB: s.philosophers[1],
-		Steps: []debate.Step{
-			{Key: "moderator_intro"},
-			{Key: "critic_feedback"},
-		},
-		Current: 1,
+	// With NumRounds=1, step 3 is critic_feedback — interject before it should 400.
+	p := &debate.Persisted{
+		ID:           "d1",
+		DebaterAName: s.philosophers[0].Name,
+		DebaterBName: s.philosophers[1].Name,
+		NumRounds:    1,
+		ModelID:      "test-model",
+		MaxWords:     100,
+		Current:      3,
 	}
-	s.store.Put(ds.ID, ds)
+	if err := s.repo.Create(context.Background(), p); err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
 	r := chiReq(http.MethodPost, "/debates/d1/interject", strings.NewReader(`{"text":"hi"}`), map[string]string{"debateID": "d1"})
 	rr := httptest.NewRecorder()
 	s.interject(rr, r)

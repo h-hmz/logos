@@ -1,4 +1,4 @@
-// Package server provides the HTTP handlers for the Logos Arena API.
+// Package server provides the HTTP handlers for the Logos API.
 package server
 
 import (

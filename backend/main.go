@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/h-hmz/logos/internal/config"
+	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/server"
 )
@@ -37,14 +38,15 @@ func main() {
 	}
 	log.Printf("Loaded %d philosophers", len(philosophers))
 
-	router := server.New(philosophers, config.Models())
+	repo := debate.NewMemoryRepo()
+	router := server.New(philosophers, config.Models(), repo)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8000"
 	}
 
-	log.Printf("Logos Arena listening on :%s", port)
+	log.Printf("Logos listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, router); err != nil {
 		log.Fatalf("server: %v", err)
 	}
