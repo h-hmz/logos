@@ -12,69 +12,8 @@ import (
 
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
-	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/tts"
 )
-
-// Non-debater role voices, keyed by provider then role. Falls back to the
-// "gemini" entry when the active provider has no override.
-var roleVoices = map[string]map[string]string{
-	"gemini": {
-		"moderator": "Charon",
-		"critic":    "Puck",
-		"judge":     "Orus",
-		"fallback":  "Kore",
-	},
-	"elevenlabs": {
-		"moderator": "JBFqnCBsd6RMkjVDRZzb", // George — warm, authoritative
-		"critic":    "onwK4e9ZLuTAKqWW03F9", // Daniel — sharp, incisive
-		"judge":     "nPczCjzI2devNBz1zQrb", // Brian — measured, grave
-		"fallback":  "pNInz6obpgDQGcFmaJgB", // Adam — neutral default
-	},
-	"openai": {
-		"moderator": "fable",
-		"critic":    "ash",
-		"judge":     "onyx",
-		"fallback":  "alloy",
-	},
-}
-
-func roleVoice(provider, role string) string {
-	if m, ok := roleVoices[provider]; ok {
-		if v := m[role]; v != "" {
-			return v
-		}
-	}
-	return roleVoices["gemini"][role]
-}
-
-// philosopherVoice picks the provider-specific voice from Data.TTSVoices,
-// or falls back to the provider's role fallback voice when no entry exists.
-func philosopherVoice(provider string, d philosopher.Data) string {
-	if v, ok := d.TTSVoices[provider]; ok && v != "" {
-		return v
-	}
-	return roleVoice(provider, "fallback")
-}
-
-// voiceForStep resolves the TTS voice and style for the given step role.
-// Returns ("", "", false) when the step should not be synthesized.
-func voiceForStep(role string, a, b philosopher.Data) (voice, style string, ok bool) {
-	provider := strings.ToLower(config.TTSProvider())
-	switch role {
-	case "a":
-		return philosopherVoice(provider, a), a.TTSStyle, true
-	case "b":
-		return philosopherVoice(provider, b), b.TTSStyle, true
-	case "moderator":
-		return roleVoice(provider, "moderator"), "Speak with gravitas, like a seasoned debate moderator.", true
-	case "critic":
-		return roleVoice(provider, "critic"), "Speak incisively, like a sharp academic critic.", true
-	case "judge":
-		return roleVoice(provider, "judge"), "Speak with measured, judicial authority.", true
-	}
-	return "", "", false
-}
 
 // ── POST /debates/{debateID}/tts ────────────────────────────────────────────
 
@@ -127,7 +66,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	role := debate.RoleForStep(req.StepKey, a, b)
-	voice, style, ok := voiceForStep(role, a, b)
+	voice, style, ok := tts.VoiceForStep(role, a, b)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "step is not speakable")
 		return
