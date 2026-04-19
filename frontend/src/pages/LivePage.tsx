@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type JSX } from 'react'
 import { Bust } from '../components/Bust'
 import { InlineMd } from '../components/InlineMd'
 import { TokenPill } from '../components/TokenPill'
 import {
   interject,
   streamTurn,
+  synthesizeTurn,
   type CriticFinding,
   type DebateSession,
   type Interjection,
@@ -34,6 +35,238 @@ interface TurnBuffer {
 const STORAGE_KEY = (id: string) => `logos_step_${id}`
 const INTERJECTIONS_KEY = (id: string) => `logos_interjections_${id}`
 const INTERJECTION_MAX_LEN = 800
+
+// splitSentences breaks text into sentence-like chunks, keeping terminators.
+// Good enough for prose debate turns; doesn't try to handle "Dr.", "e.g.", etc.
+function splitSentences(text: string): string[] {
+  const parts = text.match(/[^.!?\n]+[.!?]+[\s]*|[^.!?\n]+$/g)
+  if (!parts) return text.trim() ? [text] : []
+  return parts.map((p) => p.trim()).filter(Boolean)
+}
+
+// sentenceStarts returns the cumulative start time (seconds) of each sentence,
+// weighted proportionally by character count so longer sentences get more time.
+function sentenceStarts(sentences: string[], duration: number): number[] {
+  const weights = sentences.map((s) => Math.max(s.length, 1))
+  const total = weights.reduce((a, b) => a + b, 0)
+  const starts: number[] = []
+  let acc = 0
+  for (const w of weights) {
+    starts.push((acc / total) * duration)
+    acc += w
+  }
+  return starts
+}
+
+// activeSentenceIndex returns the index of the sentence whose start is the
+// latest one <= pos, or -1 if pos is before the first sentence or duration=0.
+function activeSentenceIndex(starts: number[], pos: number, playing: boolean): number {
+  if (!playing || starts.length === 0) return -1
+  let idx = -1
+  for (let i = 0; i < starts.length; i++) {
+    if (starts[i] <= pos) idx = i
+    else break
+  }
+  return idx
+}
+
+// SpokenText renders text with optional per-sentence highlighting. When
+// activeIndex is -1 no sentence is marked.
+interface SpokenTextProps {
+  text: string
+  activeIndex: number
+  asParagraphs?: boolean
+}
+
+function SpokenText({ text, activeIndex, asParagraphs }: SpokenTextProps) {
+  const paragraphs = asParagraphs ? text.split(/\n\n+/).filter(Boolean) : [text]
+  let runningIdx = 0
+  return (
+    <>
+      {paragraphs.map((p, pi) => {
+        const sentences = splitSentences(p)
+        const startIdx = runningIdx
+        runningIdx += sentences.length
+        const rendered = sentences.map((s, si) => {
+          const globalIdx = startIdx + si
+          const active = globalIdx === activeIndex
+          return (
+            <span
+              key={si}
+              className={active ? 'reading-active' : undefined}
+              style={
+                active
+                  ? {
+                      background: 'color-mix(in srgb, var(--accent) 22%, transparent)',
+                      boxShadow: '0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent)',
+                      borderRadius: 2,
+                      transition: 'background 120ms linear',
+                    }
+                  : undefined
+              }
+            >
+              <InlineMd text={s} />
+              {si < sentences.length - 1 ? ' ' : ''}
+            </span>
+          )
+        })
+        return asParagraphs ? (
+          <p key={pi} className={pi === 0 ? 'drop' : ''}>
+            {rendered}
+          </p>
+        ) : (
+          <span key={pi}>{rendered}</span>
+        )
+      })}
+    </>
+  )
+}
+
+// PlayButton synthesizes TTS for a single step on first click and replays the
+// cached blob on subsequent clicks. A second click while playing pauses.
+interface PlayButtonProps {
+  debateId: string
+  stepKey: string
+  text: string
+  disabled?: boolean
+  onTime?: (pos: number) => void
+  onDuration?: (dur: number) => void
+  onStateChange?: (playing: boolean) => void
+}
+
+function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onStateChange }: PlayButtonProps) {
+  const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'paused' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [pos, setPos] = useState(0)
+  const [dur, setDur] = useState(0)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const urlRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    return () => {
+      audioRef.current?.pause()
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
+    }
+  }, [])
+
+  const attachAudio = useCallback((audio: HTMLAudioElement) => {
+    audio.onended = () => {
+      setState('idle')
+      const d = audio.duration || 0
+      setPos(d)
+      onTime?.(d)
+      onStateChange?.(false)
+    }
+    audio.onpause = () => {
+      setState((s) => (s === 'playing' ? 'paused' : s))
+      onStateChange?.(false)
+    }
+    audio.onplay = () => onStateChange?.(true)
+    audio.onerror = () => { setState('error'); setErrorMsg('playback failed'); onStateChange?.(false) }
+    audio.ontimeupdate = () => {
+      setPos(audio.currentTime)
+      onTime?.(audio.currentTime)
+    }
+    audio.onloadedmetadata = () => {
+      // Some browsers report Infinity for streamed blobs until played through.
+      if (Number.isFinite(audio.duration)) {
+        setDur(audio.duration)
+        onDuration?.(audio.duration)
+      }
+    }
+    audio.ondurationchange = () => {
+      if (Number.isFinite(audio.duration)) {
+        setDur(audio.duration)
+        onDuration?.(audio.duration)
+      }
+    }
+  }, [onTime, onDuration, onStateChange])
+
+  const onToggle = useCallback(async () => {
+    if (state === 'playing') {
+      audioRef.current?.pause()
+      return
+    }
+    if (audioRef.current && (state === 'paused' || state === 'error')) {
+      try { await audioRef.current.play(); setState('playing') } catch { /* noop */ }
+      return
+    }
+    try {
+      setState('loading')
+      setErrorMsg(null)
+      const blob = await synthesizeTurn(debateId, stepKey, text)
+      const url = URL.createObjectURL(blob)
+      urlRef.current = url
+      const audio = new Audio(url)
+      attachAudio(audio)
+      audioRef.current = audio
+      await audio.play()
+      setState('playing')
+    } catch (e) {
+      setState('error')
+      setErrorMsg(e instanceof Error ? e.message : 'TTS failed')
+    }
+  }, [state, debateId, stepKey, text, attachAudio])
+
+  const onSeek = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const audio = audioRef.current
+    if (!audio) return
+    const t = parseFloat(e.target.value)
+    audio.currentTime = t
+    setPos(t)
+  }, [])
+
+  const icon = state === 'loading' ? '…' : state === 'playing' ? '⏸' : '▶'
+  const title = state === 'error'
+    ? errorMsg ?? 'error'
+    : state === 'playing'
+    ? 'Pause'
+    : state === 'paused'
+    ? 'Resume'
+    : 'Read aloud'
+  const hasAudio = !!audioRef.current
+  const maxSeek = dur > 0 ? dur : 0
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <button
+        type="button"
+        className="btn ghost small"
+        onClick={onToggle}
+        disabled={disabled || state === 'loading' || !text}
+        title={title}
+        aria-label={title}
+        style={{ padding: '2px 8px', fontSize: 12, lineHeight: 1.4 }}
+      >
+        {icon} {state === 'loading' ? '' : '🔊'}
+      </button>
+      {hasAudio && maxSeek > 0 && (
+        <>
+          <input
+            type="range"
+            min={0}
+            max={maxSeek}
+            step={0.1}
+            value={Math.min(pos, maxSeek)}
+            onChange={onSeek}
+            aria-label="Seek"
+            style={{ width: 120, verticalAlign: 'middle' }}
+          />
+          <span className="t-mono" style={{ fontSize: 11, color: 'var(--ink-soft)', minWidth: 64 }}>
+            {fmtTime(pos)} / {fmtTime(maxSeek)}
+          </span>
+        </>
+      )}
+    </span>
+  )
+}
+
+function fmtTime(s: number): string {
+  if (!Number.isFinite(s) || s < 0) return '0:00'
+  const m = Math.floor(s / 60)
+  const r = Math.floor(s % 60)
+  return `${m}:${r.toString().padStart(2, '0')}`
+}
 
 // An upcoming step accepts an interjection iff it's a philosopher round turn.
 // Round step keys look like "{name}_r{n}"; critic responses end in "_critic_response".
@@ -289,6 +522,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 streaming={buf.streaming && !buf.done}
                 error={buf.error}
                 meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
+                debateId={debate.id}
+                stepKey={step.key}
               />
             )
           } else if (role === 'critic') {
@@ -327,6 +562,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 tokens={buf.tokens}
                 active={i === idx - 1 || (i === idx && buf.streaming)}
                 error={buf.error}
+                debateId={debate.id}
+                stepKey={step.key}
               />
             )
           }
@@ -483,9 +720,18 @@ interface CurtainProps {
   streaming: boolean
   meta: string
   error?: string
+  debateId?: string
+  stepKey?: string
 }
 
-function ModeratorCurtain({ text, streaming, meta, error }: CurtainProps) {
+function ModeratorCurtain({ text, streaming, meta, error, debateId, stepKey }: CurtainProps) {
+  const canPlay = !streaming && !!text && !!debateId && !!stepKey
+  const [pos, setPos] = useState(0)
+  const [dur, setDur] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  const sentences = useMemo(() => splitSentences(text), [text])
+  const starts = useMemo(() => sentenceStarts(sentences, dur), [sentences, dur])
+  const activeIdx = activeSentenceIndex(starts, pos, playing)
   return (
     <div className="curtain moderator">
       <div className="gavel">§</div>
@@ -494,11 +740,29 @@ function ModeratorCurtain({ text, streaming, meta, error }: CurtainProps) {
         <h2>Welcome to the agora.</h2>
       </div>
       <div className="body-text">
-        <InlineMd text={text} />
-        {streaming && <span className="cursor">·</span>}
+        {streaming ? (
+          <>
+            <InlineMd text={text} />
+            <span className="cursor">·</span>
+          </>
+        ) : (
+          <SpokenText text={text} activeIndex={activeIdx} />
+        )}
       </div>
       {error && <div className="live-error" style={{ marginTop: 12 }}>{error}</div>}
-      <div className="curtain-meta">{meta}</div>
+      <div className="curtain-meta" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ flex: 1 }}>{meta}</span>
+        {canPlay && (
+          <PlayButton
+            debateId={debateId!}
+            stepKey={stepKey!}
+            text={text}
+            onTime={setPos}
+            onDuration={setDur}
+            onStateChange={setPlaying}
+          />
+        )}
+      </div>
     </div>
   )
 }
@@ -784,11 +1048,21 @@ interface TurnBlockProps {
   tokens: number
   active: boolean
   error?: string
+  debateId?: string
+  stepKey?: string
 }
 
-function TurnBlock({ who, side, label, text, streaming, tokens, active, error }: TurnBlockProps) {
+function TurnBlock({ who, side, label, text, streaming, tokens, active, error, debateId, stepKey }: TurnBlockProps) {
   const paragraphs = text.split(/\n\n+/).filter((p) => p.length > 0)
   if (paragraphs.length === 0) paragraphs.push('')
+  const [pos, setPos] = useState(0)
+  const [dur, setDur] = useState(0)
+  const [playing, setPlaying] = useState(false)
+  // Flatten paragraphs to a linear sentence list to keep indices consistent
+  // with what SpokenText renders internally.
+  const allSentences = useMemo(() => paragraphs.flatMap(splitSentences), [text])
+  const starts = useMemo(() => sentenceStarts(allSentences, dur), [allSentences, dur])
+  const activeIdx = activeSentenceIndex(starts, pos, playing)
   return (
     <div className={`turn ${side}${active ? ' now' : ''}`}>
       <div className="who">
@@ -800,17 +1074,31 @@ function TurnBlock({ who, side, label, text, streaming, tokens, active, error }:
       <div className="say">
         <div className="label-row">
           <span className="round">◆ {label}</span>
-          <span className="stat">
+          <span className="stat" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {streaming ? `streaming · ${text.length} ch` : tokens ? `${tokens} tok` : ''}
+            {!streaming && text && debateId && stepKey && (
+              <PlayButton
+                debateId={debateId}
+                stepKey={stepKey}
+                text={text}
+                onTime={setPos}
+                onDuration={setDur}
+                onStateChange={setPlaying}
+              />
+            )}
           </span>
         </div>
         <div className="body">
-          {paragraphs.map((p, i) => (
-            <p key={i} className={i === 0 ? 'drop' : ''}>
-              <InlineMd text={p} />
-              {streaming && i === paragraphs.length - 1 && <span className="cursor">·</span>}
-            </p>
-          ))}
+          {streaming ? (
+            paragraphs.map((p, i) => (
+              <p key={i} className={i === 0 ? 'drop' : ''}>
+                <InlineMd text={p} />
+                {i === paragraphs.length - 1 && <span className="cursor">·</span>}
+              </p>
+            ))
+          ) : (
+            <SpokenText text={text} activeIndex={activeIdx} asParagraphs />
+          )}
         </div>
         {error && <div className="live-error">{error}</div>}
       </div>

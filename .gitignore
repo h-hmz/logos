@@ -17,5 +17,8 @@ backend/logos
 .DS_Store
 Thumbs.db
 
+# Claude
+.claude
+
 # Project roadmap
 ROADMAP.md

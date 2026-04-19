@@ -27,6 +27,8 @@ type Data struct {
 	Identity         string `yaml:"identity"`
 	KeyThinkers      string `yaml:"key_thinkers"`
 	EpistemicSources string `yaml:"epistemic_sources,omitempty"`
+	TTSVoice         string `yaml:"tts_voice,omitempty"         json:"-"`
+	TTSStyle         string `yaml:"tts_style,omitempty"         json:"-"`
 }
 
 var keyRe = regexp.MustCompile(`[^a-z0-9]+`)

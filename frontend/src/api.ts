@@ -144,6 +144,25 @@ export async function interject(debateId: string, text: string): Promise<Interje
   return data.interjection as Interjection
 }
 
+// synthesizeTurn calls the backend TTS endpoint for a given step and returns
+// the raw audio blob (audio/wav). Throws on non-200 with the server's detail.
+export async function synthesizeTurn(
+  debateId: string,
+  stepKey: string,
+  text: string,
+): Promise<Blob> {
+  const res = await fetch(`/debates/${debateId}/tts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ step_key: stepKey, text }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'TTS failed' }))
+    throw new Error(err.detail ?? 'TTS failed')
+  }
+  return res.blob()
+}
+
 export async function nextTurn(debateId: string): Promise<TurnResult> {
   const res = await fetch(`/debates/${debateId}/next`, { method: 'POST' })
   if (!res.ok) {
@@ -157,7 +176,7 @@ export async function nextTurn(debateId: string): Promise<TurnResult> {
 // final TurnResult carried on the `done` event. Throws on `error` events.
 export function streamTurn(
   debateId: string,
-  onToken: (text: string) => void
+  onToken: (text: string) => void,
 ): Promise<TurnResult> {
   return new Promise(async (resolve, reject) => {
     try {

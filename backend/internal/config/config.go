@@ -26,6 +26,15 @@ var (
 	location     string
 	useVertexAI  bool
 	defaultModel string
+	ttsEnabled   bool
+	ttsProvider  string
+	ttsModel     string
+	ttsAPIKey    string
+)
+
+const (
+	defaultTTSProvider = "gemini"
+	defaultTTSModel    = "gemini-2.5-flash-preview-tts"
 )
 
 // Load reads the .env file and models.yaml, populating package-level state.
@@ -36,6 +45,22 @@ func Load(envPath, modelsPath string) error {
 	project = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	location = os.Getenv("GOOGLE_CLOUD_LOCATION")
 	useVertexAI = strings.EqualFold(os.Getenv("GOOGLE_GENAI_USE_VERTEXAI"), "TRUE")
+	ttsEnabled = strings.EqualFold(os.Getenv("TTS_ENABLED"), "TRUE")
+	ttsProvider = strings.ToLower(strings.TrimSpace(os.Getenv("TTS_PROVIDER")))
+	if ttsProvider == "" {
+		ttsProvider = defaultTTSProvider
+	}
+	ttsModel = os.Getenv("TTS_MODEL")
+	if ttsModel == "" {
+		ttsModel = defaultTTSModel
+	}
+	ttsAPIKey = os.Getenv("TTS_API_KEY")
+	if ttsAPIKey == "" {
+		ttsAPIKey = os.Getenv("GOOGLE_API_KEY")
+	}
+	if ttsAPIKey == "" {
+		ttsAPIKey = os.Getenv("GEMINI_API_KEY")
+	}
 
 	data, err := os.ReadFile(modelsPath)
 	if err != nil {
@@ -60,6 +85,10 @@ func Location() string     { return location }
 func UseVertexAI() bool    { return useVertexAI }
 func DefaultModel() string { return defaultModel }
 func Models() []ModelEntry { return models }
+func TTSEnabled() bool     { return ttsEnabled }
+func TTSProvider() string  { return ttsProvider }
+func TTSModel() string     { return ttsModel }
+func TTSAPIKey() string    { return ttsAPIKey }
 
 // ValidModel returns true if modelID matches a configured model.
 func ValidModel(modelID string) bool {

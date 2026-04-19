@@ -22,6 +22,7 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/modelcache"
 	"github.com/h-hmz/logos/internal/philosopher"
+	"github.com/h-hmz/logos/internal/tts"
 )
 
 var roundStepKeyRe = regexp.MustCompile(`_r\d+$`)
@@ -29,6 +30,40 @@ var roundStepKeyRe = regexp.MustCompile(`_r\d+$`)
 const (
 	interjectionMaxLen = 800
 )
+
+// Default voices for non-debater roles. Gemini prebuilt voice names.
+const (
+	moderatorVoice = "Charon"
+	criticVoice    = "Puck"
+	judgeVoice     = "Orus"
+	fallbackVoice  = "Kore"
+)
+
+// voiceForStep resolves the TTS voice and style for the given step role.
+// Returns ("", "", false) when the step should not be synthesized.
+func voiceForStep(role string, a, b philosopher.Data) (voice, style string, ok bool) {
+	switch role {
+	case "a":
+		v := a.TTSVoice
+		if v == "" {
+			v = fallbackVoice
+		}
+		return v, a.TTSStyle, true
+	case "b":
+		v := b.TTSVoice
+		if v == "" {
+			v = fallbackVoice
+		}
+		return v, b.TTSStyle, true
+	case "moderator":
+		return moderatorVoice, "Speak with gravitas, like a seasoned debate moderator.", true
+	case "critic":
+		return criticVoice, "Speak incisively, like a sharp academic critic.", true
+	case "judge":
+		return judgeVoice, "Speak with measured, judicial authority.", true
+	}
+	return "", "", false
+}
 
 // formatInterjection wraps user text into the session-state block the next
 // philosopher turn reads via {pending_interjection}. Empty text → empty string.
@@ -92,6 +127,7 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry) *chi.Mux {
 	r.Post("/debates", s.createDebate)
 	r.Post("/debates/{debateID}/next", s.nextTurn)
 	r.Post("/debates/{debateID}/interject", s.interject)
+	r.Post("/debates/{debateID}/tts", s.synthesizeStep)
 	r.Post("/suggest-topic", s.suggestTopic)
 
 	return r
@@ -479,6 +515,73 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJSON(w, http.StatusOK, result)
 	}
+}
+
+// ── POST /debates/{debateID}/tts ────────────────────────────────────────────
+
+type ttsRequest struct {
+	StepKey string `json:"step_key"`
+	Text    string `json:"text"`
+}
+
+// synthesizeStep turns the given text into speech using the voice and style
+// associated with the named step (resolved from the debate's debaters). The
+// text is taken from the request so the client can replay arbitrary content
+// it already has without the server storing turn outputs.
+func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
+	if !config.TTSEnabled() {
+		writeError(w, http.StatusServiceUnavailable, "TTS is disabled on this server")
+		return
+	}
+
+	debateID := chi.URLParam(r, "debateID")
+	ds, ok := s.store.Get(debateID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "Debate not found")
+		return
+	}
+
+	defer r.Body.Close()
+	var req ttsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "text is empty")
+		return
+	}
+	if req.StepKey == "" {
+		writeError(w, http.StatusBadRequest, "step_key is required")
+		return
+	}
+
+	role := roleForStep(req.StepKey, ds.DebaterA, ds.DebaterB)
+	voice, style, ok := voiceForStep(role, ds.DebaterA, ds.DebaterB)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "step is not speakable")
+		return
+	}
+
+	ctx := r.Context()
+	client, err := tts.Shared(ctx)
+	if err != nil || client == nil {
+		log.Printf("tts: client unavailable: %v", err)
+		writeError(w, http.StatusServiceUnavailable, "TTS client unavailable")
+		return
+	}
+	wav, err := client.Synthesize(ctx, text, voice, style)
+	if err != nil {
+		log.Printf("tts: synthesize step %s: %v", req.StepKey, err)
+		writeError(w, http.StatusBadGateway, "TTS synthesis failed")
+		return
+	}
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-TTS-Voice", voice)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(wav)
 }
 
 // ── POST /debates/{debateID}/interject ──────────────────────────────────────
