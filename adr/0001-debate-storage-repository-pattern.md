@@ -1,7 +1,7 @@
 # ADR 0001: Debate storage via Repository + per-request session hydration
 
 Date: 2026-04-19
-Status: Accepted
+Status: Accepted (§5 superseded by [ADR 0004](0004-concurrency-repo-occ.md))
 
 ## Context
 
@@ -95,6 +95,12 @@ We chose **(b)**. Rationale:
   a product requirement.
 
 ### 5. Concurrency
+
+> **Superseded by [ADR 0004](0004-concurrency-repo-occ.md).** The
+> in-instance mutex described below has been removed; correctness now
+> relies solely on `Persisted.Version` checked by `repo.Update`, with
+> a per-endpoint conflict policy (409 for `/next`, bounded retry for
+> `/interject`).
 
 Within an instance, a `sync.Map` of per-debate mutexes serializes
 concurrent `/next` and `/interject` calls for the same debate. Across

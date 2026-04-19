@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -37,7 +36,6 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 		philMap:      map[string]philosopher.Data{phils[0].Name: phils[0], phils[1].Name: phils[1]},
 		models:       models,
 		repo:         repo,
-		locks:        make(map[string]*sync.Mutex),
 	}
 	return s, New(phils, models, repo)
 }

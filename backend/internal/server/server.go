@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -105,18 +104,14 @@ func formatInterjection(text string) string {
 	)
 }
 
-// Server holds the shared state for the HTTP handlers.
+// Server holds the shared state for the HTTP handlers. Concurrency across
+// container instances is enforced by the repository's optimistic concurrency
+// control (Persisted.Version); this struct carries no per-debate state.
 type Server struct {
 	philosophers []philosopher.Data
 	philMap      map[string]philosopher.Data // name → data
 	models       []config.ModelEntry
 	repo         debate.Repository
-
-	// locks serializes concurrent /next and /interject calls for a given
-	// debate within this instance. Cross-instance safety would require
-	// optimistic concurrency via Persisted.Version at the repo layer.
-	locksMu sync.Mutex
-	locks   map[string]*sync.Mutex
 }
 
 // New creates a chi router with all endpoints registered.
@@ -126,7 +121,6 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debat
 		philMap:      make(map[string]philosopher.Data, len(philosophers)),
 		models:       models,
 		repo:         repo,
-		locks:        make(map[string]*sync.Mutex),
 	}
 	for _, p := range philosophers {
 		s.philMap[p.Name] = p
@@ -148,18 +142,6 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debat
 	r.Post("/suggest-topic", s.suggestTopic)
 
 	return r
-}
-
-// lockFor returns a per-debate mutex, creating it on first use.
-func (s *Server) lockFor(debateID string) *sync.Mutex {
-	s.locksMu.Lock()
-	defer s.locksMu.Unlock()
-	mu, ok := s.locks[debateID]
-	if !ok {
-		mu = &sync.Mutex{}
-		s.locks[debateID] = mu
-	}
-	return mu
 }
 
 // debaters resolves the philosopher.Data pair referenced by a Persisted record.
@@ -398,10 +380,6 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
 	ctx := r.Context()
 
-	mu := s.lockFor(debateID)
-	mu.Lock()
-	defer mu.Unlock()
-
 	p, err := s.repo.Get(ctx, debateID)
 	if errors.Is(err, debate.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "Debate not found")
@@ -515,6 +493,18 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.repo.Update(ctx, p); err != nil {
+		// Concurrent write (another /next or /interject won the race). The
+		// generated turn used a stale view of the debate, so we discard it
+		// and let the client refetch state and retry.
+		if errors.Is(err, debate.ErrVersionConflict) {
+			const msg = "debate state changed concurrently; refresh and retry"
+			if sse {
+				sw.SendError(msg)
+			} else {
+				writeError(w, http.StatusConflict, msg)
+			}
+			return
+		}
 		log.Printf("repo update: %v", err)
 		if sse {
 			sw.SendError("failed to save debate state")
@@ -691,62 +681,70 @@ func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mu := s.lockFor(debateID)
-	mu.Lock()
-	defer mu.Unlock()
-
-	p, err := s.repo.Get(ctx, debateID)
-	if errors.Is(err, debate.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "Debate not found")
-		return
-	}
-	if err != nil {
-		log.Printf("repo get: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to load debate")
-		return
-	}
-	a, b, ok := s.debaters(p)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "unknown philosopher in debate")
-		return
-	}
-
-	stepsMeta := debate.BuildStepMeta(a, b, p.NumRounds)
-	if p.Current >= len(stepsMeta) {
-		writeError(w, http.StatusBadRequest, "Debate is already complete")
-		return
-	}
-	if p.Current == 0 {
-		writeError(w, http.StatusBadRequest, "Cannot interject before the moderator has spoken")
-		return
-	}
-	next := stepsMeta[p.Current]
-	role := roleForStep(next.Key, a, b)
-	if (role != "a" && role != "b") || !roundStepKeyRe.MatchString(next.Key) {
-		writeError(w, http.StatusBadRequest, "Interjections are only allowed before a round turn")
-		return
-	}
-	for _, it := range p.Interjections {
-		if it.BeforeStepIndex == p.Current && it.ConsumedByKey == "" {
-			writeError(w, http.StatusBadRequest, "An interjection is already pending for this gap")
+	// Retry on version conflict: the read-modify-write here is cheap and
+	// pure, so we transparently re-run it if another writer advanced the
+	// debate between Get and Update.
+	const maxAttempts = 5
+	var it debate.Interjection
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		p, err := s.repo.Get(ctx, debateID)
+		if errors.Is(err, debate.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "Debate not found")
 			return
 		}
-	}
+		if err != nil {
+			log.Printf("repo get: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to load debate")
+			return
+		}
+		a, b, ok := s.debaters(p)
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "unknown philosopher in debate")
+			return
+		}
 
-	p.PendingInterjection = formatInterjection(text)
-	it := debate.Interjection{
-		Text:            text,
-		BeforeStepIndex: p.Current,
-	}
-	p.Interjections = append(p.Interjections, it)
+		stepsMeta := debate.BuildStepMeta(a, b, p.NumRounds)
+		if p.Current >= len(stepsMeta) {
+			writeError(w, http.StatusBadRequest, "Debate is already complete")
+			return
+		}
+		if p.Current == 0 {
+			writeError(w, http.StatusBadRequest, "Cannot interject before the moderator has spoken")
+			return
+		}
+		next := stepsMeta[p.Current]
+		role := roleForStep(next.Key, a, b)
+		if (role != "a" && role != "b") || !roundStepKeyRe.MatchString(next.Key) {
+			writeError(w, http.StatusBadRequest, "Interjections are only allowed before a round turn")
+			return
+		}
+		for _, existing := range p.Interjections {
+			if existing.BeforeStepIndex == p.Current && existing.ConsumedByKey == "" {
+				writeError(w, http.StatusBadRequest, "An interjection is already pending for this gap")
+				return
+			}
+		}
 
-	if err := s.repo.Update(ctx, p); err != nil {
+		p.PendingInterjection = formatInterjection(text)
+		it = debate.Interjection{
+			Text:            text,
+			BeforeStepIndex: p.Current,
+		}
+		p.Interjections = append(p.Interjections, it)
+
+		err = s.repo.Update(ctx, p)
+		if err == nil {
+			writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})
+			return
+		}
+		if errors.Is(err, debate.ErrVersionConflict) {
+			continue
+		}
 		log.Printf("repo update: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to stage interjection")
 		return
 	}
-
-	writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})
+	writeError(w, http.StatusConflict, "debate state changed concurrently; please retry")
 }
 
 // ── POST /suggest-topic ─────────────────────────────────────────────────────
