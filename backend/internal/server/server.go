@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
-	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/runner"
@@ -23,12 +21,6 @@ import (
 	"github.com/h-hmz/logos/internal/modelcache"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/tts"
-)
-
-var roundStepKeyRe = regexp.MustCompile(`_r\d+$`)
-
-const (
-	interjectionMaxLen = 800
 )
 
 // Non-debater role voices, keyed by provider then role. Falls back to the
@@ -91,39 +83,29 @@ func voiceForStep(role string, a, b philosopher.Data) (voice, style string, ok b
 	return "", "", false
 }
 
-// formatInterjection wraps user text into the session-state block the next
-// philosopher turn reads via {pending_interjection}. Empty text → empty string.
-func formatInterjection(text string) string {
-	t := strings.TrimSpace(text)
-	if t == "" {
-		return ""
-	}
-	return fmt.Sprintf(
-		"## Audience Challenge\nA member of the audience has raised the following point:\n\n> %s\n\nAddress this challenge directly and specifically before continuing your argument.",
-		strings.ReplaceAll(t, "\n", "\n> "),
-	)
-}
-
-// Server holds the shared state for the HTTP handlers. Concurrency across
-// container instances is enforced by the repository's optimistic concurrency
-// control (Persisted.Version); this struct carries no per-debate state.
+// Server holds the shared state for the HTTP handlers. Debate orchestration
+// lives in debate.Service; this struct carries the transport-adjacent pieces
+// (catalog for responses, model list, TTS resolution).
 type Server struct {
 	philosophers []philosopher.Data
-	philMap      map[string]philosopher.Data // name → data
+	philMap      map[string]philosopher.Data
 	models       []config.ModelEntry
 	repo         debate.Repository
+	svc          *debate.Service
 }
 
 // New creates a chi router with all endpoints registered.
 func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debate.Repository) *chi.Mux {
+	philMap := make(map[string]philosopher.Data, len(philosophers))
+	for _, p := range philosophers {
+		philMap[p.Name] = p
+	}
 	s := &Server{
 		philosophers: philosophers,
-		philMap:      make(map[string]philosopher.Data, len(philosophers)),
+		philMap:      philMap,
 		models:       models,
 		repo:         repo,
-	}
-	for _, p := range philosophers {
-		s.philMap[p.Name] = p
+		svc:          debate.NewService(repo, philMap),
 	}
 
 	r := chi.NewRouter()
@@ -150,6 +132,22 @@ func (s *Server) debaters(p *debate.Persisted) (a, b philosopher.Data, ok bool) 
 	a, okA = s.philMap[p.DebaterAName]
 	b, okB = s.philMap[p.DebaterBName]
 	return a, b, okA && okB
+}
+
+// writeServiceError maps domain errors to HTTP responses.
+func writeServiceError(w http.ResponseWriter, err error) {
+	var ve *debate.ValidationError
+	switch {
+	case errors.Is(err, debate.ErrNotFound):
+		writeError(w, http.StatusNotFound, "Debate not found")
+	case errors.Is(err, debate.ErrVersionConflict):
+		writeError(w, http.StatusConflict, "debate state changed concurrently; refresh and retry")
+	case errors.As(err, &ve):
+		writeError(w, http.StatusBadRequest, ve.Msg)
+	default:
+		log.Printf("service error: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+	}
 }
 
 // ── GET /models ─────────────────────────────────────────────────────────────
@@ -220,67 +218,27 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply defaults
-	if req.NumRounds == 0 {
-		req.NumRounds = 2
-	}
-	if req.Model == "" {
-		req.Model = config.DefaultModel()
-	}
-	if req.MaxWords == 0 {
-		req.MaxWords = 250
-	}
-
-	// Validate
-	a, okA := s.philMap[req.DebaterA]
-	b, okB := s.philMap[req.DebaterB]
-	if !okA || !okB {
-		writeError(w, http.StatusBadRequest, "Unknown philosopher name")
-		return
-	}
-	if req.DebaterA == req.DebaterB {
-		writeError(w, http.StatusBadRequest, "Debaters must be different")
-		return
-	}
-	if req.NumRounds < 1 || req.NumRounds > 5 {
-		writeError(w, http.StatusBadRequest, "num_rounds must be between 1 and 5")
-		return
-	}
-	if req.Topic == "" {
-		writeError(w, http.StatusBadRequest, "Topic cannot be empty")
-		return
-	}
-	if !config.ValidModel(req.Model) {
-		writeError(w, http.StatusBadRequest, "Unknown model id")
-		return
-	}
-
-	stepsMeta := debate.BuildStepMeta(a, b, req.NumRounds)
-
-	p := &debate.Persisted{
-		ID:           uuid.NewString(),
-		Topic:        req.Topic,
-		DebaterAName: a.Name,
-		DebaterBName: b.Name,
-		NumRounds:    req.NumRounds,
-		ModelID:      req.Model,
-		MaxWords:     req.MaxWords,
-		StepOutputs:  map[string]string{},
-	}
-	if err := s.repo.Create(r.Context(), p); err != nil {
-		log.Printf("repo create: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to create debate")
+	res, err := s.svc.CreateDebate(r.Context(), debate.CreateDebateParams{
+		Topic:     req.Topic,
+		DebaterA:  req.DebaterA,
+		DebaterB:  req.DebaterB,
+		NumRounds: req.NumRounds,
+		Model:     req.Model,
+		MaxWords:  req.MaxWords,
+	})
+	if err != nil {
+		writeServiceError(w, err)
 		return
 	}
 
 	resp := createDebateResponse{
-		ID:         p.ID,
-		Topic:      p.Topic,
-		DebaterA:   debaterInfo{Name: a.Name, School: a.School},
-		DebaterB:   debaterInfo{Name: b.Name, School: b.School},
-		TotalSteps: len(stepsMeta),
+		ID:         res.Debate.ID,
+		Topic:      res.Debate.Topic,
+		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School},
+		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School},
+		TotalSteps: len(res.Steps),
 	}
-	for _, sm := range stepsMeta {
+	for _, sm := range res.Steps {
 		resp.Steps = append(resp.Steps, stepInfo{Key: sm.Key, Label: sm.Label})
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -304,250 +262,69 @@ type turnResult struct {
 	TotalOutputTokens int    `json:"total_output_tokens"`
 }
 
-// roleForStep maps a pipeline step key to the frontend-facing role label.
-// Matches the derivation in frontend/src/step-role.ts.
-func roleForStep(key string, a, b philosopher.Data) string {
-	switch key {
-	case "moderator_intro":
-		return "moderator"
-	case "critic_feedback":
-		return "critic"
-	case "final_verdict":
-		return "judge"
-	}
-	if strings.HasPrefix(key, philosopher.Key(a.Name)) {
-		return "a"
-	}
-	if strings.HasPrefix(key, philosopher.Key(b.Name)) {
-		return "b"
-	}
-	return "moderator"
-}
-
-// extractJSON strips common wrappers (```json … ``` fences, leading prose)
-// and returns the substring from the first '{' to the matching '}'. Returns
-// the empty string if no balanced object is found.
-func extractJSON(s string) string {
-	t := strings.TrimSpace(s)
-	if strings.HasPrefix(t, "```") {
-		// drop the opening fence line
-		if nl := strings.IndexByte(t, '\n'); nl >= 0 {
-			t = t[nl+1:]
-		}
-		if end := strings.LastIndex(t, "```"); end >= 0 {
-			t = t[:end]
-		}
-	}
-	start := strings.IndexByte(t, '{')
-	if start < 0 {
-		return ""
-	}
-	depth := 0
-	inStr := false
-	esc := false
-	for i := start; i < len(t); i++ {
-		c := t[i]
-		if inStr {
-			if esc {
-				esc = false
-				continue
-			}
-			if c == '\\' {
-				esc = true
-				continue
-			}
-			if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inStr = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return t[start : i+1]
-			}
-		}
-	}
-	return ""
-}
-
 func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
-	ctx := r.Context()
 
-	p, err := s.repo.Get(ctx, debateID)
-	if errors.Is(err, debate.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "Debate not found")
-		return
-	}
-	if err != nil {
-		log.Printf("repo get: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to load debate")
-		return
-	}
-
-	if p.Current >= debate.TotalSteps(p.NumRounds) {
-		writeError(w, http.StatusBadRequest, "Debate is already complete")
-		return
-	}
-
-	rt, err := debate.Hydrate(ctx, p, s.philMap)
-	if err != nil {
-		log.Printf("hydrate: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to hydrate debate")
-		return
-	}
-
-	step := rt.Steps[rt.Current]
-
-	rn, err := runner.New(runner.Config{
-		Agent:          step.Agent,
-		AppName:        "logos",
-		SessionService: rt.SessionService,
-	})
-	if err != nil {
-		log.Printf("runner create error: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to create runner")
-		return
-	}
-
-	msg := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{genai.NewPartFromText("continue")},
-	}
-
-	// Check if client wants SSE streaming
-	sse, isSSE := false, false
+	// Decide transport mode before invoking the service so we can wire an
+	// SSE token callback when the client negotiated streaming.
 	var sw *sseWriter
+	var sse bool
 	if wantsSSE(r) {
-		sw, isSSE = newSSEWriter(w)
-		if isSSE {
-			sse = true
-		}
+		sw, sse = newSSEWriter(w)
 	}
 
-	runCfg := agent.RunConfig{}
+	var onToken func(string)
 	if sse {
-		runCfg.StreamingMode = agent.StreamingModeSSE
+		onToken = sw.SendToken
 	}
 
-	var content string
-	var turnInput, turnOutput int
-	for event, err := range rn.Run(ctx, "web", rt.SessionID, msg, runCfg) {
-		if err != nil {
-			errMsg := fmt.Sprintf("runner error: %v", err)
-			log.Print(errMsg)
-			if sse {
-				sw.SendError(errMsg)
-			} else {
-				writeError(w, http.StatusInternalServerError, errMsg)
-			}
-			return
-		}
-
-		if event.UsageMetadata != nil {
-			if event.UsageMetadata.PromptTokenCount > 0 {
-				turnInput = int(event.UsageMetadata.PromptTokenCount)
-			}
-			if event.UsageMetadata.CandidatesTokenCount > 0 {
-				turnOutput = int(event.UsageMetadata.CandidatesTokenCount)
-			}
-		}
-
-		if event.Content != nil && len(event.Content.Parts) > 0 {
-			for _, part := range event.Content.Parts {
-				if part.Text != "" {
-					if sse && event.Partial {
-						sw.SendToken(part.Text)
-					}
-					content = part.Text
-				}
-			}
-		}
-	}
-
-	// Mutate the persisted snapshot.
-	if p.StepOutputs == nil {
-		p.StepOutputs = map[string]string{}
-	}
-	p.StepOutputs[step.Key] = content
-	p.TotalInputTokens += turnInput
-	p.TotalOutputTokens += turnOutput
-	stepIndex := p.Current
-	p.Current++
-
-	// If an interjection was pending for this step, mark it consumed and drop
-	// the staged text so the next Hydrate doesn't re-seed it.
-	for i := range p.Interjections {
-		it := &p.Interjections[i]
-		if it.BeforeStepIndex == stepIndex && it.ConsumedByKey == "" {
-			it.ConsumedByKey = step.Key
-			p.PendingInterjection = ""
-			break
-		}
-	}
-
-	if err := s.repo.Update(ctx, p); err != nil {
-		// Concurrent write (another /next or /interject won the race). The
-		// generated turn used a stale view of the debate, so we discard it
-		// and let the client refetch state and retry.
-		if errors.Is(err, debate.ErrVersionConflict) {
-			const msg = "debate state changed concurrently; refresh and retry"
-			if sse {
-				sw.SendError(msg)
-			} else {
-				writeError(w, http.StatusConflict, msg)
-			}
-			return
-		}
-		log.Printf("repo update: %v", err)
+	res, err := s.svc.NextTurn(r.Context(), debateID, onToken)
+	if err != nil {
 		if sse {
-			sw.SendError("failed to save debate state")
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to save debate state")
+			sw.SendError(serviceErrorMessage(err))
+			return
 		}
+		writeServiceError(w, err)
 		return
 	}
 
-	role := roleForStep(step.Key, rt.DebaterA, rt.DebaterB)
-
-	var structured any
-	if step.Key == "critic_feedback" || step.Key == "final_verdict" {
-		if raw := extractJSON(content); raw != "" {
-			var parsed any
-			if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
-				structured = parsed
-			} else {
-				log.Printf("failed to parse %s JSON: %v", step.Key, err)
-			}
-		}
+	out := turnResult{
+		Key:               res.Step.Key,
+		Label:             res.Step.Label,
+		Author:            res.AgentName,
+		Role:              res.Role,
+		Content:           res.Content,
+		Structured:        res.Structured,
+		StepIndex:         res.StepIndex,
+		TotalSteps:        res.TotalSteps,
+		Done:              res.Done,
+		TurnInputTokens:   res.TurnInputTokens,
+		TurnOutputTokens:  res.TurnOutputTokens,
+		TotalInputTokens:  res.TotalInputTokens,
+		TotalOutputTokens: res.TotalOutputTokens,
 	}
-
-	result := turnResult{
-		Key:               step.Key,
-		Label:             step.Label,
-		Author:            step.Agent.Name(),
-		Role:              role,
-		Content:           content,
-		Structured:        structured,
-		StepIndex:         stepIndex,
-		TotalSteps:        debate.TotalSteps(p.NumRounds),
-		Done:              p.Current >= debate.TotalSteps(p.NumRounds),
-		TurnInputTokens:   turnInput,
-		TurnOutputTokens:  turnOutput,
-		TotalInputTokens:  p.TotalInputTokens,
-		TotalOutputTokens: p.TotalOutputTokens,
-	}
-
 	if sse {
-		sw.SendDone(result)
-	} else {
-		writeJSON(w, http.StatusOK, result)
+		sw.SendDone(out)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// serviceErrorMessage returns the user-facing message for a service error,
+// used when the transport has already committed to SSE and can't emit an HTTP
+// status code.
+func serviceErrorMessage(err error) string {
+	var ve *debate.ValidationError
+	switch {
+	case errors.Is(err, debate.ErrNotFound):
+		return "Debate not found"
+	case errors.Is(err, debate.ErrVersionConflict):
+		return "debate state changed concurrently; refresh and retry"
+	case errors.As(err, &ve):
+		return ve.Msg
+	default:
+		log.Printf("service error (sse): %v", err)
+		return "internal error"
 	}
 }
 
@@ -601,7 +378,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := roleForStep(req.StepKey, a, b)
+	role := debate.RoleForStep(req.StepKey, a, b)
 	voice, style, ok := voiceForStep(role, a, b)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "step is not speakable")
@@ -663,7 +440,6 @@ type interjectResponse struct {
 
 func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
-	ctx := r.Context()
 
 	defer r.Body.Close()
 	var req interjectRequest
@@ -671,80 +447,13 @@ func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	text := strings.TrimSpace(req.Text)
-	if text == "" {
-		writeError(w, http.StatusBadRequest, "interjection text is empty")
+
+	it, err := s.svc.Interject(r.Context(), debateID, req.Text)
+	if err != nil {
+		writeServiceError(w, err)
 		return
 	}
-	if len(text) > interjectionMaxLen {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("interjection exceeds %d characters", interjectionMaxLen))
-		return
-	}
-
-	// Retry on version conflict: the read-modify-write here is cheap and
-	// pure, so we transparently re-run it if another writer advanced the
-	// debate between Get and Update.
-	const maxAttempts = 5
-	var it debate.Interjection
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		p, err := s.repo.Get(ctx, debateID)
-		if errors.Is(err, debate.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "Debate not found")
-			return
-		}
-		if err != nil {
-			log.Printf("repo get: %v", err)
-			writeError(w, http.StatusInternalServerError, "failed to load debate")
-			return
-		}
-		a, b, ok := s.debaters(p)
-		if !ok {
-			writeError(w, http.StatusInternalServerError, "unknown philosopher in debate")
-			return
-		}
-
-		stepsMeta := debate.BuildStepMeta(a, b, p.NumRounds)
-		if p.Current >= len(stepsMeta) {
-			writeError(w, http.StatusBadRequest, "Debate is already complete")
-			return
-		}
-		if p.Current == 0 {
-			writeError(w, http.StatusBadRequest, "Cannot interject before the moderator has spoken")
-			return
-		}
-		next := stepsMeta[p.Current]
-		role := roleForStep(next.Key, a, b)
-		if (role != "a" && role != "b") || !roundStepKeyRe.MatchString(next.Key) {
-			writeError(w, http.StatusBadRequest, "Interjections are only allowed before a round turn")
-			return
-		}
-		for _, existing := range p.Interjections {
-			if existing.BeforeStepIndex == p.Current && existing.ConsumedByKey == "" {
-				writeError(w, http.StatusBadRequest, "An interjection is already pending for this gap")
-				return
-			}
-		}
-
-		p.PendingInterjection = formatInterjection(text)
-		it = debate.Interjection{
-			Text:            text,
-			BeforeStepIndex: p.Current,
-		}
-		p.Interjections = append(p.Interjections, it)
-
-		err = s.repo.Update(ctx, p)
-		if err == nil {
-			writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})
-			return
-		}
-		if errors.Is(err, debate.ErrVersionConflict) {
-			continue
-		}
-		log.Printf("repo update: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to stage interjection")
-		return
-	}
-	writeError(w, http.StatusConflict, "debate state changed concurrently; please retry")
+	writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})
 }
 
 // ── POST /suggest-topic ─────────────────────────────────────────────────────
@@ -922,4 +631,3 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"detail": msg})
 }
-

@@ -31,11 +31,13 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 	models := []config.ModelEntry{{ID: "test-model", Name: "Test Model"}}
 	seedConfig(t, models)
 	repo := debate.NewMemoryRepo()
+	philMap := map[string]philosopher.Data{phils[0].Name: phils[0], phils[1].Name: phils[1]}
 	s := &Server{
 		philosophers: phils,
-		philMap:      map[string]philosopher.Data{phils[0].Name: phils[0], phils[1].Name: phils[1]},
+		philMap:      philMap,
 		models:       models,
 		repo:         repo,
+		svc:          debate.NewService(repo, philMap),
 	}
 	return s, New(phils, models, repo)
 }
@@ -203,7 +205,7 @@ func TestInterject_ValidationErrors(t *testing.T) {
 		t.Fatalf("repo.Create: %v", err)
 	}
 
-	long := strings.Repeat("x", interjectionMaxLen+1)
+	long := strings.Repeat("x", debate.InterjectionMaxLen+1)
 	cases := []struct {
 		name   string
 		body   string
@@ -320,52 +322,3 @@ func TestParseTopicList(t *testing.T) {
 	}
 }
 
-func TestExtractJSON(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{`{"a":1}`, `{"a":1}`},
-		{"```json\n{\"a\":1}\n```", `{"a":1}`},
-		{`prose before {"x":"y"} end`, `{"x":"y"}`},
-		{`{"a":"has } brace","b":2}`, `{"a":"has } brace","b":2}`},
-		{`no json here`, ``},
-		{`{"a":1`, ``},
-	}
-	for _, c := range cases {
-		if got := extractJSON(c.in); got != c.want {
-			t.Fatalf("extractJSON(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-func TestRoleForStep(t *testing.T) {
-	a := philosopher.Data{Name: "Socrates"}
-	b := philosopher.Data{Name: "Kant"}
-	cases := map[string]string{
-		"moderator_intro":      "moderator",
-		"critic_feedback":      "critic",
-		"final_verdict":        "judge",
-		"socrates_r1":          "a",
-		"kant_r2":              "b",
-		"kant_critic_response": "b",
-		"unknown":              "moderator",
-	}
-	for key, want := range cases {
-		if got := roleForStep(key, a, b); got != want {
-			t.Fatalf("roleForStep(%q) = %q, want %q", key, got, want)
-		}
-	}
-}
-
-func TestFormatInterjection(t *testing.T) {
-	if formatInterjection("  ") != "" {
-		t.Fatalf("whitespace-only should format to empty string")
-	}
-	got := formatInterjection("first\nsecond")
-	if !strings.Contains(got, "Audience Challenge") {
-		t.Fatalf("missing header: %q", got)
-	}
-	if !strings.Contains(got, "> first") || !strings.Contains(got, "> second") {
-		t.Fatalf("multi-line quoting broken: %q", got)
-	}
-}
