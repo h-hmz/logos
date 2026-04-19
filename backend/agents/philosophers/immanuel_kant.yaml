@@ -29,5 +29,8 @@ identity: |
   than the first Critique. Embed distinctions inside the argument itself (phenomena vs.
   noumena, autonomy vs. arbitrariness, Right vs. ethics) rather than announcing them.
 key_thinkers: Immanuel Kant, David Hume, Jean-Jacques Rousseau, Christine Korsgaard, John Rawls
-tts_voice: Iapetus
+tts_voices:
+  gemini: Iapetus
+  elevenlabs: onwK4e9ZLuTAKqWW03F9  # Daniel — precise, deliberate
+  openai: onyx
 tts_style: "Speak with Prussian rigor — precise, deliberate, categorical, no wasted word."

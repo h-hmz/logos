@@ -144,23 +144,70 @@ export async function interject(debateId: string, text: string): Promise<Interje
   return data.interjection as Interjection
 }
 
-// synthesizeTurn calls the backend TTS endpoint for a given step and returns
-// the raw audio blob (audio/wav). Throws on non-200 with the server's detail.
-export async function synthesizeTurn(
+// streamTTS calls the backend TTS endpoint and yields Float32 PCM chunks as
+// they arrive. Returns the sample rate (from the Content-Type rate= param)
+// alongside an async iterator. When the server falls back to a non-streaming
+// response (audio/wav), the WAV header is stripped and the payload yielded
+// as a single chunk.
+export interface TTSStream {
+  sampleRate: number
+  chunks: AsyncGenerator<Float32Array, void, unknown>
+}
+
+export async function streamTTS(
   debateId: string,
   stepKey: string,
   text: string,
-): Promise<Blob> {
+): Promise<TTSStream> {
   const res = await fetch(`/debates/${debateId}/tts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ step_key: stepKey, text }),
   })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: 'TTS failed' }))
-    throw new Error(err.detail ?? 'TTS failed')
+  if (!res.ok || !res.body) {
+    const err = await res.json?.().catch(() => ({ detail: 'TTS failed' }))
+    throw new Error(err?.detail ?? 'TTS failed')
   }
-  return res.blob()
+  const ct = res.headers.get('Content-Type') ?? ''
+  const isWav = ct.includes('audio/wav')
+  const m = /rate=(\d+)/.exec(ct)
+  const sampleRate = m ? parseInt(m[1], 10) : 24000
+
+  async function* chunks(): AsyncGenerator<Float32Array, void, unknown> {
+    const reader = res.body!.getReader()
+    // Carry holds leftover bytes across reads so we only emit full int16 samples.
+    let carry = new Uint8Array(0)
+    let skip = isWav ? 44 : 0 // RIFF header length for PCM WAV
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (!value || value.length === 0) continue
+
+      let incoming: Uint8Array = value
+      if (skip > 0) {
+        if (incoming.length <= skip) { skip -= incoming.length; continue }
+        incoming = incoming.subarray(skip)
+        skip = 0
+      }
+
+      const merged = new Uint8Array(carry.length + incoming.length)
+      merged.set(carry, 0)
+      merged.set(incoming, carry.length)
+      const usable = merged.length - (merged.length % 2)
+      if (usable === 0) { carry = merged; continue }
+
+      // Copy into a fresh aligned buffer so Int16Array can read it directly.
+      const aligned = merged.slice(0, usable)
+      carry = merged.subarray(usable)
+
+      const i16 = new Int16Array(aligned.buffer, aligned.byteOffset, usable / 2)
+      const f32 = new Float32Array(i16.length)
+      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768
+      yield f32
+    }
+  }
+
+  return { sampleRate, chunks: chunks() }
 }
 
 export async function nextTurn(debateId: string): Promise<TurnResult> {

@@ -16,5 +16,8 @@ identity: |
   rule and establish a classless, stateless society where the free development of each is
   the condition for the free development of all.
 key_thinkers: Karl Marx, Friedrich Engels, Rosa Luxemburg, Antonio Gramsci, György Lukács
-tts_voice: Algenib
+tts_voices:
+  gemini: Algenib
+  elevenlabs: pqHfZKP75CvOlQylNhV4  # Bill — gravelly, polemical
+  openai: onyx
 tts_style: "Speak with gravelly polemical force — declarative, dialectical, confrontational."

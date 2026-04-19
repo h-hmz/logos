@@ -4,8 +4,8 @@ import { InlineMd } from '../components/InlineMd'
 import { TokenPill } from '../components/TokenPill'
 import {
   interject,
+  streamTTS,
   streamTurn,
-  synthesizeTurn,
   type CriticFinding,
   type DebateSession,
   type Interjection,
@@ -122,8 +122,9 @@ function SpokenText({ text, activeIndex, asParagraphs }: SpokenTextProps) {
   )
 }
 
-// PlayButton synthesizes TTS for a single step on first click and replays the
-// cached blob on subsequent clicks. A second click while playing pauses.
+// PlayButton streams TTS for a step via Web Audio and plays chunks as they
+// arrive (first audio in ~1-2s). On completion, caches the full PCM so
+// replay and seek are instant.
 interface PlayButtonProps {
   debateId: string
   stepKey: string
@@ -135,97 +136,227 @@ interface PlayButtonProps {
 }
 
 function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onStateChange }: PlayButtonProps) {
-  const [state, setState] = useState<'idle' | 'loading' | 'playing' | 'paused' | 'error'>('idle')
+  const [state, setState] = useState<'idle' | 'loading' | 'streaming' | 'playing' | 'paused' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [pos, setPos] = useState(0)
   const [dur, setDur] = useState(0)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const urlRef = useRef<string | null>(null)
+
+  const ctxRef = useRef<AudioContext | null>(null)
+  const sampleRateRef = useRef(24000)
+  const pcmChunksRef = useRef<Float32Array[]>([])
+  const totalSamplesRef = useRef(0)
+  const sourcesRef = useRef<AudioBufferSourceNode[]>([])
+  const fullBufferRef = useRef<AudioBuffer | null>(null)
+  // AudioContext-time anchors: playback started at playStart, clock at pause stashed in pauseOffset.
+  const playStartRef = useRef(0)
+  const nextScheduleRef = useRef(0)
+  const pauseOffsetRef = useRef(0)
+  const doneRef = useRef(false)
+  const tickerRef = useRef<number | null>(null)
+  const endTimerRef = useRef<number | null>(null)
+
+  const ensureCtx = useCallback((sampleRate: number): AudioContext => {
+    if (!ctxRef.current) {
+      const AC = (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)
+      ctxRef.current = new AC({ sampleRate })
+    }
+    return ctxRef.current
+  }, [])
+
+  const clearTicker = useCallback(() => {
+    if (tickerRef.current !== null) { window.clearInterval(tickerRef.current); tickerRef.current = null }
+  }, [])
+  const clearEndTimer = useCallback(() => {
+    if (endTimerRef.current !== null) { window.clearTimeout(endTimerRef.current); endTimerRef.current = null }
+  }, [])
+
+  const stopAll = useCallback(() => {
+    for (const s of sourcesRef.current) { try { s.onended = null; s.stop() } catch { /* noop */ } }
+    sourcesRef.current = []
+    clearTicker()
+    clearEndTimer()
+  }, [clearTicker, clearEndTimer])
 
   useEffect(() => {
     return () => {
-      audioRef.current?.pause()
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current)
+      stopAll()
+      if (ctxRef.current) { try { ctxRef.current.close() } catch { /* noop */ } ctxRef.current = null }
     }
+  }, [stopAll])
+
+  const startTicker = useCallback(() => {
+    clearTicker()
+    tickerRef.current = window.setInterval(() => {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      const t = Math.max(0, ctx.currentTime - playStartRef.current)
+      const cap = doneRef.current ? totalSamplesRef.current / sampleRateRef.current : t
+      const clamped = Math.min(t, cap)
+      setPos(clamped)
+      onTime?.(clamped)
+      if (doneRef.current) {
+        const totalDur = totalSamplesRef.current / sampleRateRef.current
+        if (t >= totalDur) {
+          stopAll()
+          setPos(totalDur)
+          onTime?.(totalDur)
+          setState('idle')
+          onStateChange?.(false)
+          pauseOffsetRef.current = 0
+        }
+      }
+    }, 80)
+  }, [clearTicker, onStateChange, onTime, stopAll])
+
+  const scheduleChunk = useCallback((f32: Float32Array) => {
+    const ctx = ctxRef.current
+    if (!ctx) return
+    const buf = ctx.createBuffer(1, f32.length, sampleRateRef.current)
+    // Channel view uses a plain ArrayBuffer; the f32 we receive may be
+    // backed by ArrayBufferLike, so copy via the buffer's own channel data.
+    buf.getChannelData(0).set(f32)
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(ctx.destination)
+    const when = Math.max(ctx.currentTime, nextScheduleRef.current)
+    if (nextScheduleRef.current === 0) {
+      playStartRef.current = when
+    }
+    src.start(when)
+    nextScheduleRef.current = when + buf.duration
+    sourcesRef.current.push(src)
   }, [])
 
-  const attachAudio = useCallback((audio: HTMLAudioElement) => {
-    audio.onended = () => {
-      setState('idle')
-      const d = audio.duration || 0
-      setPos(d)
-      onTime?.(d)
-      onStateChange?.(false)
-    }
-    audio.onpause = () => {
-      setState((s) => (s === 'playing' ? 'paused' : s))
-      onStateChange?.(false)
-    }
-    audio.onplay = () => onStateChange?.(true)
-    audio.onerror = () => { setState('error'); setErrorMsg('playback failed'); onStateChange?.(false) }
-    audio.ontimeupdate = () => {
-      setPos(audio.currentTime)
-      onTime?.(audio.currentTime)
-    }
-    audio.onloadedmetadata = () => {
-      // Some browsers report Infinity for streamed blobs until played through.
-      if (Number.isFinite(audio.duration)) {
-        setDur(audio.duration)
-        onDuration?.(audio.duration)
-      }
-    }
-    audio.ondurationchange = () => {
-      if (Number.isFinite(audio.duration)) {
-        setDur(audio.duration)
-        onDuration?.(audio.duration)
-      }
-    }
-  }, [onTime, onDuration, onStateChange])
-
   const onToggle = useCallback(async () => {
-    if (state === 'playing') {
-      audioRef.current?.pause()
+    // Pause while streaming or playing.
+    if (state === 'playing' || state === 'streaming') {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      pauseOffsetRef.current = ctx.currentTime - playStartRef.current
+      try { await ctx.suspend() } catch { /* noop */ }
+      clearTicker()
+      setState('paused')
+      onStateChange?.(false)
       return
     }
-    if (audioRef.current && (state === 'paused' || state === 'error')) {
-      try { await audioRef.current.play(); setState('playing') } catch { /* noop */ }
+
+    // Resume from pause.
+    if (state === 'paused') {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      try { await ctx.resume() } catch { /* noop */ }
+      startTicker()
+      setState(doneRef.current ? 'playing' : 'streaming')
+      onStateChange?.(true)
       return
     }
+
+    // Replay from a completed stream: rebuild a single source from the cached
+    // full buffer so subsequent plays are instant and seekable.
+    if (state === 'idle' && doneRef.current && fullBufferRef.current) {
+      const ctx = ctxRef.current!
+      stopAll()
+      nextScheduleRef.current = 0
+      const src = ctx.createBufferSource()
+      src.buffer = fullBufferRef.current
+      src.connect(ctx.destination)
+      const when = ctx.currentTime
+      playStartRef.current = when
+      nextScheduleRef.current = when + fullBufferRef.current.duration
+      src.start(when)
+      sourcesRef.current = [src]
+      setPos(0)
+      onTime?.(0)
+      startTicker()
+      setState('playing')
+      onStateChange?.(true)
+      return
+    }
+
+    // First click: stream from the server.
     try {
       setState('loading')
       setErrorMsg(null)
-      const blob = await synthesizeTurn(debateId, stepKey, text)
-      const url = URL.createObjectURL(blob)
-      urlRef.current = url
-      const audio = new Audio(url)
-      attachAudio(audio)
-      audioRef.current = audio
-      await audio.play()
-      setState('playing')
+      doneRef.current = false
+      pcmChunksRef.current = []
+      totalSamplesRef.current = 0
+      nextScheduleRef.current = 0
+      playStartRef.current = 0
+      pauseOffsetRef.current = 0
+      fullBufferRef.current = null
+
+      const { sampleRate, chunks } = await streamTTS(debateId, stepKey, text)
+      sampleRateRef.current = sampleRate
+      const ctx = ensureCtx(sampleRate)
+      if (ctx.state === 'suspended') await ctx.resume()
+
+      setState('streaming')
+      onStateChange?.(true)
+      startTicker()
+
+      for await (const chunk of chunks) {
+        pcmChunksRef.current.push(chunk)
+        totalSamplesRef.current += chunk.length
+        setDur(totalSamplesRef.current / sampleRate)
+        onDuration?.(totalSamplesRef.current / sampleRate)
+        scheduleChunk(chunk)
+      }
+
+      // Stream complete: build the unified buffer for replay/seek.
+      doneRef.current = true
+      const totalLen = totalSamplesRef.current
+      const unified = new Float32Array(totalLen)
+      let off = 0
+      for (const c of pcmChunksRef.current) { unified.set(c, off); off += c.length }
+      const full = ctx.createBuffer(1, totalLen, sampleRate)
+      full.getChannelData(0).set(unified)
+      fullBufferRef.current = full
+      // If we're still playing when stream ends, we'll flip to idle via the
+      // ticker once audio actually finishes.
+      setState((s) => (s === 'streaming' ? 'playing' : s))
     } catch (e) {
+      stopAll()
       setState('error')
       setErrorMsg(e instanceof Error ? e.message : 'TTS failed')
+      onStateChange?.(false)
     }
-  }, [state, debateId, stepKey, text, attachAudio])
+  }, [state, debateId, stepKey, text, ensureCtx, scheduleChunk, startTicker, stopAll, clearTicker, onDuration, onStateChange, onTime])
 
   const onSeek = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    const audio = audioRef.current
-    if (!audio) return
+    // Seek is only supported after streaming completes.
+    if (!doneRef.current || !fullBufferRef.current) return
+    const ctx = ctxRef.current
+    if (!ctx) return
     const t = parseFloat(e.target.value)
-    audio.currentTime = t
+    stopAll()
+    nextScheduleRef.current = 0
+    const src = ctx.createBufferSource()
+    src.buffer = fullBufferRef.current
+    src.connect(ctx.destination)
+    const when = ctx.currentTime
+    playStartRef.current = when - t
+    nextScheduleRef.current = when + (fullBufferRef.current.duration - t)
+    src.start(when, t)
+    sourcesRef.current = [src]
+    if (ctx.state === 'suspended') { ctx.resume().catch(() => {}) }
     setPos(t)
-  }, [])
+    onTime?.(t)
+    startTicker()
+    setState('playing')
+    onStateChange?.(true)
+  }, [onStateChange, onTime, startTicker, stopAll])
 
-  const icon = state === 'loading' ? '…' : state === 'playing' ? '⏸' : '▶'
+  const icon = state === 'loading' ? '…' : (state === 'playing' || state === 'streaming') ? '⏸' : '▶'
   const title = state === 'error'
     ? errorMsg ?? 'error'
-    : state === 'playing'
+    : state === 'playing' || state === 'streaming'
     ? 'Pause'
     : state === 'paused'
     ? 'Resume'
     : 'Read aloud'
-  const hasAudio = !!audioRef.current
+  const hasAudio = totalSamplesRef.current > 0
   const maxSeek = dur > 0 ? dur : 0
+  const seekDisabled = !doneRef.current
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -249,6 +380,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onS
             step={0.1}
             value={Math.min(pos, maxSeek)}
             onChange={onSeek}
+            disabled={seekDisabled}
             aria-label="Seek"
             style={{ width: 120, verticalAlign: 'middle' }}
           />

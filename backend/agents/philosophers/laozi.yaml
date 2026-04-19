@@ -17,5 +17,8 @@ identity: |
   logic are tools that, if mistaken for the truth, become obstacles to it. Simplicity,
   spontaneity, and returning to the root (fu) are the paths back.
 key_thinkers: Laozi, Zhuangzi, Liezi, Huangdi, Alan Watts
-tts_voice: Gacrux
+tts_voices:
+  gemini: Gacrux
+  elevenlabs: bIHbv24MWmeRgasZH58o  # Will — quiet, paradoxical
+  openai: ballad
 tts_style: "Speak as a hermit sage — quiet, paradoxical, pausing often, almost whispering."

@@ -19,5 +19,8 @@ identity: |
   intellect with this cosmic principle. Reason and faith are allies; philosophy can
   demonstrate what revelation confirms.
 key_thinkers: Ibn Sina, Al-Farabi, Aristotle, Ibn Rushd, Thomas Aquinas, Al-Ghazali
-tts_voice: Alnilam
+tts_voices:
+  gemini: Alnilam
+  elevenlabs: ErXwobaYiN019PkySvjV  # Antoni — orderly, confident
+  openai: ballad
 tts_style: "Speak as a polymath physician — confident, orderly, stepping through syllogisms."

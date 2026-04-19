@@ -229,6 +229,37 @@ Token counts are tracked cumulatively on the debate state and returned on every 
 | Model | `POST /debates` — `model` | Must be a valid id from `models.yaml` |
 | Data directory | `DATA_DIR` env var | Override path to `agents/` and `models.yaml` (default: binary directory) |
 
+### Environment Variables
+
+All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/.env.example)).
+
+**Main app — pick one auth path**
+
+| Variable | Required? | Purpose |
+|---|---|---|
+| `GOOGLE_CLOUD_PROJECT` | Vertex path | GCP project id. Uses Application Default Credentials (`gcloud auth application-default login`) — no key file needed. |
+| `GOOGLE_CLOUD_LOCATION` | Vertex path | GCP region (e.g. `global`, `us-central1`). |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Vertex path | Set to `TRUE` to route model calls through Vertex AI. |
+| `GOOGLE_API_KEY` | API-key path | Gemini API key. Used when not on Vertex; also the fallback TTS key (see below). |
+
+**Text-to-speech (all optional)**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TTS_ENABLED` | `FALSE` | Set to `TRUE` to expose the `/debates/{id}/tts` endpoint. |
+| `TTS_PROVIDER` | `gemini` | Which provider to use: `gemini`, `openai`, `mistral`, `elevenlabs`. Gemini TTS generates monolithically (~30–60s to first audio); `openai` genuinely streams. |
+| `TTS_MODEL` | `gemini-2.5-pro-preview-tts` | Model id for the selected provider. For OpenAI, leave unset or use `gpt-4o-mini-tts`. For Gemini, Pro preview is API-only; use `gemini-2.5-flash-preview-tts` to run TTS on Vertex. |
+| `TTS_API_KEY` | *(falls back to `GOOGLE_API_KEY`)* | TTS-specific Gemini API key. Lets the main app run on Vertex while TTS runs on the Gemini API. |
+| `OPENAI_API_KEY` | — | Required when `TTS_PROVIDER=openai`. |
+| `ELEVENLABS_API_KEY` | — | Required when `TTS_PROVIDER=elevenlabs`. Free tier gives 10k chars/month, no card required. |
+
+**Server**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PORT` | `8000` | HTTP listen port. |
+| `DATA_DIR` | *(binary directory)* | Path to the directory containing `agents/` and `models.yaml`. |
+
 ---
 
 ## Running

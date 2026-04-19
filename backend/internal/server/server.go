@@ -31,36 +31,62 @@ const (
 	interjectionMaxLen = 800
 )
 
-// Default voices for non-debater roles. Gemini prebuilt voice names.
-const (
-	moderatorVoice = "Charon"
-	criticVoice    = "Puck"
-	judgeVoice     = "Orus"
-	fallbackVoice  = "Kore"
-)
+// Non-debater role voices, keyed by provider then role. Falls back to the
+// "gemini" entry when the active provider has no override.
+var roleVoices = map[string]map[string]string{
+	"gemini": {
+		"moderator": "Charon",
+		"critic":    "Puck",
+		"judge":     "Orus",
+		"fallback":  "Kore",
+	},
+	"elevenlabs": {
+		"moderator": "JBFqnCBsd6RMkjVDRZzb", // George — warm, authoritative
+		"critic":    "onwK4e9ZLuTAKqWW03F9", // Daniel — sharp, incisive
+		"judge":     "nPczCjzI2devNBz1zQrb", // Brian — measured, grave
+		"fallback":  "pNInz6obpgDQGcFmaJgB", // Adam — neutral default
+	},
+	"openai": {
+		"moderator": "fable",
+		"critic":    "ash",
+		"judge":     "onyx",
+		"fallback":  "alloy",
+	},
+}
+
+func roleVoice(provider, role string) string {
+	if m, ok := roleVoices[provider]; ok {
+		if v := m[role]; v != "" {
+			return v
+		}
+	}
+	return roleVoices["gemini"][role]
+}
+
+// philosopherVoice picks the provider-specific voice from Data.TTSVoices,
+// or falls back to the provider's role fallback voice when no entry exists.
+func philosopherVoice(provider string, d philosopher.Data) string {
+	if v, ok := d.TTSVoices[provider]; ok && v != "" {
+		return v
+	}
+	return roleVoice(provider, "fallback")
+}
 
 // voiceForStep resolves the TTS voice and style for the given step role.
 // Returns ("", "", false) when the step should not be synthesized.
 func voiceForStep(role string, a, b philosopher.Data) (voice, style string, ok bool) {
+	provider := strings.ToLower(config.TTSProvider())
 	switch role {
 	case "a":
-		v := a.TTSVoice
-		if v == "" {
-			v = fallbackVoice
-		}
-		return v, a.TTSStyle, true
+		return philosopherVoice(provider, a), a.TTSStyle, true
 	case "b":
-		v := b.TTSVoice
-		if v == "" {
-			v = fallbackVoice
-		}
-		return v, b.TTSStyle, true
+		return philosopherVoice(provider, b), b.TTSStyle, true
 	case "moderator":
-		return moderatorVoice, "Speak with gravitas, like a seasoned debate moderator.", true
+		return roleVoice(provider, "moderator"), "Speak with gravitas, like a seasoned debate moderator.", true
 	case "critic":
-		return criticVoice, "Speak incisively, like a sharp academic critic.", true
+		return roleVoice(provider, "critic"), "Speak incisively, like a sharp academic critic.", true
 	case "judge":
-		return judgeVoice, "Speak with measured, judicial authority.", true
+		return roleVoice(provider, "judge"), "Speak with measured, judicial authority.", true
 	}
 	return "", "", false
 }
@@ -571,6 +597,29 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "TTS client unavailable")
 		return
 	}
+	// Prefer streaming when the provider supports it: first audio arrives in
+	// 1-3s instead of waiting for the full synthesis.
+	if streamer, ok := client.(tts.StreamSynthesizer); ok {
+		headerSent := false
+		onStart := func(rate int) {
+			w.Header().Set("Content-Type", fmt.Sprintf("audio/L16;rate=%d;channels=1", rate))
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-TTS-Voice", voice)
+			w.WriteHeader(http.StatusOK)
+			headerSent = true
+		}
+		if err := streamer.SynthesizeStream(ctx, text, voice, style, onStart, w); err != nil {
+			if !headerSent {
+				log.Printf("tts: stream step %s: %v", req.StepKey, err)
+				writeError(w, http.StatusBadGateway, "TTS synthesis failed")
+			} else {
+				log.Printf("tts: stream step %s (mid-stream): %v", req.StepKey, err)
+			}
+		}
+		return
+	}
+
+	// Fallback: blocking synthesis returning a self-contained WAV.
 	wav, err := client.Synthesize(ctx, text, voice, style)
 	if err != nil {
 		log.Printf("tts: synthesize step %s: %v", req.StepKey, err)

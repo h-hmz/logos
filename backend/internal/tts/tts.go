@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"sync"
@@ -20,6 +21,18 @@ import (
 // defaults. Implementations must be safe for concurrent use.
 type Synthesizer interface {
 	Synthesize(ctx context.Context, text, voice, style string) ([]byte, error)
+}
+
+// StreamSynthesizer is an optional capability: providers that can emit
+// audio progressively implement it so the server can stream raw 16-bit
+// little-endian mono PCM to the client. onStart fires exactly once, as
+// soon as the first chunk arrives and the sample rate is known — callers
+// should use it to flush response headers. Subsequent PCM chunks are
+// written to w (and w may be an http.Flusher to force partial delivery).
+type StreamSynthesizer interface {
+	Synthesizer
+	SynthesizeStream(ctx context.Context, text, voice, style string,
+		onStart func(sampleRate int), w io.Writer) error
 }
 
 // Factory builds a Synthesizer on demand. Factories run once per process

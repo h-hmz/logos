@@ -27,8 +27,12 @@ type Data struct {
 	Identity         string `yaml:"identity"`
 	KeyThinkers      string `yaml:"key_thinkers"`
 	EpistemicSources string `yaml:"epistemic_sources,omitempty"`
-	TTSVoice         string `yaml:"tts_voice,omitempty"         json:"-"`
-	TTSStyle         string `yaml:"tts_style,omitempty"         json:"-"`
+	// TTSVoices maps lowercase provider name (matching config.TTSProvider(),
+	// e.g. "gemini", "elevenlabs", "openai") to the voice identifier for that
+	// provider. The resolver falls back to the provider's built-in default
+	// when the current provider has no entry here.
+	TTSVoices map[string]string `yaml:"tts_voices,omitempty" json:"-"`
+	TTSStyle  string            `yaml:"tts_style,omitempty"  json:"-"`
 }
 
 var keyRe = regexp.MustCompile(`[^a-z0-9]+`)

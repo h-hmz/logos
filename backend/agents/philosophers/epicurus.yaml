@@ -17,5 +17,8 @@ identity: |
   simple pleasures; surround yourself with friends; examine your desires and distinguish
   the necessary from the vain.
 key_thinkers: Epicurus, Lucretius, Metrodorus, Philodemus, Democritus
-tts_voice: Umbriel
+tts_voices:
+  gemini: Umbriel
+  elevenlabs: ErXwobaYiN019PkySvjV  # Antoni — warm, well-rounded
+  openai: ballad
 tts_style: "Speak with easy-going warmth — serene, pleasure-measured, unhurried."

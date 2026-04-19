@@ -30,11 +30,17 @@ var (
 	ttsProvider  string
 	ttsModel     string
 	ttsAPIKey    string
+	openAIAPIKey     string
+	elevenLabsAPIKey string
 )
 
 const (
 	defaultTTSProvider = "gemini"
-	defaultTTSModel    = "gemini-2.5-flash-preview-tts"
+	// Pro preview TTS is noticeably less theatrical than Flash and follows
+	// style directives more faithfully (less accent/language bleed). Only
+	// served on the Gemini API backend — override via TTS_MODEL if running
+	// TTS on Vertex.
+	defaultTTSModel = "gemini-2.5-pro-preview-tts"
 )
 
 // Load reads the .env file and models.yaml, populating package-level state.
@@ -54,13 +60,13 @@ func Load(envPath, modelsPath string) error {
 	if ttsModel == "" {
 		ttsModel = defaultTTSModel
 	}
+	// Resolution order: explicit TTS override, then the app-wide Google key.
 	ttsAPIKey = os.Getenv("TTS_API_KEY")
 	if ttsAPIKey == "" {
 		ttsAPIKey = os.Getenv("GOOGLE_API_KEY")
 	}
-	if ttsAPIKey == "" {
-		ttsAPIKey = os.Getenv("GEMINI_API_KEY")
-	}
+	openAIAPIKey = os.Getenv("OPENAI_API_KEY")
+	elevenLabsAPIKey = os.Getenv("ELEVENLABS_API_KEY")
 
 	data, err := os.ReadFile(modelsPath)
 	if err != nil {
@@ -89,6 +95,8 @@ func TTSEnabled() bool     { return ttsEnabled }
 func TTSProvider() string  { return ttsProvider }
 func TTSModel() string     { return ttsModel }
 func TTSAPIKey() string    { return ttsAPIKey }
+func OpenAIAPIKey() string     { return openAIAPIKey }
+func ElevenLabsAPIKey() string { return elevenLabsAPIKey }
 
 // ValidModel returns true if modelID matches a configured model.
 func ValidModel(modelID string) bool {

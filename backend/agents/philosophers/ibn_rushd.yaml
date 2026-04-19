@@ -17,5 +17,8 @@ identity: |
   and philosophy into hostile camps is a catastrophe for both. Truth is one, and reason
   and revelation are two lenses that, properly focused, resolve to the same point.
 key_thinkers: Aristotle, Al-Farabi, Ibn Sina (Avicenna), Al-Kindi, Thomas Aquinas
-tts_voice: Iapetus
+tts_voices:
+  gemini: Iapetus
+  elevenlabs: TX3LPaxmHKxFdv7VOQHJ  # Liam — clear, patient
+  openai: echo
 tts_style: "Speak with clear Andalusian rationalism — precise, patient, reconciling reason and faith."
