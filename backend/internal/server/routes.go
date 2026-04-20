@@ -41,10 +41,14 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debat
 	}
 
 	r := chi.NewRouter()
+	r.Use(requestIDMiddleware)
+	r.Use(accessLogMiddleware)
+	r.Use(recoverMiddleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"http://localhost:5173"},
 		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders: []string{"Accept", "Content-Type"},
+		AllowedHeaders: []string{"Accept", "Content-Type", "X-Request-Id"},
+		ExposedHeaders: []string{"X-Request-Id"},
 	}))
 
 	r.Get("/models", s.listModels)

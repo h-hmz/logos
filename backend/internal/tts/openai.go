@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -141,7 +141,7 @@ func (c *openaiClient) SynthesizeStream(
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			if !firstLogged {
-				log.Printf("tts[openai]: first chunk after %s model=%s", time.Since(startT), c.model)
+				slog.InfoContext(ctx, "tts[openai]: first chunk", "latency", time.Since(startT), "model", c.model)
 				firstLogged = true
 			}
 			chunkCount++
@@ -160,7 +160,9 @@ func (c *openaiClient) SynthesizeStream(
 			return fmt.Errorf("openai tts stream: read: %w", rerr)
 		}
 	}
-	log.Printf("tts[openai]: stream done chunks=%d bytes=%d total=%s",
-		chunkCount, totalBytes, time.Since(startT))
+	slog.InfoContext(ctx, "tts[openai]: stream done",
+		"chunks", chunkCount,
+		"bytes", totalBytes,
+		"total_latency", time.Since(startT))
 	return nil
 }

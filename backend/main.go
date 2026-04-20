@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,7 +26,29 @@ func main() {
 	}
 }
 
+// contextHandler injects the request_id carried on ctx into every record, so
+// callers can keep using the package-level slog.*Context helpers instead of
+// threading a scoped logger through every layer.
+type contextHandler struct{ slog.Handler }
+
+func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
+	if id := server.RequestIDFromContext(ctx); id != "" {
+		r.AddAttrs(slog.String("request_id", id))
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h contextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return contextHandler{h.Handler.WithAttrs(attrs)}
+}
+
+func (h contextHandler) WithGroup(name string) slog.Handler {
+	return contextHandler{h.Handler.WithGroup(name)}
+}
+
 func run(ctx context.Context, w io.Writer, args []string) error {
+	slog.SetDefault(slog.New(contextHandler{slog.NewJSONHandler(w, nil)}))
+
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -53,7 +75,7 @@ func run(ctx context.Context, w io.Writer, args []string) error {
 	if err != nil {
 		return fmt.Errorf("philosophers: %w", err)
 	}
-	log.Printf("Loaded %d philosophers", len(philosophers))
+	slog.Info("Loaded philosophers", "count", len(philosophers))
 
 	repo, err := buildRepo(ctx)
 	if err != nil {
@@ -74,7 +96,7 @@ func run(ctx context.Context, w io.Writer, args []string) error {
 	srvErr := make(chan error, 1)
 
 	go func() {
-		log.Printf("Logos listening on %s", httpServer.Addr)
+		slog.Info("Logos listening", "addr", httpServer.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			srvErr <- err
 		}
@@ -84,7 +106,7 @@ func run(ctx context.Context, w io.Writer, args []string) error {
 	case err := <-srvErr:
 		return fmt.Errorf("server startup failed: %w", err)
 	case <-ctx.Done():
-		log.Println("Interrupt signal received, initiating graceful shutdown...")
+		slog.Info("Interrupt signal received, initiating graceful shutdown...")
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
@@ -105,7 +127,7 @@ func buildRepo(ctx context.Context) (debate.Repository, error) {
 	backend := strings.ToLower(strings.TrimSpace(os.Getenv("STORAGE_BACKEND")))
 	switch backend {
 	case "", "memory":
-		log.Printf("storage: in-memory")
+		slog.Info("storage: in-memory")
 		return debate.NewMemoryRepo(), nil
 	case "firestore":
 		projectID := config.Project()
@@ -125,7 +147,7 @@ func buildRepo(ctx context.Context) (debate.Repository, error) {
 		if dbLabel == "" {
 			dbLabel = "(default)"
 		}
-		log.Printf("storage: firestore project=%s database=%s collection=%s", projectID, dbLabel, collection)
+		slog.Info("storage: firestore", "project", projectID, "database", dbLabel, "collection", collection)
 		return repo, nil
 	default:
 		return nil, fmt.Errorf("unknown STORAGE_BACKEND=%q (want memory|firestore)", backend)

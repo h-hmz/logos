@@ -1,9 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -12,7 +13,7 @@ import (
 )
 
 // writeServiceError maps domain errors to HTTP responses.
-func writeServiceError(w http.ResponseWriter, err error) {
+func writeServiceError(ctx context.Context, w http.ResponseWriter, err error) {
 	var ve *debate.ValidationError
 	switch {
 	case errors.Is(err, debate.ErrNotFound):
@@ -22,7 +23,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case errors.As(err, &ve):
 		writeError(w, http.StatusBadRequest, ve.Msg)
 	default:
-		log.Printf("service error: %v", err)
+		slog.ErrorContext(ctx, "service error", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
 }
@@ -30,7 +31,7 @@ func writeServiceError(w http.ResponseWriter, err error) {
 // serviceErrorMessage returns the user-facing message for a service error,
 // used when the transport has already committed to SSE and can't emit an HTTP
 // status code.
-func serviceErrorMessage(err error) string {
+func serviceErrorMessage(ctx context.Context, err error) string {
 	var ve *debate.ValidationError
 	switch {
 	case errors.Is(err, debate.ErrNotFound):
@@ -40,7 +41,7 @@ func serviceErrorMessage(err error) string {
 	case errors.As(err, &ve):
 		return ve.Msg
 	default:
-		log.Printf("service error (sse): %v", err)
+		slog.ErrorContext(ctx, "service error (sse)", "error", err)
 		return "internal error"
 	}
 }
@@ -92,7 +93,7 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 		MaxWords:  req.MaxWords,
 	})
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(r.Context(), w, err)
 		return
 	}
 
@@ -135,7 +136,7 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	var sw *sseWriter
 	var sse bool
 	if wantsSSE(r) {
-		sw, sse = newSSEWriter(w)
+		sw, sse = newSSEWriter(r.Context(), w)
 	}
 
 	var onToken func(string)
@@ -146,10 +147,10 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	res, err := s.svc.NextTurn(r.Context(), debateID, onToken)
 	if err != nil {
 		if sse {
-			sw.SendError(serviceErrorMessage(err))
+			sw.SendError(serviceErrorMessage(r.Context(), err))
 			return
 		}
-		writeServiceError(w, err)
+		writeServiceError(r.Context(), w, err)
 		return
 	}
 
@@ -197,7 +198,7 @@ func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
 
 	it, err := s.svc.Interject(r.Context(), debateID, req.Text)
 	if err != nil {
-		writeServiceError(w, err)
+		writeServiceError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})

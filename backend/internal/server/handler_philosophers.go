@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -74,7 +74,7 @@ func (s *Server) suggestTopic(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	m, err := modelcache.Get(ctx, config.DefaultModel())
 	if err != nil {
-		log.Printf("suggest-topic: get model error: %v", err)
+		slog.ErrorContext(ctx, "suggest-topic: get model error", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to get model")
 		return
 	}
@@ -106,7 +106,7 @@ Respond with **only the 5 topics**, one per line, no numbering, no bullets, no p
 		Instruction: instruction,
 	})
 	if err != nil {
-		log.Printf("suggest-topic: create agent error: %v", err)
+		slog.ErrorContext(ctx, "suggest-topic: create agent error", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create agent")
 		return
 	}
@@ -117,7 +117,7 @@ Respond with **only the 5 topics**, one per line, no numbering, no bullets, no p
 		UserID:  "web",
 	})
 	if err != nil {
-		log.Printf("suggest-topic: create session error: %v", err)
+		slog.ErrorContext(ctx, "suggest-topic: create session error", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
@@ -128,7 +128,7 @@ Respond with **only the 5 topics**, one per line, no numbering, no bullets, no p
 		SessionService: svc,
 	})
 	if err != nil {
-		log.Printf("suggest-topic: runner create error: %v", err)
+		slog.ErrorContext(ctx, "suggest-topic: runner create error", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create runner")
 		return
 	}
@@ -141,7 +141,7 @@ Respond with **only the 5 topics**, one per line, no numbering, no bullets, no p
 	var raw string
 	for event, runErr := range rn.Run(ctx, "web", createResp.Session.ID(), msg, agent.RunConfig{}) {
 		if runErr != nil {
-			log.Printf("suggest-topic: runner error: %v", runErr)
+			slog.ErrorContext(ctx, "suggest-topic: runner error", "error", runErr)
 			writeError(w, http.StatusInternalServerError, "runner error")
 			return
 		}

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -239,7 +239,7 @@ func (s *Service) NextTurn(ctx context.Context, debateID string, onToken func(st
 			if uerr := json.Unmarshal([]byte(raw), &parsed); uerr == nil {
 				structured = parsed
 			} else {
-				log.Printf("failed to parse %s JSON: %v", step.Key, uerr)
+				slog.ErrorContext(ctx, "failed to parse JSON from step output", "step_key", step.Key, "error", uerr)
 			}
 		}
 	}

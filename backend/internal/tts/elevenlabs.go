@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -154,8 +154,8 @@ func (c *elevenLabsClient) SynthesizeStream(
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			if !firstLogged {
-				log.Printf("tts[elevenlabs]: first chunk after %s model=%s",
-					time.Since(startT), c.model)
+				slog.InfoContext(ctx, "tts[elevenlabs]: first chunk",
+					"latency", time.Since(startT), "model", c.model)
 				firstLogged = true
 			}
 			chunkCount++
@@ -174,7 +174,9 @@ func (c *elevenLabsClient) SynthesizeStream(
 			return fmt.Errorf("elevenlabs tts stream: read: %w", rerr)
 		}
 	}
-	log.Printf("tts[elevenlabs]: stream done chunks=%d bytes=%d total=%s",
-		chunkCount, totalBytes, time.Since(startT))
+	slog.InfoContext(ctx, "tts[elevenlabs]: stream done",
+		"chunks", chunkCount,
+		"bytes", totalBytes,
+		"total_latency", time.Since(startT))
 	return nil
 }

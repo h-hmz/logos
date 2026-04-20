@@ -2,9 +2,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -18,9 +19,10 @@ func wantsSSE(r *http.Request) bool {
 type sseWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
+	ctx     context.Context
 }
 
-func newSSEWriter(w http.ResponseWriter) (*sseWriter, bool) {
+func newSSEWriter(ctx context.Context, w http.ResponseWriter) (*sseWriter, bool) {
 	f, ok := w.(http.Flusher)
 	if !ok {
 		return nil, false
@@ -28,7 +30,7 @@ func newSSEWriter(w http.ResponseWriter) (*sseWriter, bool) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	return &sseWriter{w: w, flusher: f}, true
+	return &sseWriter{w: w, flusher: f, ctx: ctx}, true
 }
 
 // sendEvent marshals payload and writes it as the named SSE event.
@@ -37,7 +39,7 @@ func newSSEWriter(w http.ResponseWriter) (*sseWriter, bool) {
 func (s *sseWriter) sendEvent(event string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("sse marshal %s: %v", event, err)
+		slog.ErrorContext(s.ctx, "sse marshal failed", "event", event, "error", err)
 		data = []byte(`{"error":"marshal failed"}`)
 	}
 	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data)

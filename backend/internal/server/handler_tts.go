@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -39,7 +39,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		log.Printf("repo get: %v", err)
+		slog.ErrorContext(r.Context(), "failed to load debate", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load debate")
 		return
 	}
@@ -75,7 +75,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	client, err := tts.Shared(ctx)
 	if err != nil || client == nil {
-		log.Printf("tts: client unavailable: %v", err)
+		slog.ErrorContext(ctx, "tts client unavailable", "error", err)
 		writeError(w, http.StatusServiceUnavailable, "TTS client unavailable")
 		return
 	}
@@ -92,10 +92,10 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := streamer.SynthesizeStream(ctx, text, voice, style, onStart, w); err != nil {
 			if !headerSent {
-				log.Printf("tts: stream step %s: %v", req.StepKey, err)
+				slog.ErrorContext(ctx, "tts stream step failed", "step_key", req.StepKey, "error", err)
 				writeError(w, http.StatusBadGateway, "TTS synthesis failed")
 			} else {
-				log.Printf("tts: stream step %s (mid-stream): %v", req.StepKey, err)
+				slog.ErrorContext(ctx, "tts stream step interrupted mid-stream", "step_key", req.StepKey, "error", err)
 			}
 		}
 		return
@@ -104,7 +104,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	// Fallback: blocking synthesis returning a self-contained WAV.
 	wav, err := client.Synthesize(ctx, text, voice, style)
 	if err != nil {
-		log.Printf("tts: synthesize step %s: %v", req.StepKey, err)
+		slog.ErrorContext(ctx, "tts synthesize step failed", "step_key", req.StepKey, "error", err)
 		writeError(w, http.StatusBadGateway, "TTS synthesis failed")
 		return
 	}

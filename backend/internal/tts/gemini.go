@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -154,8 +154,11 @@ func (c *geminiClient) SynthesizeStream(
 		}
 		chunkCount++
 		totalBytes += len(pcm)
-		log.Printf("tts[gemini]: chunk %d size=%d elapsed=%s model=%s",
-			chunkCount, len(pcm), time.Since(startT), c.model)
+		slog.InfoContext(ctx, "tts[gemini]: chunk",
+			"chunk", chunkCount,
+			"size", len(pcm),
+			"elapsed", time.Since(startT),
+			"model", c.model)
 		if !started {
 			onStart(sampleRateFromMime(mime))
 			started = true
@@ -167,8 +170,10 @@ func (c *geminiClient) SynthesizeStream(
 			flusher.Flush()
 		}
 	}
-	log.Printf("tts[gemini]: stream done chunks=%d bytes=%d total=%s",
-		chunkCount, totalBytes, time.Since(startT))
+	slog.InfoContext(ctx, "tts[gemini]: stream done",
+		"chunks", chunkCount,
+		"bytes", totalBytes,
+		"total_latency", time.Since(startT))
 	if !started {
 		return fmt.Errorf("gemini tts stream: no audio produced")
 	}
