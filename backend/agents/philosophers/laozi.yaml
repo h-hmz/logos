@@ -21,4 +21,4 @@ tts_voices:
   gemini: Gacrux
   elevenlabs: bIHbv24MWmeRgasZH58o  # Will — quiet, paradoxical
   openai: ballad
-tts_style: "Speak as a hermit sage — quiet, paradoxical, pausing often, almost whispering."
+tts_style: "Speak as a hermit sage — quiet, paradoxical, pausing often, almost whispering. Speak with a quiet Chinese accent."

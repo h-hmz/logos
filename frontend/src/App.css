@@ -210,6 +210,10 @@ button { font-family: inherit; }
 .cursor { display: inline-block; width: 0.5ch; background: var(--accent); color: transparent; animation: blink 1s steps(2, start) infinite; margin-left: 1px; }
 @keyframes blink { 50% { background: transparent; } }
 
+/* ============ Spinner ============ */
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
 /* ============ Stage (landing) ============ */
 .stage {
   display: grid; grid-template-columns: 1.1fr 1fr; gap: 56px;
@@ -234,12 +238,12 @@ button { font-family: inherit; }
 .corner .hdr .k { font-family: var(--sc); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent-ink); }
 .corner .hdr .swap { font-family: var(--mono); font-size: 10px; color: var(--ink-soft); cursor: pointer; background: none; border: none; padding: 0; }
 .corner .hdr .swap:hover { color: var(--accent); }
-.corner .body { display: flex; gap: 12px; flex: 1; }
-.corner .body .bust { flex: 0 0 80px; width: 80px; }
-.corner .body .meta { flex: 1; min-width: 0; }
+.corner .body { display: grid; grid-template-columns: 80px 1fr; column-gap: 12px; row-gap: 10px; flex: 1; align-content: start; }
+.corner .body .bust-container { grid-column: 1; grid-row: 1; }
+.corner .body .meta { grid-column: 2; grid-row: 1; min-width: 0; }
 .corner .body .meta .name { font-family: var(--serif-d); font-size: 22px; font-weight: 500; line-height: 1.1; margin-bottom: 4px; }
-.corner .body .meta .school { font-family: var(--sc); font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent-ink); margin-bottom: 8px; }
-.corner .body .meta .quote { font-family: var(--serif); font-size: 13px; font-style: italic; color: var(--ink-soft); line-height: 1.45; }
+.corner .body .meta .school { font-family: var(--sc); font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent-ink); margin-bottom: 0; }
+.corner .body .quote { grid-column: 1 / -1; font-family: var(--serif); font-size: 13px; font-style: italic; color: var(--ink-soft); line-height: 1.45; }
 .corner.empty .empty-msg { margin: auto; text-align: center; color: var(--ink-soft); font-style: italic; font-size: 17px; }
 
 .versus {
@@ -621,6 +625,10 @@ button { font-family: inherit; }
 }
 [data-theme="dark"] .curtain.moderator h2 { color: var(--ink); }
 [data-theme="dark"] .curtain.moderator .body-text { color: var(--ink-2); }
+
+[data-theme="dark"] .curtain.audience {
+  background: linear-gradient(180deg, #362a1a 0%, #24180e 100%);
+}
 
 /* Hatching fallback for busts without an avatar — lighten strokes on dark */
 [data-theme="dark"] .bust.h-cross::before { background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(239,224,194,0.07) 4px 5px); }

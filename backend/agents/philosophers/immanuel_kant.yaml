@@ -33,4 +33,4 @@ tts_voices:
   gemini: Iapetus
   elevenlabs: onwK4e9ZLuTAKqWW03F9  # Daniel — precise, deliberate
   openai: onyx
-tts_style: "Speak with Prussian rigor — precise, deliberate, categorical, no wasted word."
+tts_style: "Speak with Prussian rigor — precise, deliberate, categorical, no wasted word. Speak with a measured German accent."

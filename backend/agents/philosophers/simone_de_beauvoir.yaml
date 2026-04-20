@@ -14,4 +14,4 @@ tts_voices:
   gemini: Autonoe
   elevenlabs: Xb7hH8MSUJpSbSDYk0k2  # Alice — British, confident, cutting
   openai: nova
-tts_style: "Speak as a sharp French existentialist — bright, assured, cutting."
+tts_style: "Speak as a sharp French existentialist — bright, assured, cutting. Speak with a crisp Parisian French accent."

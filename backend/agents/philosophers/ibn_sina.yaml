@@ -23,4 +23,4 @@ tts_voices:
   gemini: Alnilam
   elevenlabs: ErXwobaYiN019PkySvjV  # Antoni — orderly, confident
   openai: ballad
-tts_style: "Speak as a polymath physician — confident, orderly, stepping through syllogisms."
+tts_style: "Speak as a polymath physician — confident, orderly, stepping through syllogisms. Speak with a warm Persian accent."

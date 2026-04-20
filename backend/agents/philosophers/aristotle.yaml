@@ -20,4 +20,4 @@ tts_voices:
   gemini: Rasalgethi
   elevenlabs: nPczCjzI2devNBz1zQrb  # Brian — deep, narrative lecturer
   openai: echo
-tts_style: "Speak as a lecturing Peripatetic — informative, precise, unhurried, classifying as you go."
+tts_style: "Speak as a lecturing Peripatetic — informative, precise, unhurried, classifying as you go. Speak with a subtle Ancient Greek cadence."

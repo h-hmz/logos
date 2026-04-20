@@ -21,4 +21,4 @@ tts_voices:
   gemini: Iapetus
   elevenlabs: TX3LPaxmHKxFdv7VOQHJ  # Liam — clear, patient
   openai: echo
-tts_style: "Speak with clear Andalusian rationalism — precise, patient, reconciling reason and faith."
+tts_style: "Speak with clear Andalusian rationalism — precise, patient, reconciling reason and faith. Speak with a subtle Andalusian-Arabic accent."

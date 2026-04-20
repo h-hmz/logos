@@ -21,4 +21,4 @@ tts_voices:
   gemini: Umbriel
   elevenlabs: ErXwobaYiN019PkySvjV  # Antoni — warm, well-rounded
   openai: ballad
-tts_style: "Speak with easy-going warmth — serene, pleasure-measured, unhurried."
+tts_style: "Speak with easy-going warmth — serene, pleasure-measured, unhurried. Speak with a soft Ancient Greek lilt."

@@ -15,4 +15,4 @@ tts_voices:
   gemini: Umbriel
   elevenlabs: bIHbv24MWmeRgasZH58o  # Will — gentle, earnest
   openai: ballad
-tts_style: "Speak as a Victorian utilitarian — mild, earnest, morally attentive."
+tts_style: "Speak as a Victorian utilitarian — mild, earnest, morally attentive. Speak with a refined Victorian English accent."

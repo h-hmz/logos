@@ -20,4 +20,4 @@ tts_voices:
   gemini: Algenib
   elevenlabs: pqHfZKP75CvOlQylNhV4  # Bill — gravelly, polemical
   openai: onyx
-tts_style: "Speak with gravelly polemical force — declarative, dialectical, confrontational."
+tts_style: "Speak with gravelly polemical force — declarative, dialectical, confrontational. Speak with a heavy German accent."

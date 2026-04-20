@@ -35,4 +35,4 @@ tts_voices:
   gemini: Enceladus
   elevenlabs: SOYHLrjzK2X1ezoPC6cr  # Harry — breathy, weary
   openai: ash
-tts_style: "Speak as a weary, emphatic German philosopher — breathy, ironic, with long pauses before key terms."
+tts_style: "Speak as a weary, emphatic German philosopher — breathy, ironic, with long pauses before key terms. Speak with a distinct German accent."

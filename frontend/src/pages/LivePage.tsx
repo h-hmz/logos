@@ -38,21 +38,35 @@ const INTERJECTION_MAX_LEN = 800
 
 // splitSentences breaks text into sentence-like chunks, keeping terminators.
 // Good enough for prose debate turns; doesn't try to handle "Dr.", "e.g.", etc.
+// It also ensures closing quotes, brackets, and markdown asterisks/underscores
+// are kept glued to the end of the sentence they terminate.
 function splitSentences(text: string): string[] {
-  const parts = text.match(/[^.!?\n]+[.!?]+[\s]*|[^.!?\n]+$/g)
+  const parts = text.match(/[^.!?\n]+[.!?]+["”')\]*_]*[\s]*|[^.!?\n]+$/g)
   if (!parts) return text.trim() ? [text] : []
   return parts.map((p) => p.trim()).filter(Boolean)
 }
 
+// Conservative speaking rate (chars/sec) used while the stream is still
+// arriving and the true total duration isn't known. Deliberately on the slow
+// side so the highlighter lags audio rather than racing ahead of it — catching
+// up feels natural, overshooting looks broken.
+const TTS_FALLBACK_CPS = 11
+
 // sentenceStarts returns the cumulative start time (seconds) of each sentence,
-// weighted proportionally by character count so longer sentences get more time.
-function sentenceStarts(sentences: string[], duration: number): number[] {
+// weighted proportionally by character count. Pass `finalDuration` only once
+// the full audio length is known (stream complete); while streaming, omit it
+// and we'll estimate from a conservative chars/sec fallback instead of
+// crushing the whole text into the partial duration received so far.
+function sentenceStarts(sentences: string[], finalDuration?: number): number[] {
   const weights = sentences.map((s) => Math.max(s.length, 1))
   const total = weights.reduce((a, b) => a + b, 0)
+  const effectiveDur = finalDuration && finalDuration > 0
+    ? finalDuration
+    : total / TTS_FALLBACK_CPS
   const starts: number[] = []
   let acc = 0
   for (const w of weights) {
-    starts.push((acc / total) * duration)
+    starts.push((acc / total) * effectiveDur)
     acc += w
   }
   return starts
@@ -97,11 +111,11 @@ function SpokenText({ text, activeIndex, asParagraphs }: SpokenTextProps) {
               style={
                 active
                   ? {
-                      background: 'color-mix(in srgb, var(--accent) 22%, transparent)',
-                      boxShadow: '0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent)',
-                      borderRadius: 2,
-                      transition: 'background 120ms linear',
-                    }
+                    background: 'color-mix(in srgb, var(--accent) 22%, transparent)',
+                    boxShadow: '0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent)',
+                    borderRadius: 2,
+                    transition: 'background 120ms linear',
+                  }
                   : undefined
               }
             >
@@ -132,10 +146,14 @@ interface PlayButtonProps {
   disabled?: boolean
   onTime?: (pos: number) => void
   onDuration?: (dur: number) => void
+  // Fires once when streaming ends with the true total duration. Consumers
+  // that need an accurate duration (e.g. sentence timing) should prefer this
+  // over onDuration, which reports partial values during streaming.
+  onFinalDuration?: (dur: number) => void
   onStateChange?: (playing: boolean) => void
 }
 
-function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onStateChange }: PlayButtonProps) {
+function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onFinalDuration, onStateChange }: PlayButtonProps) {
   const [state, setState] = useState<'idle' | 'loading' | 'streaming' | 'playing' | 'paused' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [pos, setPos] = useState(0)
@@ -304,6 +322,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onS
 
       // Stream complete: build the unified buffer for replay/seek.
       doneRef.current = true
+      onFinalDuration?.(totalSamplesRef.current / sampleRate)
       const totalLen = totalSamplesRef.current
       const unified = new Float32Array(totalLen)
       let off = 0
@@ -320,7 +339,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onS
       setErrorMsg(e instanceof Error ? e.message : 'TTS failed')
       onStateChange?.(false)
     }
-  }, [state, debateId, stepKey, text, ensureCtx, scheduleChunk, startTicker, stopAll, clearTicker, onDuration, onStateChange, onTime])
+  }, [state, debateId, stepKey, text, ensureCtx, scheduleChunk, startTicker, stopAll, clearTicker, onDuration, onFinalDuration, onStateChange, onTime])
 
   const onSeek = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     // Seek is only supported after streaming completes.
@@ -338,7 +357,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onS
     nextScheduleRef.current = when + (fullBufferRef.current.duration - t)
     src.start(when, t)
     sourcesRef.current = [src]
-    if (ctx.state === 'suspended') { ctx.resume().catch(() => {}) }
+    if (ctx.state === 'suspended') { ctx.resume().catch(() => { }) }
     setPos(t)
     onTime?.(t)
     startTicker()
@@ -346,14 +365,18 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onS
     onStateChange?.(true)
   }, [onStateChange, onTime, startTicker, stopAll])
 
-  const icon = state === 'loading' ? '…' : (state === 'playing' || state === 'streaming') ? '⏸' : '▶'
+  const icon = state === 'loading' ? (
+    <svg className="spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{ verticalAlign: '-1px' }}>
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  ) : (state === 'playing' || state === 'streaming') ? '⏸' : '▶'
   const title = state === 'error'
     ? errorMsg ?? 'error'
     : state === 'playing' || state === 'streaming'
-    ? 'Pause'
-    : state === 'paused'
-    ? 'Resume'
-    : 'Read aloud'
+      ? 'Pause'
+      : state === 'paused'
+        ? 'Resume'
+        : 'Read aloud'
   const hasAudio = totalSamplesRef.current > 0
   const maxSeek = dur > 0 ? dur : 0
   const seekDisabled = !doneRef.current
@@ -547,11 +570,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     }
   }, [idx, debate.id, debate.total_steps, onTurnCompleted])
 
-  const back = useCallback(() => {
-    // Rewind view; buffers preserved.
-    setIdx((i) => Math.max(0, i - 1))
-  }, [])
-
   // Auto-advance: when a turn completes, wait 1.4s then kick off the next.
   const lastCompletedRef = useRef(-1)
   useEffect(() => {
@@ -567,22 +585,20 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     return () => clearTimeout(timer)
   }, [idx, auto, buffers, advance, debate.total_steps])
 
-  // Keyboard: → / Space advance, ← back, P auto toggle.
+  // Keyboard: → / Space advance, P auto toggle.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.code === 'ArrowRight' || e.code === 'Space') {
         e.preventDefault(); advance()
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault(); back()
       } else if (e.code === 'KeyP') {
         setAuto((v) => !v)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [advance, back])
+  }, [advance])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -742,7 +758,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         idx={idx}
         auto={auto}
         setAuto={setAuto}
-        onBack={back}
         onAdvance={advance}
         streaming={!!buffers[idx]?.streaming && !buffers[idx]?.done}
         canInterject={
@@ -859,10 +874,10 @@ interface CurtainProps {
 function ModeratorCurtain({ text, streaming, meta, error, debateId, stepKey }: CurtainProps) {
   const canPlay = !streaming && !!text && !!debateId && !!stepKey
   const [pos, setPos] = useState(0)
-  const [dur, setDur] = useState(0)
+  const [finalDur, setFinalDur] = useState<number | undefined>(undefined)
   const [playing, setPlaying] = useState(false)
   const sentences = useMemo(() => splitSentences(text), [text])
-  const starts = useMemo(() => sentenceStarts(sentences, dur), [sentences, dur])
+  const starts = useMemo(() => sentenceStarts(sentences, finalDur), [sentences, finalDur])
   const activeIdx = activeSentenceIndex(starts, pos, playing)
   return (
     <div className="curtain moderator">
@@ -890,7 +905,7 @@ function ModeratorCurtain({ text, streaming, meta, error, debateId, stepKey }: C
             stepKey={stepKey!}
             text={text}
             onTime={setPos}
-            onDuration={setDur}
+            onFinalDuration={setFinalDur}
             onStateChange={setPlaying}
           />
         )}
@@ -1018,10 +1033,10 @@ function JudgeCurtain({ streaming, done, meta, error, verdict, a, b, onSeeVerdic
     verdict?.ranking?.winner === 'A'
       ? a.name
       : verdict?.ranking?.winner === 'B'
-      ? b.name
-      : verdict?.ranking?.winner === 'draw'
-      ? 'Draw'
-      : null
+        ? b.name
+        : verdict?.ranking?.winner === 'draw'
+          ? 'Draw'
+          : null
   return (
     <div className="curtain judge">
       <div className="title-row">
@@ -1188,12 +1203,12 @@ function TurnBlock({ who, side, label, text, streaming, tokens, active, error, d
   const paragraphs = text.split(/\n\n+/).filter((p) => p.length > 0)
   if (paragraphs.length === 0) paragraphs.push('')
   const [pos, setPos] = useState(0)
-  const [dur, setDur] = useState(0)
+  const [finalDur, setFinalDur] = useState<number | undefined>(undefined)
   const [playing, setPlaying] = useState(false)
   // Flatten paragraphs to a linear sentence list to keep indices consistent
   // with what SpokenText renders internally.
   const allSentences = useMemo(() => paragraphs.flatMap(splitSentences), [text])
-  const starts = useMemo(() => sentenceStarts(allSentences, dur), [allSentences, dur])
+  const starts = useMemo(() => sentenceStarts(allSentences, finalDur), [allSentences, finalDur])
   const activeIdx = activeSentenceIndex(starts, pos, playing)
   return (
     <div className={`turn ${side}${active ? ' now' : ''}`}>
@@ -1214,7 +1229,7 @@ function TurnBlock({ who, side, label, text, streaming, tokens, active, error, d
                 stepKey={stepKey}
                 text={text}
                 onTime={setPos}
-                onDuration={setDur}
+                onFinalDuration={setFinalDur}
                 onStateChange={setPlaying}
               />
             )}
@@ -1247,14 +1262,13 @@ interface NextBarProps {
   idx: number
   auto: boolean
   setAuto: (v: boolean) => void
-  onBack: () => void
   onAdvance: () => void
   streaming: boolean
   canInterject: boolean
   onInterject: () => void
 }
 
-function NextBar({ debate, a, b, idx, auto, setAuto, onBack, onAdvance, streaming, canInterject, onInterject }: NextBarProps) {
+function NextBar({ debate, a, b, idx, auto, setAuto, onAdvance, streaming, canInterject, onInterject }: NextBarProps) {
   const total = debate.total_steps
   const atEnd = idx >= total
   const step = debate.steps[Math.min(idx, total - 1)]
@@ -1262,14 +1276,14 @@ function NextBar({ debate, a, b, idx, auto, setAuto, onBack, onAdvance, streamin
   const labelText = !step
     ? 'The bout is over'
     : role === 'moderator'
-    ? 'The moderator introduces the bout'
-    : role === 'critic'
-    ? 'The critic speaks next'
-    : role === 'judge'
-    ? 'The judge renders a verdict'
-    : role === 'a'
-    ? `${a.name} — ${trimmedLabel(step.label, a.name, b.name)}`
-    : `${b.name} — ${trimmedLabel(step.label, a.name, b.name)}`
+      ? 'The moderator introduces the bout'
+      : role === 'critic'
+        ? 'The critic speaks next'
+        : role === 'judge'
+          ? 'The judge renders a verdict'
+          : role === 'a'
+            ? `${a.name} — ${trimmedLabel(step.label, a.name, b.name)}`
+            : `${b.name} — ${trimmedLabel(step.label, a.name, b.name)}`
 
   return (
     <div className="next-bar">
@@ -1293,14 +1307,6 @@ function NextBar({ debate, a, b, idx, auto, setAuto, onBack, onAdvance, streamin
             title="Raise a question or counter-argument"
           >
             ⚡ Interject
-          </button>
-          <button
-            type="button"
-            className="btn ghost small"
-            onClick={onBack}
-            disabled={idx === 0 || streaming}
-          >
-            ← Back
           </button>
           <button
             type="button"

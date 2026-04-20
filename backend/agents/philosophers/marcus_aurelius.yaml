@@ -14,4 +14,4 @@ tts_voices:
   gemini: Rasalgethi
   elevenlabs: JBFqnCBsd6RMkjVDRZzb  # George — mature, austere
   openai: fable
-tts_style: "Speak as a stoic emperor in private reflection — measured, self-admonishing, austere."
+tts_style: "Speak as a stoic emperor in private reflection — measured, self-admonishing, austere. Speak with a refined Latin-Italian cadence."

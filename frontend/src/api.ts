@@ -91,6 +91,12 @@ export interface CreateDebateParams {
 
 // ── API ────────────────────────────────────────────────────────────────────────
 
+function getAuthHeader(): Record<string, string> {
+  // TODO: Replace with actual Firebase ID token when auth is integrated.
+  // The backend's noop verifier requires *some* Bearer token to be present.
+  return { 'Authorization': 'Bearer local-dev-token' }
+}
+
 export async function fetchModels(): Promise<Model[]> {
   const res = await fetch('/models')
   if (!res.ok) throw new Error('Failed to load models')
@@ -106,7 +112,7 @@ export async function fetchPhilosophers(): Promise<Philosopher[]> {
 export async function createDebate(params: CreateDebateParams): Promise<DebateSession> {
   const res = await fetch('/debates', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
     body: JSON.stringify(params),
   })
   if (!res.ok) {
@@ -119,7 +125,7 @@ export async function createDebate(params: CreateDebateParams): Promise<DebateSe
 export async function suggestTopics(debaterA: string, debaterB: string): Promise<string[]> {
   const res = await fetch('/suggest-topic', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
     body: JSON.stringify({ debater_a: debaterA, debater_b: debaterB }),
   })
   if (!res.ok) {
@@ -133,7 +139,7 @@ export async function suggestTopics(debaterA: string, debaterB: string): Promise
 export async function interject(debateId: string, text: string): Promise<Interjection> {
   const res = await fetch(`/debates/${debateId}/interject`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
     body: JSON.stringify({ text }),
   })
   if (!res.ok) {
@@ -161,7 +167,7 @@ export async function streamTTS(
 ): Promise<TTSStream> {
   const res = await fetch(`/debates/${debateId}/tts`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
     body: JSON.stringify({ step_key: stepKey, text }),
   })
   if (!res.ok || !res.body) {
@@ -211,7 +217,10 @@ export async function streamTTS(
 }
 
 export async function nextTurn(debateId: string): Promise<TurnResult> {
-  const res = await fetch(`/debates/${debateId}/next`, { method: 'POST' })
+  const res = await fetch(`/debates/${debateId}/next`, { 
+    method: 'POST',
+    headers: getAuthHeader(),
+  })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
     throw new Error(err.detail ?? 'Failed to advance debate')
@@ -229,7 +238,7 @@ export function streamTurn(
     try {
       const res = await fetch(`/debates/${debateId}/next`, {
         method: 'POST',
-        headers: { Accept: 'text/event-stream' },
+        headers: { Accept: 'text/event-stream', ...getAuthHeader() },
       })
       if (!res.ok || !res.body) {
         const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))

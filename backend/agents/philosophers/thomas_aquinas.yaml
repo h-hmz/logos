@@ -19,4 +19,4 @@ tts_voices:
   gemini: Schedar
   elevenlabs: CYw3kZ02Hs0563khs1Fj  # Dave — methodical, British
   openai: fable
-tts_style: "Speak as a methodical Scholastic — even, patient, numbering distinctions."
+tts_style: "Speak as a methodical Scholastic — even, patient, numbering distinctions. Speak with a gentle Italian-Latin cadence."

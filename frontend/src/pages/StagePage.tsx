@@ -355,14 +355,14 @@ function CornerSlot({ picked, label, onClear, active }: CornerSlotProps) {
         <button type="button" className="swap" onClick={onClear}>× remove</button>
       </div>
       <div className="body">
-        <div style={{ width: 80 }}>
+        <div className="bust-container">
           <Bust who={picked} size="sm" showSchool={false} />
         </div>
         <div className="meta">
           <div className="name">{picked.name}</div>
           <div className="school">{picked.school}</div>
-          {picked.oneliner && <div className="quote">&ldquo;{picked.oneliner}&rdquo;</div>}
         </div>
+        {picked.oneliner && <div className="quote">&ldquo;{picked.oneliner}&rdquo;</div>}
       </div>
     </div>
   )

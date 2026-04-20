@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"google.golang.org/genai"
@@ -15,6 +16,21 @@ import (
 
 // DefaultGeminiVoice is used when no per-speaker voice is configured.
 const DefaultGeminiVoice = "Kore"
+
+// buildGeminiPrompt combines a style directive with the text to speak using
+// the colon-delimited pattern from Google's TTS docs (e.g.
+// `Say cheerfully: Have a wonderful day!`). Gemini TTS treats everything
+// before the colon as a directive and speaks only what follows — keeping
+// them on a single logical block avoids the model reading the directive
+// aloud, which the previous `\n\n` separator was prone to.
+func buildGeminiPrompt(text, style string) string {
+	style = strings.TrimSpace(style)
+	if style == "" {
+		return text
+	}
+	style = strings.TrimRight(style, ".!?:;, ")
+	return style + ": " + text
+}
 
 // geminiAPIOnlyModels lists TTS models that are only served on the public
 // Gemini API (not yet available on Vertex AI). Selecting one of these
@@ -83,23 +99,20 @@ func (c *geminiClient) Synthesize(ctx context.Context, text, voice, style string
 	if voice == "" {
 		voice = DefaultGeminiVoice
 	}
-	prompt := text
-	if style != "" {
-		prompt = style + "\n\n" + text
+	cfg := &genai.GenerateContentConfig{
+		ResponseModalities: []string{"AUDIO"},
+		SpeechConfig: &genai.SpeechConfig{
+			VoiceConfig: &genai.VoiceConfig{
+				PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{VoiceName: voice},
+			},
+		},
 	}
-
+	prompt := buildGeminiPrompt(text, style)
 	resp, err := c.inner.Models.GenerateContent(
 		ctx,
 		c.model,
 		[]*genai.Content{{Role: "user", Parts: []*genai.Part{genai.NewPartFromText(prompt)}}},
-		&genai.GenerateContentConfig{
-			ResponseModalities: []string{"AUDIO"},
-			SpeechConfig: &genai.SpeechConfig{
-				VoiceConfig: &genai.VoiceConfig{
-					PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{VoiceName: voice},
-				},
-			},
-		},
+		cfg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gemini synthesize: %w", err)
@@ -124,11 +137,7 @@ func (c *geminiClient) SynthesizeStream(
 	if voice == "" {
 		voice = DefaultGeminiVoice
 	}
-	prompt := text
-	if style != "" {
-		prompt = style + "\n\n" + text
-	}
-
+	prompt := buildGeminiPrompt(text, style)
 	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{genai.NewPartFromText(prompt)}}}
 	cfg := &genai.GenerateContentConfig{
 		ResponseModalities: []string{"AUDIO"},

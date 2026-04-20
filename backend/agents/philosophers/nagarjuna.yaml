@@ -15,4 +15,4 @@ tts_voices:
   gemini: Algieba
   elevenlabs: cjVigY5qzO86Huf0OWal  # Eric — calm, dialectical
   openai: echo
-tts_style: "Speak with smooth dialectical calm — paradoxical, dismantling, gently insistent."
+tts_style: "Speak with smooth dialectical calm — paradoxical, dismantling, gently insistent. Speak with a soft Indian English accent."

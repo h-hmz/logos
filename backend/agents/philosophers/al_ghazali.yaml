@@ -18,4 +18,4 @@ tts_voices:
   gemini: Algenib
   elevenlabs: CYw3kZ02Hs0563khs1Fj  # Dave — British, grave
   openai: onyx
-tts_style: "Speak as a grave Sufi theologian — low, contemplative, with spiritual weight and patient cadence."
+tts_style: "Speak as a grave Sufi theologian — low, contemplative, with spiritual weight and patient cadence. Speak with a subtle Persian-Arabic accent."

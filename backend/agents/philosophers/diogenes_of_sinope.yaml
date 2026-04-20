@@ -20,4 +20,4 @@ tts_voices:
   gemini: Gacrux
   elevenlabs: VR6AewLTigWG4xSOukaG  # Arnold — crisp, biting
   openai: ash
-tts_style: "Speak as a gruff, defiant Cynic — unimpressed, barking, irreverent."
+tts_style: "Speak as a gruff, defiant Cynic — unimpressed, barking, irreverent. Speak with a rough Ancient Greek cadence."

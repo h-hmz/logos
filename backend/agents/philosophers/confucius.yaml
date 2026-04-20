@@ -22,4 +22,4 @@ tts_voices:
   gemini: Schedar
   elevenlabs: cjVigY5qzO86Huf0OWal  # Eric — calm, instructive
   openai: echo
-tts_style: "Speak as a measured sage — calm, even, gently instructive, with Confucian restraint."
+tts_style: "Speak as a measured sage — calm, even, gently instructive, with Confucian restraint. Speak with a gentle Chinese accent."

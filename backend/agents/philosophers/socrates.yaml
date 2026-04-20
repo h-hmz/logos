@@ -19,4 +19,4 @@ tts_voices:
   gemini: Sadaltager
   elevenlabs: iP95p4xoKVk53GoZ742B  # Chris — casual, probing
   openai: echo
-tts_style: "Speak with curious cunning — probing, ironic, feigning ignorance while leading."
+tts_style: "Speak with curious cunning — probing, ironic, feigning ignorance while leading. Speak with a sly Ancient Greek cadence."
