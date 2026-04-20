@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 
+	"github.com/h-hmz/logos/internal/auth"
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
@@ -26,8 +27,9 @@ type Server struct {
 	svc          *debate.Service
 }
 
-// New creates a chi router with all endpoints registered.
-func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debate.Repository) *chi.Mux {
+// New creates a chi router with all endpoints registered. The verifier gates
+// protected routes; pass auth.NewNoopVerifier() for local dev/tests.
+func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debate.Repository, verifier auth.Verifier) *chi.Mux {
 	philMap := make(map[string]philosopher.Data, len(philosophers))
 	for _, p := range philosophers {
 		philMap[p.Name] = p
@@ -47,19 +49,32 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debat
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"http://localhost:5173"},
 		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders: []string{"Accept", "Content-Type", "X-Request-Id"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
 		ExposedHeaders: []string{"X-Request-Id"},
 	}))
 
+	// Public routes:
+	r.Get("/healthz", s.healthz)
+	r.Get("/readyz", s.healthz)
 	r.Get("/models", s.listModels)
 	r.Get("/philosophers", s.listPhilosophers)
-	r.Post("/debates", s.createDebate)
-	r.Post("/debates/{debateID}/next", s.nextTurn)
-	r.Post("/debates/{debateID}/interject", s.interject)
-	r.Post("/debates/{debateID}/tts", s.synthesizeStep)
-	r.Post("/suggest-topic", s.suggestTopic)
+
+	// Protected routes:
+	r.Group(func(pr chi.Router) {
+		pr.Use(authMiddleware(verifier))
+		pr.Post("/debates", s.createDebate)
+		pr.Post("/debates/{debateID}/next", s.nextTurn)
+		pr.Post("/debates/{debateID}/interject", s.interject)
+		pr.Post("/debates/{debateID}/tts", s.synthesizeStep)
+		pr.Post("/suggest-topic", s.suggestTopic)
+	})
 
 	return r
+}
+
+// healthz is a liveness/readiness probe.
+func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 // debaters resolves the philosopher.Data pair referenced by a Persisted record.

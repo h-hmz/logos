@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/h-hmz/logos/internal/auth"
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
@@ -34,6 +35,9 @@ type contextHandler struct{ slog.Handler }
 func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := server.RequestIDFromContext(ctx); id != "" {
 		r.AddAttrs(slog.String("request_id", id))
+	}
+	if uid := server.UIDFromContext(ctx); uid != "" {
+		r.AddAttrs(slog.String("uid", uid))
 	}
 	return h.Handler.Handle(ctx, r)
 }
@@ -81,7 +85,11 @@ func run(ctx context.Context, w io.Writer, args []string) error {
 	if err != nil {
 		return fmt.Errorf("storage: %w", err)
 	}
-	router := server.New(philosophers, config.Models(), repo)
+	verifier, err := buildVerifier(ctx)
+	if err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+	router := server.New(philosophers, config.Models(), repo, verifier)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -117,6 +125,32 @@ func run(ctx context.Context, w io.Writer, args []string) error {
 	}
 
 	return nil
+}
+
+// buildVerifier selects the auth.Verifier implementation from AUTH_BACKEND.
+// Defaults to firebase in production; set AUTH_BACKEND=none for local dev to
+// skip the Firebase Admin SDK init. The noop verifier still rejects missing
+// tokens, so client code exercises the auth header path.
+func buildVerifier(ctx context.Context) (auth.Verifier, error) {
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("AUTH_BACKEND")))
+	switch backend {
+	case "none":
+		slog.Warn("auth: noop verifier (AUTH_BACKEND=none) — do not use in production")
+		return auth.NewNoopVerifier(), nil
+	case "", "firebase":
+		projectID := config.Project()
+		if projectID == "" {
+			return nil, fmt.Errorf("AUTH_BACKEND=firebase requires GOOGLE_CLOUD_PROJECT")
+		}
+		v, err := auth.NewFirebaseVerifier(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		slog.Info("auth: firebase", "project", projectID)
+		return v, nil
+	default:
+		return nil, fmt.Errorf("unknown AUTH_BACKEND=%q (want firebase|none)", backend)
+	}
 }
 
 // buildRepo selects the debate.Repository implementation from STORAGE_BACKEND.

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/h-hmz/logos/internal/auth"
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
@@ -39,7 +40,16 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 		repo:         repo,
 		svc:          debate.NewService(repo, philMap),
 	}
-	return s, New(phils, models, repo)
+	router := New(phils, models, repo, auth.NewNoopVerifier())
+	// Existing handler tests predate auth; inject a bearer so the noop verifier
+	// accepts them. Dedicated 401 coverage lives in auth_test.go.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer test")
+		}
+		router.ServeHTTP(w, r)
+	})
+	return s, handler
 }
 
 func seedConfig(t *testing.T, models []config.ModelEntry) {
