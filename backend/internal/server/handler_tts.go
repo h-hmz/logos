@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,16 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/tts"
 )
+
+// Parenthetical asides (often inline glosses like "asabiyya (social solidarity)")
+// read awkwardly aloud. Strip them — with any leading whitespace — before TTS.
+var parentheticalRE = regexp.MustCompile(`\s*\([^()]*\)`)
+
+func stripParentheticals(s string) string {
+	out := parentheticalRE.ReplaceAllString(s, "")
+	out = regexp.MustCompile(`[ \t]+`).ReplaceAllString(out, " ")
+	return strings.TrimSpace(out)
+}
 
 // ── POST /debates/{debateID}/tts ────────────────────────────────────────────
 
@@ -55,7 +66,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	text := strings.TrimSpace(req.Text)
+	text := stripParentheticals(req.Text)
 	if text == "" {
 		writeError(w, http.StatusBadRequest, "text is empty")
 		return
