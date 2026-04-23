@@ -19,7 +19,7 @@ export function Masthead({ route, debateId, navigate, theme, onToggleTheme }: Ma
   return (
     <header className="masthead">
       <button type="button" className="mark" onClick={() => navigate({ page: 'stage' })} aria-label="Home">
-        <div className="glyph">λ</div>
+        <img src={theme === 'dark' ? '/dark_owl.png' : '/warm_owl.png'} alt="Logos Owl" style={{ height: '40px', objectFit: 'contain' }} />
         <div className="name">LOGOS</div>
       </button>
       <nav>
