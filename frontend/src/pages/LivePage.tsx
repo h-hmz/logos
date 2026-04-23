@@ -2,6 +2,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type Chang
 import { Bust } from '../components/Bust'
 import { InlineMd } from '../components/InlineMd'
 import { TokenPill } from '../components/TokenPill'
+import { TutorPanel } from '../components/TutorPanel'
+import { NoctuaIcon } from '../components/NoctuaIcon'
 import {
   interject,
   streamTTS,
@@ -468,6 +470,14 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     } catch { return {} }
   })
   const [composerOpen, setComposerOpen] = useState(false)
+  const [selPopover, setSelPopover] = useState<{
+    x: number
+    y: number
+    text: string
+    turnKey: string
+  } | null>(null)
+  const [tutorTarget, setTutorTarget] = useState<{ selection: string; turnKey: string } | null>(null)
+  const [tutorPanelOpen, setTutorPanelOpen] = useState(false)
   const [auto, setAuto] = useState(true)
   const [totalIn, setTotalIn] = useState(() => {
     let max = 0
@@ -604,6 +614,47 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [idx])
 
+  // Detect text selection inside a completed philosopher turn body (marked with
+  // data-turn-key). Show a floating "Explore" button anchored to the selection
+  // that opens the tutor panel when clicked.
+  useEffect(() => {
+    const onMouseUp = (e: MouseEvent) => {
+      // Ignore clicks that originated inside the popover button itself.
+      const target = e.target as HTMLElement | null
+      if (target?.closest('[data-tutor-popover]')) return
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+        setSelPopover(null)
+        return
+      }
+      const text = sel.toString().trim()
+      if (!text) { setSelPopover(null); return }
+      const anchor = sel.anchorNode
+      const el = (anchor instanceof HTMLElement ? anchor : anchor?.parentElement) ?? null
+      const container = el?.closest('[data-turn-key]') as HTMLElement | null
+      if (!container) { setSelPopover(null); return }
+      const turnKey = container.dataset.turnKey
+      if (!turnKey) { setSelPopover(null); return }
+      const rect = sel.getRangeAt(0).getBoundingClientRect()
+      setSelPopover({
+        x: rect.left + rect.width / 2,
+        y: rect.top,
+        text,
+        turnKey,
+      })
+    }
+    const onSelectionChange = () => {
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed) setSelPopover(null)
+    }
+    document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => {
+      document.removeEventListener('mouseup', onMouseUp)
+      document.removeEventListener('selectionchange', onSelectionChange)
+    }
+  }, [])
+
   // Which steps should be visible? All steps with a buffer (started or finished),
   // rendered in order.
   const visibleIndexes = useMemo(() => {
@@ -615,7 +666,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   }, [buffers, debate.total_steps])
 
   return (
-    <main>
+    <main className={tutorTarget && tutorPanelOpen ? 'noctua-open' : undefined}>
       <LiveChrome
         debate={debate}
         a={a}
@@ -748,6 +799,53 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         <InterjectionComposer
           onSubmit={submitInterjection}
           onCancel={() => setComposerOpen(false)}
+        />
+      )}
+
+      {selPopover && (
+        <button
+          type="button"
+          data-tutor-popover
+          className="tutor-explore-btn"
+          style={{
+            position: 'fixed',
+            left: selPopover.x,
+            top: selPopover.y,
+            transform: 'translate(-50%, calc(-100% - 8px))',
+          }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            setTutorTarget({ selection: selPopover.text, turnKey: selPopover.turnKey })
+            setTutorPanelOpen(true)
+            setSelPopover(null)
+            window.getSelection()?.removeAllRanges()
+          }}
+        >
+          <NoctuaIcon size={16} />
+          <span>Ask Noctua</span>
+        </button>
+      )}
+
+      {tutorTarget && !tutorPanelOpen && (
+        <button
+          type="button"
+          className="tutor-resume-btn"
+          onClick={() => setTutorPanelOpen(true)}
+          title="Reopen Noctua with the latest exchange"
+        >
+          <NoctuaIcon size={18} />
+          <span>Resume with Noctua</span>
+        </button>
+      )}
+
+      {tutorTarget && (
+        <TutorPanel
+          key={`${tutorTarget.turnKey}|${tutorTarget.selection}`}
+          debateId={debate.id}
+          turnKey={tutorTarget.turnKey}
+          selection={tutorTarget.selection}
+          visible={tutorPanelOpen}
+          onClose={() => setTutorPanelOpen(false)}
         />
       )}
 
@@ -1200,6 +1298,7 @@ interface TurnBlockProps {
 }
 
 function TurnBlock({ who, side, label, text, streaming, tokens, active, error, debateId, stepKey }: TurnBlockProps) {
+  const selectable = !streaming && !!text && !!stepKey
   const paragraphs = text.split(/\n\n+/).filter((p) => p.length > 0)
   if (paragraphs.length === 0) paragraphs.push('')
   const [pos, setPos] = useState(0)
@@ -1235,7 +1334,10 @@ function TurnBlock({ who, side, label, text, streaming, tokens, active, error, d
             )}
           </span>
         </div>
-        <div className="body">
+        <div
+          className="body"
+          data-turn-key={selectable ? stepKey : undefined}
+        >
           {streaming ? (
             paragraphs.map((p, i) => (
               <p key={i} className={i === 0 ? 'drop' : ''}>

@@ -216,6 +216,93 @@ export async function streamTTS(
   return { sampleRate, chunks: chunks() }
 }
 
+// ── Tutor ──────────────────────────────────────────────────────────────────────
+
+export interface TutorMessage {
+  role: 'user' | 'tutor'
+  content: string
+}
+
+// Stream a tutor explanation via SSE; invokes onToken for each partial token
+// and resolves with the final content carried on the `done` event.
+export function streamTutor(
+  debateId: string,
+  body: { selection: string; turn_key: string; history: TutorMessage[] },
+  onToken: (text: string) => void,
+): Promise<string> {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const res = await fetch(`/debates/${debateId}/tutor`, {
+        method: 'POST',
+        headers: {
+          Accept: 'text/event-stream',
+          'Content-Type': 'application/json',
+          ...getAuthHeader(),
+        },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok || !res.body) {
+        const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
+        reject(new Error(err?.detail ?? 'Stream failed'))
+        return
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let finalContent: string | null = null
+      let errorMsg: string | null = null
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        let idx: number
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const raw = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+
+          let eventName = 'message'
+          const dataLines: string[] = []
+          for (const line of raw.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+          }
+          const data = dataLines.join('\n')
+
+          if (eventName === 'token') {
+            try {
+              const parsed = JSON.parse(data)
+              const text = typeof parsed === 'string' ? parsed : parsed?.text ?? ''
+              if (text) onToken(text)
+            } catch {
+              if (data) onToken(data)
+            }
+          } else if (eventName === 'done') {
+            try {
+              const parsed = JSON.parse(data) as { content?: string }
+              finalContent = parsed?.content ?? ''
+            } catch { /* noop */ }
+          } else if (eventName === 'error') {
+            try {
+              const parsed = JSON.parse(data)
+              errorMsg = parsed?.error ?? parsed?.detail ?? data
+            } catch {
+              errorMsg = data
+            }
+          }
+        }
+      }
+
+      if (errorMsg) { reject(new Error(errorMsg)); return }
+      if (finalContent !== null) { resolve(finalContent); return }
+      reject(new Error('Stream ended without a result'))
+    } catch (e) {
+      reject(e)
+    }
+  })
+}
+
 export async function nextTurn(debateId: string): Promise<TurnResult> {
   const res = await fetch(`/debates/${debateId}/next`, { 
     method: 'POST',

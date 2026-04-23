@@ -65,6 +65,7 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debat
 		pr.Post("/debates", s.createDebate)
 		pr.Post("/debates/{debateID}/next", s.nextTurn)
 		pr.Post("/debates/{debateID}/interject", s.interject)
+		pr.Post("/debates/{debateID}/tutor", s.tutorExplain)
 		pr.Post("/debates/{debateID}/tts", s.synthesizeStep)
 		pr.Post("/suggest-topic", s.suggestTopic)
 	})
