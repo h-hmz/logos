@@ -1032,7 +1032,7 @@ function CriticCurtain({ streaming, meta, error, finding, a, b }: CriticCurtainP
       {hasFinding ? (
         <CriticBody finding={finding!} a={a} b={b} />
       ) : (
-        <div className="body-text" style={{ fontStyle: 'italic', color: 'var(--ink-soft)' }}>
+        <div className="body-text" style={{ fontStyle: 'italic' }}>
           {streaming
             ? 'The critic reviews the exchange, weighing each argument for soundness and reach'
             : 'Awaiting the critic.'}
@@ -1142,7 +1142,7 @@ function JudgeCurtain({ streaming, done, meta, error, verdict, a, b, onSeeVerdic
         <h2>The matter is decided.</h2>
       </div>
       {streaming ? (
-        <div className="body-text" style={{ fontStyle: 'italic', color: 'var(--ink-soft)' }}>
+        <div className="body-text" style={{ fontStyle: 'italic' }}>
           The judge deliberates
           <span className="cursor">·</span>
         </div>
@@ -1164,7 +1164,7 @@ function JudgeCurtain({ streaming, done, meta, error, verdict, a, b, onSeeVerdic
           )}
         </div>
       ) : (
-        <div className="body-text" style={{ fontStyle: 'italic', color: 'var(--ink-soft)' }}>
+        <div className="body-text" style={{ fontStyle: 'italic' }}>
           Awaiting the judge.
         </div>
       )}
@@ -1178,7 +1178,7 @@ function JudgeCurtain({ streaming, done, meta, error, verdict, a, b, onSeeVerdic
             style={{
               background: 'var(--accent-2)',
               borderColor: 'var(--accent-2)',
-              color: 'var(--ink)',
+              color: '#1a1612',
             }}
             onClick={onSeeVerdict}
           >

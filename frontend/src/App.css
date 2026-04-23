@@ -630,6 +630,17 @@ button { font-family: inherit; }
   background: linear-gradient(180deg, #362a1a 0%, #24180e 100%);
 }
 
+/* Fix visibility for curtains that stay dark in dark mode (Critic, Judge) */
+[data-theme="dark"] .curtain:not(.moderator):not(.audience) {
+  color: var(--ink);
+}
+[data-theme="dark"] .curtain:not(.moderator):not(.audience) h2 {
+  color: var(--ink);
+}
+[data-theme="dark"] .critic-card-head .name {
+  color: var(--ink);
+}
+
 /* Hatching fallback for busts without an avatar — lighten strokes on dark */
 [data-theme="dark"] .bust.h-cross::before { background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(239,224,194,0.07) 4px 5px); }
 [data-theme="dark"] .bust.h-diag::before  { background-image: repeating-linear-gradient(-45deg, transparent 0 3px, rgba(239,224,194,0.08) 3px 4px); }
