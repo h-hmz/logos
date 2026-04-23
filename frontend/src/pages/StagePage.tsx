@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bust } from '../components/Bust'
 import { RuleOrnament } from '../components/RuleOrnament'
-import { createDebate, fetchModels, fetchPhilosophers, suggestTopics, type DebateSession, type Model, type Philosopher } from '../api'
+import { createDebate, fetchModels, fetchPhilosophers, type DebateSession, type Model, type Philosopher } from '../api'
 import { enrich, ERAS, type EnrichedPhilosopher } from '../philosopher-meta'
 
 interface Props {
@@ -9,17 +9,122 @@ interface Props {
 }
 
 const SUGGESTED_TOPICS = [
-  'Is capitalism inevitable?',
-  'Does a meaningful life require suffering?',
+  'Can artificial intelligence be conscious?',
+  'Do we have free will, or is everything determined?',
+  'What is the nature of time?',
+  'Is consciousness purely physical?',
+  'Is reality independent of perception?',
+  'Can morality exist without religion?',
+  'Is meaning something we find or create?',
+  'Is existence itself meaningful?',
+  'Do ends ever justify means?',
   'Should we fear, or welcome, our own obsolescence?',
+  'Is truth discovered or constructed?',
+  'Can we ever be objective?',
+  'Are values universal or relative?',
+  'Is justice universal or culturally defined?',
+  'What makes a person the same over time?',
+  'Should we prioritize individuals or collectives?',
   'Is freedom the absence of coercion, or the presence of options?',
-]
+  'Can ethics be scientific?',
+  'Is identity self-defined or socially imposed?',
+  'Should we pursue truth regardless of consequences?',
+  'Is authenticity possible in a social world?',
+  'Should we value stability over change?',
+  'Is progress inherently good?',
+  'Can knowledge be dangerous?',
+  'Is skepticism a virtue or a limitation?',
+  'Is power inherently corrupting?',
+  'Is punishment or rehabilitation more just?',
+  'Do we owe anything to future generations?',
+  'Is loyalty a virtue or a bias?',
+  'Can one live a good life without purpose?',
+  'Are humans naturally good or evil?',
+  'Can suffering be meaningful?',
+  'Does everything happen for a reason?',
+  'Is hope rational?',
+  'Should we always tell the truth?',
+  'Can love be rational?',
+  'Is autonomy more important than belonging?',
+  'Is security worth sacrificing freedom?',
+  'Can society exist without hierarchy?',
+  'Is democracy the best system?',
+  'Should morality evolve over time?',
+  'Should we trust intuition or reason?',
+  'Is curiosity inherently good?',
+  'Can one be moral without self-sacrifice?',
+  'Is self-interest compatible with morality?',
+  'Should we forgive everything?',
+  'Is revenge ever justified?',
+  'Can we truly know another person?',
+  'Is empathy always good?',
+  'Should we prioritize truth or kindness?',
+  'Is wisdom more valuable than knowledge?',
+  'Is certainty achievable?',
+  'Should we seek certainty or embrace ambiguity?',
+  'Can paradoxes be true?',
+  'Is beauty subjective or objective?',
+  'Does language shape thought?',
+  'Is boredom necessary for creativity?',
+  'Should we seek comfort or growth?',
+  'Is failure necessary for growth?',
+  'Is resilience learned or innate?',
+  'Is ambition inherently good?',
+  'Should success be measured individually or collectively?',
+  'Are emotions rational?',
+  'Is modern life alienating us?',
+  'Does technology distance us from ourselves?',
+  'Is innovation always beneficial?',
+  'Should we preserve the past or prioritize the future?',
+  'Is civilization progress or constraint?',
+  'Are traditions valuable or restrictive?',
+  'Is control an illusion?',
+  'Is simplicity superior to complexity?',
+  'Is nostalgia a distortion of truth?',
+  'Can happiness be objectively measured?',
+  'Do we control our desires?',
+  'Is mediocrity acceptable?',
+  'Should we aim for perfection?',
+  'Can we truly know ourselves?',
+  'Is privacy a fundamental right?',
+  'Are laws expressions of morality or control?',
+  'Is rebellion a moral duty?',
+  'Can one be free in a society?',
+  'Is discomfort necessary for growth?',
+  'Can altruism truly exist?',
+  'Are humans inherently selfish?',
+  'Does modern life improve human flourishing?',
+  'Should we fear uncertainty?',
+  'Is despair ever justified?',
+  'Can we build a just society?',
+  'Is loyalty to people stronger than loyalty to principles?',
+  'Is authenticity more important than acceptance?',
+  'Can one live ethically in an unjust system?',
+  'Is language enough to express reality?',
+  'Are emotions a guide to truth or a distraction from it?',
+  'Can humanity outgrow its need for myths?',
+  'Is the search for meaning itself meaningful?',
+  'Should we care more about being right or being good?',
+  'Is existence without struggle still valuable?',
+  'Can a person reinvent themselves completely?',
+  'Should we enhance humans with technology?',
+  'Does everything that matters resist measurement?',
+];
+
+function pickRandomTopics(n: number): string[] {
+  const pool = [...SUGGESTED_TOPICS]
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[pool[i], pool[j]] = [pool[j], pool[i]]
+  }
+  return pool.slice(0, n).sort((a, b) => a.length - b.length)
+}
 
 const ARCHIVE = [
-  { topic: 'Does a meaningful life require suffering?', a: 'Nagarjuna',     b: 'Marcus Aurelius', verdict: 'Split decision', tokens: '5,212' },
-  { topic: 'Can reason prove faith?',                   a: 'Al-Ghazali',    b: 'Ibn Rushd',       verdict: 'Al-Ghazali',    tokens: '4,890' },
-  { topic: 'Is the self real?',                         a: 'Nagarjuna',     b: 'Adi Shankara',    verdict: 'Draw',          tokens: '6,104' },
-  { topic: 'Liberty or solidarity?',                    a: 'John Stuart Mill', b: 'Karl Marx',      verdict: 'Marx',        tokens: '4,620' },
+  { topic: 'Is morality based on cultivating virtue, or on universal moral duties?',  a: 'Aristotle',  b: 'Immanuel Kant', verdict: 'Draw', tokens: '5,212' },
+  { topic: 'Are there limits to reason in understanding ultimate truth?',             a: 'Al-Ghazali', b: 'Ibn Rushd',     verdict: 'Al-Ghazali',    tokens: '4,890' },
+  { topic: 'Does capitalism promote human flourishing or exploitation?',              a: 'Karl Marx',  b: 'Adam Smith',   verdict: 'Draw',          tokens: '6,104' },
+  { topic: 'Should society be shaped by moral order or natural harmony?',             a: 'Confucius',  b: 'Laozi', verdict: 'Confucius',     tokens: '4,620' },
 ]
 
 export function StagePage({ onDebateCreated }: Props) {
@@ -34,8 +139,8 @@ export function StagePage({ onDebateCreated }: Props) {
   const [era, setEra] = useState<'All' | string>('All')
   const [slot, setSlot] = useState<'a' | 'b'>('a')
   const [loading, setLoading] = useState(false)
-  const [suggesting, setSuggesting] = useState(false)
-  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([])
+  const [suggestedTopics, setSuggestedTopics] = useState<string[]>(() => pickRandomTopics(5))
+  const [showSuggestions, setShowSuggestions] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -61,24 +166,9 @@ export function StagePage({ onDebateCreated }: Props) {
     if (slot === 'a') { setPickA(p); setSlot('b') } else { setPickB(p); setSlot('a') }
   }
 
-  const handleSuggest = async () => {
-    if (!pickA || !pickB || pickA.name === pickB.name || suggesting) return
-    setSuggesting(true)
-    setError(null)
-    try {
-      const topics = await suggestTopics(pickA.name, pickB.name)
-      setSuggestedTopics(topics)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
-    } finally {
-      setSuggesting(false)
-    }
+  const handleShuffleTopics = () => {
+    setSuggestedTopics(pickRandomTopics(5))
   }
-
-  // Clear pairing-specific suggestions when either corner changes.
-  useEffect(() => {
-    setSuggestedTopics([])
-  }, [pickA?.name, pickB?.name])
 
   const handleBegin = async () => {
     if (!canBegin || !pickA || !pickB) return
@@ -144,40 +234,56 @@ export function StagePage({ onDebateCreated }: Props) {
               placeholder="e.g. Is capitalism inevitable?"
               autoFocus
             />
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
-              {(suggestedTopics.length > 0 ? suggestedTopics : SUGGESTED_TOPICS).map((t) => (
+            {showSuggestions ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 6, marginTop: 10 }}>
+                {suggestedTopics.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className="chip"
+                    onClick={() => setTopic(t)}
+                    style={{ textAlign: 'center', padding: '8px 12px' }}
+                  >
+                    {t}
+                  </button>
+                ))}
                 <button
-                  key={t}
                   type="button"
                   className="chip"
-                  onClick={() => setTopic(t)}
-                >
-                  {t}
-                </button>
-              ))}
-              {pickA && pickB && pickA.name !== pickB.name && (
-                <button
-                  type="button"
-                  className="chip"
-                  onClick={handleSuggest}
-                  disabled={suggesting}
+                  onClick={handleShuffleTopics}
                   style={{
                     fontStyle: 'italic',
                     textTransform: 'none',
                     letterSpacing: '0.02em',
                     color: 'var(--accent-ink)',
                     borderStyle: 'dashed',
+                    textAlign: 'center',
+                    padding: '8px 12px',
+                    marginTop: 4,
                   }}
-                  title={`Propose topics for ${pickA.name} vs. ${pickB.name}`}
+                  title="Show different topics"
                 >
-                  {suggesting
-                    ? 'thinking…'
-                    : suggestedTopics.length > 0
-                    ? 'suggest again →'
-                    : 'suggest for this pairing →'}
+                  shuffle →
                 </button>
-              )}
-            </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="chip"
+                onClick={() => setShowSuggestions(true)}
+                style={{
+                  marginTop: 10,
+                  fontStyle: 'italic',
+                  textTransform: 'none',
+                  letterSpacing: '0.02em',
+                  color: 'var(--accent-ink)',
+                  borderStyle: 'dashed',
+                  padding: '8px 12px',
+                }}
+              >
+                need inspiration? →
+              </button>
+            )}
 
             <div className="corners" style={{ marginTop: 22 }}>
               <CornerSlot

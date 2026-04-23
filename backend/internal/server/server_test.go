@@ -307,28 +307,3 @@ type trackedBody struct {
 
 func (t *trackedBody) Close() error { t.closed = true; return nil }
 
-// ── Pure-function tests ─────────────────────────────────────────────────────
-
-func TestParseTopicList(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want []string
-	}{
-		{"a\nb\nc", []string{"a", "b", "c"}},
-		{"1. first\n2) second\n- third\n* fourth\n• fifth", []string{"first", "second", "third", "fourth", "fifth"}},
-		{"\"quoted\"\n'apostrophes'", []string{"quoted", "apostrophes"}},
-		{"  \n\nonly one\n\n", []string{"only one"}},
-	}
-	for _, c := range cases {
-		got := parseTopicList(c.raw)
-		if len(got) != len(c.want) {
-			t.Fatalf("parseTopicList(%q) = %v, want %v", c.raw, got, c.want)
-		}
-		for i, g := range got {
-			if g != c.want[i] {
-				t.Fatalf("parseTopicList(%q)[%d] = %q, want %q", c.raw, i, g, c.want[i])
-			}
-		}
-	}
-}
-
