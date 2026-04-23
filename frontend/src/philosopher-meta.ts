@@ -35,11 +35,13 @@ const META: Record<string, PhilosopherMeta> = {
   'Adam Smith':          { era: 'Modern',       dates: '1723',    hatch: 'h-dots',  oneliner: 'Not from the benevolence of the butcher do we expect our dinner, but from his self-interest.' },
   'Immanuel Kant':       { era: 'Modern',       dates: '1724',    hatch: 'h-cross', oneliner: 'Act only on maxims you could will to be universal law.' },
   'Friedrich Nietzsche': { era: 'Modern',       dates: '1844',    hatch: 'h-diag',  oneliner: 'God is dead — and we have killed him.' },
-  'B.R. Ambedkar':      { era: 'Modern',       dates: '1891',    hatch: 'h-horz',  oneliner: 'Caste is not a division of labour — it is a division of labourers, graded by contempt.' },
+  'David Hume':         { era: 'Modern',       dates: '1711',    hatch: 'h-horz',  oneliner: 'Reason is, and ought only to be, the slave of the passions.' },
+  'Jean-Jacques Rousseau': { era: 'Modern',    dates: '1712',    hatch: 'h-dots',  oneliner: 'Man is born free, and everywhere he is in chains.' },
   'Karl Marx':          { era: 'Modern',       dates: '1818',    hatch: 'h-horz',  oneliner: 'All history is the history of class struggle.' },
   'John Stuart Mill':   { era: 'Modern',       dates: '1806',    hatch: 'h-dots',  oneliner: 'Over himself, over his own body and mind, the individual is sovereign.' },
   'Simone de Beauvoir': { era: 'Modern',       dates: '1908',    hatch: 'h-diag',  oneliner: 'One is not born, but becomes, a woman.' },
   'Frantz Fanon':       { era: 'Contemporary', dates: '1925',    hatch: 'h-diag',  oneliner: 'The colonised man liberates himself by any means necessary.' },
+  'Friedrich Hayek':    { era: 'Contemporary', dates: '1899',    hatch: 'h-dots',  oneliner: 'The curious task of economics is to demonstrate how little we know of what we imagine we can design.' },
 }
 
 function hashCode(s: string): number {

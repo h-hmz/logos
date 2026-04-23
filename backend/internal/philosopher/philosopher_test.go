@@ -14,6 +14,7 @@ func TestKey(t *testing.T) {
 		{"Nagarjuna", "nagarjuna"},
 		{"Marcus Aurelius", "marcus_aurelius"},
 		{"Thomas Aquinas", "thomas_aquinas"},
+		{"Jean-Jacques Rousseau", "jean_jacques_rousseau"},
 		{"Karl Marx", "karl_marx"},
 	}
 	for _, tt := range tests {

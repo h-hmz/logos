@@ -188,7 +188,7 @@ Creates a new debate session. Returns the full step manifest.
 {
   "topic": "Is capitalism inevitable?",
   "debater_a": "Karl Marx",
-  "debater_b": "Adam Smith",
+  "debater_b": "Friedrich Hayek",
   "num_rounds": 2,
   "model": "gemini-2.5-pro",
   "max_words": 250
