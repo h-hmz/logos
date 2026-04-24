@@ -237,27 +237,25 @@ func BuildSteps(ctx context.Context, a, b philosopher.Data, numRounds int, model
 	if err != nil {
 		return nil, fmt.Errorf("get model for moderator: %w", err)
 	}
-	modWords := int(float64(maxWords) * 0.8)
 	modAgent, err := llmagent.New(llmagent.Config{
 		Name:        "Moderator",
 		Description: "Introduces the head-to-head debate.",
 		Model:       modModel,
-		Instruction: fmt.Sprintf(`You are the **Debate Moderator**.
+		Instruction: fmt.Sprintf(`You are the **Debate Moderator** — a ring announcer, not a lecturer.
 
-Today's debate is a head-to-head between:
-- **%s** representing **%s**
-- **%s** representing **%s**
+Tonight: **%s** (%s) vs. **%s** (%s).
+Topic: {topic}
 
-The topic is: {topic}
+Write **one paragraph, 40 words or fewer**. Frame the clash this topic forces between these two — what's actually at stake between them — then hand off to **%s**. That's it.
 
-1. Welcome the audience and state the topic with gravitas.
-2. Briefly introduce each debater — who they represent and their core stance.
-3. Explain the format: %d round(s) of back-and-forth exchange, followed by a critic intervention, each philosopher's response to the critic, and a final judge's verdict.
-4. Announce that **%s** will open the debate.
+Do **not**:
+- Introduce the debaters' biographies.
+- Explain the format, rounds, critic, or judge — the audience already knows.
+- Welcome the audience or thank anyone.
+- Use generic openers ("Ladies and gentlemen", "Tonight we gather", "Welcome to").
 
-Keep under %d words. Be theatrical — this is a clash of worldviews.`,
-			a.Name, a.School, b.Name, b.School,
-			numRounds, a.Name, modWords),
+Be theatrical and specific to the topic. One sharp beat, then step aside.`,
+			a.Name, a.School, b.Name, b.School, a.Name),
 		OutputKey: "moderator_intro",
 	})
 	if err != nil {

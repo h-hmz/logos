@@ -969,14 +969,7 @@ interface CurtainProps {
   stepKey?: string
 }
 
-function ModeratorCurtain({ text, streaming, meta, error, debateId, stepKey }: CurtainProps) {
-  const canPlay = !streaming && !!text && !!debateId && !!stepKey
-  const [pos, setPos] = useState(0)
-  const [finalDur, setFinalDur] = useState<number | undefined>(undefined)
-  const [playing, setPlaying] = useState(false)
-  const sentences = useMemo(() => splitSentences(text), [text])
-  const starts = useMemo(() => sentenceStarts(sentences, finalDur), [sentences, finalDur])
-  const activeIdx = activeSentenceIndex(starts, pos, playing)
+function ModeratorCurtain({ text, streaming, meta, error }: CurtainProps) {
   return (
     <div className="curtain moderator">
       <div className="gavel">§</div>
@@ -985,29 +978,11 @@ function ModeratorCurtain({ text, streaming, meta, error, debateId, stepKey }: C
         <h2>Welcome to the agora.</h2>
       </div>
       <div className="body-text">
-        {streaming ? (
-          <>
-            <InlineMd text={text} />
-            <span className="cursor">·</span>
-          </>
-        ) : (
-          <SpokenText text={text} activeIndex={activeIdx} />
-        )}
+        <InlineMd text={text} />
+        {streaming && <span className="cursor">·</span>}
       </div>
       {error && <div className="live-error" style={{ marginTop: 12 }}>{error}</div>}
-      <div className="curtain-meta" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ flex: 1 }}>{meta}</span>
-        {canPlay && (
-          <PlayButton
-            debateId={debateId!}
-            stepKey={stepKey!}
-            text={text}
-            onTime={setPos}
-            onFinalDuration={setFinalDur}
-            onStateChange={setPlaying}
-          />
-        )}
-      </div>
+      <div className="curtain-meta">{meta}</div>
     </div>
   )
 }
