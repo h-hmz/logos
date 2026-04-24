@@ -492,6 +492,50 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   const inFlight = useRef(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
+  // Streaming tokens arrive in jittery bursts. We buffer them per step and
+  // drain at a steady, fixed rate — no backlog-catch-up — so the reveal feels
+  // even from first char to last.
+  const pendingRef = useRef<Record<number, string>>({})
+  const tickerRef = useRef<number | null>(null)
+  const startRevealTicker = useCallback(() => {
+    if (tickerRef.current !== null) return
+    tickerRef.current = window.setInterval(() => {
+      const pending = pendingRef.current
+      let stillPending = false
+      const reveals: Array<{ step: number; emit: string }> = []
+      for (const key of Object.keys(pending)) {
+        const step = Number(key)
+        const queued = pending[step]
+        if (!queued) continue
+        // Fixed 2 chars per 40 ms tick ≈ 50 cps. Constant rate = constant feel.
+        const take = Math.min(queued.length, 2)
+        reveals.push({ step, emit: queued.slice(0, take) })
+        pending[step] = queued.slice(take)
+        if (pending[step]) stillPending = true
+      }
+      if (reveals.length > 0) {
+        setBuffers((prev) => {
+          const next = { ...prev }
+          for (const { step, emit } of reveals) {
+            const cur = next[step] ?? { text: '', done: false, tokens: 0, streaming: true }
+            next[step] = { ...cur, text: cur.text + emit }
+          }
+          return next
+        })
+      }
+      if (!stillPending) {
+        clearInterval(tickerRef.current!)
+        tickerRef.current = null
+      }
+    }, 40)
+  }, [])
+  useEffect(() => () => {
+    if (tickerRef.current !== null) {
+      clearInterval(tickerRef.current)
+      tickerRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY(debate.id), String(idx)) } catch { /* noop */ }
   }, [idx, debate.id])
@@ -543,11 +587,19 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
 
     try {
       const result = await streamTurn(debate.id, (chunk) => {
-        setBuffers((prev) => {
-          const cur = prev[stepIndex] ?? { text: '', done: false, tokens: 0, streaming: true }
-          return { ...prev, [stepIndex]: { ...cur, text: cur.text + chunk } }
-        })
+        pendingRef.current[stepIndex] = (pendingRef.current[stepIndex] ?? '') + chunk
+        startRevealTicker()
       })
+      // Wait for the paced reveal to drain before flipping to "done" so we
+      // don't yank unrevealed text onto the screen in one jump.
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (!pendingRef.current[stepIndex]) resolve()
+          else setTimeout(check, 40)
+        }
+        check()
+      })
+      delete pendingRef.current[stepIndex]
       setBuffers((prev) => ({
         ...prev,
         [stepIndex]: {
@@ -564,6 +616,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
       setTotalOut(result.total_output_tokens)
       setIdx(stepIndex + 1)
     } catch (e) {
+      delete pendingRef.current[stepIndex]
       const msg = e instanceof Error ? e.message : 'stream failed'
       setBuffers((prev) => ({
         ...prev,
@@ -578,7 +631,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     } finally {
       inFlight.current = false
     }
-  }, [idx, debate.id, debate.total_steps, onTurnCompleted])
+  }, [idx, debate.id, debate.total_steps, onTurnCompleted, startRevealTicker])
 
   // Auto-advance: when a turn completes, wait 1.4s then kick off the next.
   const lastCompletedRef = useRef(-1)
