@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bust } from '../components/Bust'
 import { RuleOrnament } from '../components/RuleOrnament'
 import { createDebate, fetchModels, fetchPhilosophers, type DebateSession, type Model, type Philosopher } from '../api'
@@ -142,6 +142,7 @@ export function StagePage({ onDebateCreated }: Props) {
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>(() => pickRandomTopics(5))
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const rosterRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
     Promise.all([fetchPhilosophers(), fetchModels()])
@@ -291,6 +292,7 @@ export function StagePage({ onDebateCreated }: Props) {
                 label="Corner A"
                 onClear={() => { setPickA(null); setSlot('a') }}
                 active={slot === 'a' && !pickA}
+                onScrollToRoster={() => rosterRef.current?.scrollIntoView({ behavior: 'smooth' })}
               />
               <div className="versus">vs.</div>
               <CornerSlot
@@ -298,6 +300,7 @@ export function StagePage({ onDebateCreated }: Props) {
                 label="Corner B"
                 onClear={() => { setPickB(null); setSlot('b') }}
                 active={slot === 'b' && !pickB}
+                onScrollToRoster={() => rosterRef.current?.scrollIntoView({ behavior: 'smooth' })}
               />
             </div>
 
@@ -372,7 +375,7 @@ export function StagePage({ onDebateCreated }: Props) {
       </div>
 
       {/* Roster */}
-      <section className="container roster">
+      <section ref={rosterRef} className="container roster">
         <div className="roster-head">
           <div>
             <div className="t-eyebrow">Choose your speakers</div>
@@ -437,12 +440,17 @@ interface CornerSlotProps {
   label: string
   onClear: () => void
   active: boolean
+  onScrollToRoster: () => void
 }
 
-function CornerSlot({ picked, label, onClear, active }: CornerSlotProps) {
+function CornerSlot({ picked, label, onClear, active, onScrollToRoster }: CornerSlotProps) {
   if (!picked) {
     return (
-      <div className="corner empty" style={active ? { borderColor: 'var(--accent)' } : undefined}>
+      <div
+        className="corner empty"
+        style={{ ...(active ? { borderColor: 'var(--accent)' } : undefined), cursor: 'pointer' }}
+        onClick={onScrollToRoster}
+      >
         <div className="hdr">
           <div className="k" style={active ? { color: 'var(--accent)' } : undefined}>
             {label} · choose
