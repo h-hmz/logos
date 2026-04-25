@@ -52,7 +52,17 @@ How to respond, in order of priority:
 Style:
 - Be a neutral tutor, not a third debater. Do not take a side.
 - 2–5 short paragraphs is usually right. Use markdown lists when they genuinely help.
-- On the **first** reply, end with one gentle invitation to dig deeper. On later replies, only offer a follow-up when it's natural — do not tack one on every turn.`
+- On the **first** reply, end with one gentle invitation to dig deeper. On later replies, only offer a follow-up when it's natural — do not tack one on every turn.
+
+After your reply, on a new line, append this block with no extra text after it:
+
+<!--suggestions-->
+[first follow-up question]
+[second follow-up question]
+[optional third follow-up question]
+<!--/suggestions-->
+
+Each suggestion must be a short question (≤ 10 words) that follows naturally from what you just wrote. Do not include a question the user has already asked. Do not number or bullet them. Always include the opening and closing tags.`
 
 // MakeTutor constructs the tutor LLM agent. The instruction is static; all
 // debate-specific grounding is passed through the user message (see
@@ -119,7 +129,7 @@ func BuildUserMessage(in ExplainInput) string {
 
 	b.WriteString("\n---\n\n")
 	if current != "" {
-		fmt.Fprintf(&b, "The user just said:\n\n> %s\n\nWrite your next reply to the user. Answer that specific message directly. Refer to the background context only when it helps answer what the user actually asked.\n", strings.ReplaceAll(current, "\n", "\n> "))
+		fmt.Fprintf(&b, "The user just said:\n\n> %s\n\nWrite your next reply to the user. Answer that specific message directly, keeping the **highlighted passage** as your primary anchor. Refer to the broader turn context only when it helps illuminate the selection.\n", strings.ReplaceAll(current, "\n", "\n> "))
 	} else {
 		// No user message yet — this is the initial open of the panel.
 		b.WriteString("The user just highlighted the passage above and opened the tutor. Give them a first explanation of the highlighted passage, grounded in the background context. End with one gentle invitation for a follow-up question.\n")
@@ -150,3 +160,33 @@ func orDefault(s, fallback string) string {
 	}
 	return s
 }
+
+const suggOpen = "<!--suggestions-->"
+const suggClose = "<!--/suggestions-->"
+
+// ParseSuggestions splits content into the visible reply and the follow-up
+// suggestion lines embedded in the trailing <!--suggestions--> block. If the
+// block is absent the full trimmed content is returned with a nil slice.
+func ParseSuggestions(content string) (string, []string) {
+	before, after, ok := strings.Cut(content, suggOpen)
+	if !ok {
+		return strings.TrimSpace(content), nil
+	}
+	clean := strings.TrimSpace(before)
+	rest := after
+	end := strings.Index(rest, suggClose)
+	if end >= 0 {
+		rest = rest[:end]
+	}
+	var suggestions []string
+	for _, line := range strings.Split(rest, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			suggestions = append(suggestions, line)
+		}
+	}
+	return clean, suggestions
+}
+
+// SuggOpen is the opening delimiter for the suggestions block, exported for
+// use by the streaming filter in the debate service.
+const SuggOpen = suggOpen

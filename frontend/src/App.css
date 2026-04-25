@@ -749,6 +749,18 @@ main.noctua-open .interjection-composer {
   font-family: var(--serif); font-style: italic; font-size: 14px;
   color: var(--ink-2); max-height: 96px; overflow: auto;
 }
+.tutor-chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 10px 20px; border-bottom: 1px solid var(--ink-soft);
+}
+.tutor-chip {
+  font-family: var(--serif); font-size: 13px; line-height: 1.3;
+  color: var(--accent-ink); background: var(--bg-2);
+  border: 1px solid var(--accent); border-radius: 14px;
+  padding: 4px 12px; cursor: pointer; transition: background 0.15s;
+}
+.tutor-chip:hover { background: var(--accent); color: var(--bg); }
+.tutor-msg .tutor-chips { padding: 8px 0 0; border: none; }
 .tutor-chat {
   flex: 1; overflow-y: auto; padding: 16px 20px;
   display: flex; flex-direction: column; gap: 14px;

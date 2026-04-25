@@ -36,43 +36,50 @@ type TutorRequest struct {
 	History   []TutorMessage
 }
 
+// TutorResult holds the clean tutor reply and any follow-up suggestions parsed
+// from the embedded <!--suggestions--> block.
+type TutorResult struct {
+	Content     string
+	Suggestions []string
+}
+
 // TutorExplain streams a tutor response grounded in the selected turn and its
 // immediate predecessor (excluding the moderator). No server-side state is
 // persisted; the chat history is resent by the caller on each follow-up.
-func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRequest, onToken func(string)) (string, error) {
+func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRequest, onToken func(string)) (TutorResult, error) {
 	selection := strings.TrimSpace(req.Selection)
 	if selection == "" {
-		return "", validationErr("selection is empty")
+		return TutorResult{}, validationErr("selection is empty")
 	}
 	if len(selection) > TutorSelectionMaxLen {
-		return "", validationErr(fmt.Sprintf("selection exceeds %d characters", TutorSelectionMaxLen))
+		return TutorResult{}, validationErr(fmt.Sprintf("selection exceeds %d characters", TutorSelectionMaxLen))
 	}
 	if strings.TrimSpace(req.TurnKey) == "" {
-		return "", validationErr("turn_key is required")
+		return TutorResult{}, validationErr("turn_key is required")
 	}
 	if req.TurnKey == "moderator_intro" {
-		return "", validationErr("tutor cannot be used on moderator turns")
+		return TutorResult{}, validationErr("tutor cannot be used on moderator turns")
 	}
 	if len(req.History) > TutorHistoryMaxMessages {
-		return "", validationErr(fmt.Sprintf("chat history exceeds %d messages", TutorHistoryMaxMessages))
+		return TutorResult{}, validationErr(fmt.Sprintf("chat history exceeds %d messages", TutorHistoryMaxMessages))
 	}
 	for _, m := range req.History {
 		if m.Role != "user" && m.Role != "tutor" {
-			return "", validationErr("history role must be 'user' or 'tutor'")
+			return TutorResult{}, validationErr("history role must be 'user' or 'tutor'")
 		}
 		if len(m.Content) > TutorMessageMaxLen {
-			return "", validationErr(fmt.Sprintf("history message exceeds %d characters", TutorMessageMaxLen))
+			return TutorResult{}, validationErr(fmt.Sprintf("history message exceeds %d characters", TutorMessageMaxLen))
 		}
 	}
 
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
-		return "", err
+		return TutorResult{}, err
 	}
 	a, okA := s.philMap[p.DebaterAName]
 	b, okB := s.philMap[p.DebaterBName]
 	if !okA || !okB {
-		return "", fmt.Errorf("tutor: unknown philosopher in debate")
+		return TutorResult{}, fmt.Errorf("tutor: unknown philosopher in debate")
 	}
 
 	steps := BuildStepMeta(a, b, p.NumRounds)
@@ -84,12 +91,12 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		}
 	}
 	if idx < 0 {
-		return "", validationErr("unknown turn_key")
+		return TutorResult{}, validationErr("unknown turn_key")
 	}
 
 	speakerTurn := strings.TrimSpace(p.StepOutputs[req.TurnKey])
 	if speakerTurn == "" {
-		return "", validationErr("turn has no content yet")
+		return TutorResult{}, validationErr("turn has no content yet")
 	}
 
 	speaker := speakerNameForKey(req.TurnKey, a, b)
@@ -108,7 +115,7 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 
 	tutorAgent, err := tutor.MakeTutor(ctx, p.ModelID)
 	if err != nil {
-		return "", fmt.Errorf("make tutor: %w", err)
+		return TutorResult{}, fmt.Errorf("make tutor: %w", err)
 	}
 
 	sessSvc := session.InMemoryService()
@@ -117,7 +124,7 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		UserID:  "web",
 	})
 	if err != nil {
-		return "", fmt.Errorf("tutor: create session: %w", err)
+		return TutorResult{}, fmt.Errorf("tutor: create session: %w", err)
 	}
 
 	rn, err := runner.New(runner.Config{
@@ -126,7 +133,7 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		SessionService: sessSvc,
 	})
 	if err != nil {
-		return "", fmt.Errorf("tutor: runner create: %w", err)
+		return TutorResult{}, fmt.Errorf("tutor: runner create: %w", err)
 	}
 
 	userText := tutor.BuildUserMessage(tutor.ExplainInput{
@@ -148,23 +155,50 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		runCfg.StreamingMode = agent.StreamingModeSSE
 	}
 
+	// accumBuf collects all partial tokens for delimiter detection.
+	// filteredLen tracks how many bytes have been forwarded via onToken.
+	// Once the <!--suggestions--> delimiter is found, streaming stops so the
+	// suggestions block never reaches the client as visible text.
+	var accumBuf string
+	var filteredLen int
+	var delimFound bool
 	var content string
+
 	for event, runErr := range rn.Run(ctx, "web", cr.Session.ID(), msg, runCfg) {
 		if runErr != nil {
-			return "", fmt.Errorf("tutor runner: %w", runErr)
+			return TutorResult{}, fmt.Errorf("tutor runner: %w", runErr)
 		}
 		if event.Content != nil && len(event.Content.Parts) > 0 {
 			for _, part := range event.Content.Parts {
 				if part.Text != "" {
-					if onToken != nil && event.Partial {
-						onToken(part.Text)
+					if onToken != nil && event.Partial && !delimFound {
+						accumBuf += part.Text
+						if di := strings.Index(accumBuf, tutor.SuggOpen); di >= 0 {
+							delimFound = true
+							if di > filteredLen {
+								onToken(accumBuf[filteredLen:di])
+							}
+						} else {
+							// Hold back enough bytes to guard against the delimiter
+							// being split across chunk boundaries.
+							safeEnd := len(accumBuf) - len(tutor.SuggOpen) + 1
+							if safeEnd < 0 {
+								safeEnd = 0
+							}
+							if safeEnd > filteredLen {
+								onToken(accumBuf[filteredLen:safeEnd])
+								filteredLen = safeEnd
+							}
+						}
 					}
 					content = part.Text
 				}
 			}
 		}
 	}
-	return content, nil
+
+	cleanContent, suggestions := tutor.ParseSuggestions(content)
+	return TutorResult{Content: cleanContent, Suggestions: suggestions}, nil
 }
 
 // speakerNameForKey maps a step key to the human-readable philosopher name

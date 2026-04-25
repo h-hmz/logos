@@ -209,13 +209,19 @@ export interface TutorMessage {
   content: string
 }
 
+export interface TutorResult {
+  content: string
+  suggestions: string[]
+}
+
 // Stream a tutor explanation via SSE; invokes onToken for each partial token
-// and resolves with the final content carried on the `done` event.
+// and resolves with the final content and follow-up suggestions carried on the
+// `done` event.
 export function streamTutor(
   debateId: string,
   body: { selection: string; turn_key: string; history: TutorMessage[] },
   onToken: (text: string) => void,
-): Promise<string> {
+): Promise<TutorResult> {
   return new Promise(async (resolve, reject) => {
     try {
       const res = await fetch(`/debates/${debateId}/tutor`, {
@@ -235,7 +241,7 @@ export function streamTutor(
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let finalContent: string | null = null
+      let finalResult: TutorResult | null = null
       let errorMsg: string | null = null
 
       while (true) {
@@ -266,8 +272,8 @@ export function streamTutor(
             }
           } else if (eventName === 'done') {
             try {
-              const parsed = JSON.parse(data) as { content?: string }
-              finalContent = parsed?.content ?? ''
+              const parsed = JSON.parse(data) as { content?: string; suggestions?: string[] }
+              finalResult = { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [] }
             } catch { /* noop */ }
           } else if (eventName === 'error') {
             try {
@@ -281,7 +287,7 @@ export function streamTutor(
       }
 
       if (errorMsg) { reject(new Error(errorMsg)); return }
-      if (finalContent !== null) { resolve(finalContent); return }
+      if (finalResult !== null) { resolve(finalResult); return }
       reject(new Error('Stream ended without a result'))
     } catch (e) {
       reject(e)

@@ -3,6 +3,14 @@ import { streamTutor, type TutorMessage } from '../api'
 import { InlineMd } from './InlineMd'
 import { NoctuaIcon } from './NoctuaIcon'
 
+const OPENING_ACTIONS = [
+  'Explain this passage.',
+  'Define the key terms.',
+  'Give a real-world example.',
+  'Why does this matter?',
+  'Challenge this argument.',
+]
+
 interface Props {
   debateId: string
   turnKey: string
@@ -16,13 +24,14 @@ interface ChatEntry {
   content: string
   streaming?: boolean
   error?: string
+  suggestions?: string[]
 }
 
 const MAX_SELECTION_PREVIEW = 320
 
 export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: Props) {
   const [entries, setEntries] = useState<ChatEntry[]>([])
-  const [draft, setDraft] = useState('Explain this passage.')
+  const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -52,7 +61,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
       setBusy(true)
 
       try {
-        const final = await streamTutor(
+        const { content: final, suggestions } = await streamTutor(
           debateId,
           { selection, turn_key: turnKey, history },
           (chunk) => {
@@ -70,7 +79,11 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
           const copy = prev.slice()
           const last = copy[copy.length - 1]
           if (last && last.role === 'tutor' && last.streaming) {
-            copy[copy.length - 1] = { role: 'tutor', content: final || last.content }
+            copy[copy.length - 1] = {
+              role: 'tutor',
+              content: final || last.content,
+              suggestions: suggestions.length > 0 ? suggestions : undefined,
+            }
           }
           return copy
         })
@@ -98,7 +111,6 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
     const el = composerRef.current
     if (!el) return
     el.focus()
-    if (entries.length === 0) el.select()
   }, [visible, entries.length])
 
   // Auto-scroll to bottom on new content.
@@ -166,6 +178,16 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
         <blockquote>{preview}</blockquote>
       </div>
 
+      {entries.length === 0 && !busy && (
+        <div className="tutor-chips">
+          {OPENING_ACTIONS.map((label) => (
+            <button key={label} type="button" className="tutor-chip" onClick={() => ask(label)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="tutor-chat" ref={scrollRef}>
         {entries.map((e, i) => (
           <div key={i} className={`tutor-msg ${e.role}`}>
@@ -175,6 +197,15 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
               {e.streaming && e.content && <span className="cursor">·</span>}
               {e.error && <div className="live-error" style={{ marginTop: 6 }}>{e.error}</div>}
             </div>
+            {!e.streaming && e.suggestions && e.suggestions.length > 0 && (
+              <div className="tutor-chips">
+                {e.suggestions.map((s) => (
+                  <button key={s} type="button" className="tutor-chip" onClick={() => ask(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>

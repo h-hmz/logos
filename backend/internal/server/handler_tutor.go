@@ -23,7 +23,8 @@ type tutorRequest struct {
 }
 
 type tutorResponse struct {
-	Content string `json:"content"`
+	Content     string   `json:"content"`
+	Suggestions []string `json:"suggestions,omitempty"`
 }
 
 func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +53,7 @@ func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 		onToken = sw.SendToken
 	}
 
-	content, err := s.svc.TutorExplain(r.Context(), debateID, debate.TutorRequest{
+	result, err := s.svc.TutorExplain(r.Context(), debateID, debate.TutorRequest{
 		Selection: req.Selection,
 		TurnKey:   req.TurnKey,
 		History:   history,
@@ -66,7 +67,7 @@ func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := tutorResponse{Content: content}
+	out := tutorResponse{Content: result.Content, Suggestions: result.Suggestions}
 	if sse {
 		sw.SendDone(out)
 		return
