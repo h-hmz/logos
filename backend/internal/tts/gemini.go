@@ -17,6 +17,41 @@ import (
 // DefaultGeminiVoice is used when no per-speaker voice is configured.
 const DefaultGeminiVoice = "Kore"
 
+// maxTTSChars is the target maximum character count per Gemini TTS API call.
+// The model caps output at 3840 audio tokens (~2 minutes of speech) per call,
+// signalled via finish_reason "OTHER". At ~150 wpm / ~750 chars per minute,
+// 800 chars ≈ 60 s — well under the cap with room for slower passages.
+const maxTTSChars = 800
+
+// splitText splits text into segments no longer than maxChars, preferring
+// breaks at sentence-ending punctuation (. ! ?) followed by whitespace.
+func splitText(text string, maxChars int) []string {
+	if len(text) <= maxChars {
+		return []string{text}
+	}
+	var segments []string
+	for len(text) > 0 {
+		if len(text) <= maxChars {
+			segments = append(segments, text)
+			break
+		}
+		cut := maxChars
+		for i := maxChars - 1; i > maxChars/2; i-- {
+			if text[i] == '.' || text[i] == '!' || text[i] == '?' {
+				if i+1 >= len(text) || text[i+1] == ' ' || text[i+1] == '\n' {
+					cut = i + 1
+					break
+				}
+			}
+		}
+		if seg := strings.TrimSpace(text[:cut]); seg != "" {
+			segments = append(segments, seg)
+		}
+		text = strings.TrimSpace(text[cut:])
+	}
+	return segments
+}
+
 // buildGeminiPrompt combines a style directive with the text to speak using
 // the colon-delimited pattern from Google's TTS docs (e.g.
 // `Say cheerfully: Have a wonderful day!`). Gemini TTS treats everything
@@ -159,8 +194,6 @@ func (c *geminiClient) synthesizeStream(
 	if voice == "" {
 		voice = DefaultGeminiVoice
 	}
-	prompt := buildGeminiPrompt(text, style)
-	contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{genai.NewPartFromText(prompt)}}}
 	cfg := &genai.GenerateContentConfig{
 		ResponseModalities: []string{"AUDIO"},
 		SpeechConfig: &genai.SpeechConfig{
@@ -170,40 +203,51 @@ func (c *geminiClient) synthesizeStream(
 		},
 	}
 
+	seed := int32(42)
+	cfg.Seed = &seed
+
 	flusher, _ := w.(http.Flusher)
 	started := false
 	startT := time.Now()
 	chunkCount := 0
 	totalBytes := 0
-	for resp, err := range c.inner.Models.GenerateContentStream(ctx, c.model, contents, cfg) {
-		if err != nil {
-			return fmt.Errorf("gemini tts stream: %w", err)
-		}
-		pcm, mime := extractGeminiChunk(resp)
-		if len(pcm) == 0 {
-			continue
-		}
-		chunkCount++
-		totalBytes += len(pcm)
-		slog.InfoContext(ctx, "tts[gemini]: chunk",
-			"chunk", chunkCount,
-			"size", len(pcm),
-			"elapsed", time.Since(startT),
-			"model", c.model)
-		if !started {
-			onStart(sampleRateFromMime(mime))
-			started = true
-		}
-		if _, err := w.Write(pcm); err != nil {
-			return fmt.Errorf("gemini tts stream: write: %w", err)
-		}
-		if flusher != nil {
-			flusher.Flush()
+
+	segments := splitText(text, maxTTSChars)
+	for segIdx, seg := range segments {
+		prompt := buildGeminiPrompt(seg, style)
+		contents := []*genai.Content{{Role: "user", Parts: []*genai.Part{genai.NewPartFromText(prompt)}}}
+		for resp, err := range c.inner.Models.GenerateContentStream(ctx, c.model, contents, cfg) {
+			if err != nil {
+				return fmt.Errorf("gemini tts stream: %w", err)
+			}
+			pcm, mime := extractGeminiChunk(resp)
+			if len(pcm) == 0 {
+				continue
+			}
+			chunkCount++
+			totalBytes += len(pcm)
+			slog.InfoContext(ctx, "tts[gemini]: chunk",
+				"chunk", chunkCount,
+				"segment", segIdx+1,
+				"size", len(pcm),
+				"elapsed", time.Since(startT),
+				"model", c.model)
+			if !started {
+				onStart(sampleRateFromMime(mime))
+				started = true
+			}
+			if _, err := w.Write(pcm); err != nil {
+				return fmt.Errorf("gemini tts stream: write: %w", err)
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 	}
 	slog.InfoContext(ctx, "tts[gemini]: stream done",
 		"chunks", chunkCount,
 		"bytes", totalBytes,
+		"segments", len(segments),
 		"total_latency", time.Since(startT))
 	if !started {
 		return fmt.Errorf("gemini tts stream: no audio produced")

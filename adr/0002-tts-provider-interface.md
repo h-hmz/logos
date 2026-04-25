@@ -1,7 +1,7 @@
 # ADR 0002: Single-provider TTS on Gemini, with progressive PCM streaming
 
 Date: 2026-04-19
-Revised: 2026-04-25
+Revised: 2026-04-25 (×2)
 Status: Accepted (revised)
 
 ## Context
@@ -13,7 +13,7 @@ specific to Gemini's vocabulary. A portable abstraction that claimed to
 accept any provider would either leak Gemini-isms into the interface or
 force a lowest-common-denominator API that throws the tags away.
 
-Two facts about Gemini shape the transport:
+Three facts about Gemini shape the transport:
 
 - **Sample rate is provider- and voice-dependent**, and it must be
   known before any audio bytes flow — the HTTP response needs
@@ -24,6 +24,10 @@ Two facts about Gemini shape the transport:
   which we don't know until synthesis completes. Streaming WAV would
   either buffer the whole clip (defeating streaming) or emit a
   placeholder length (most clients don't tolerate it).
+- **Gemini TTS caps output at 3840 audio tokens (~2 minutes) per API
+  call**, signalled via `finish_reason: "OTHER"` rather than the
+  expected `MAX_TOKENS`. Long debate turns exceed this limit and are
+  truncated mid-sentence without any error being returned.
 
 ## Decision
 
@@ -101,6 +105,26 @@ uses the Fetch Streams + Web Audio APIs to:
   `AudioBuffer` so subsequent seeking and replay can use one source
   node instead of replaying the chain.
 
+### 6. Long-text splitting to stay under the 2-minute cap
+
+`SynthesizeStream` splits its input into segments of at most
+`maxTTSChars` characters (currently 800, ≈ 60 s at 150 wpm) before
+calling Gemini, preferring breaks at sentence-ending punctuation.
+Each segment is synthesised as a separate API call; the resulting PCM
+is written to `w` sequentially, producing a single uninterrupted byte
+stream from the client's perspective.
+
+A fixed seed (`Seed: 42`) is set on the shared `GenerateContentConfig`
+for every segment call as a best-effort measure to reduce voice variance.
+In practice it does not fully eliminate audible timbre shifts at segment
+boundaries; the Gemini TTS API offers no audio-context carryover mechanism
+to enforce prosodic continuity across independent calls.
+
+Gap risk: the first chunk of segment N arrives ~13 s after its API call
+starts. Because each segment produces ~60 s of audio and the calls are
+sequential, the audio queue stays ≈ 47 s ahead of the segment boundary
+at handoff — no audible gap in practice.
+
 ## Consequences
 
 ### Positive
@@ -115,6 +139,8 @@ uses the Fetch Streams + Web Audio APIs to:
 - **Time-to-first-audio is 1–3s** for multi-paragraph turns, not the
   30–60s of the old monolithic path. The streaming transport is the
   same; the change here is that we always take it.
+- **Arbitrarily long turns are now fully narrated.** The per-call cap
+  is a model constraint, not a product constraint.
 
 ### Negative
 
@@ -128,26 +154,35 @@ uses the Fetch Streams + Web Audio APIs to:
   fired, the response status is 200 and headers are flushed; a later
   upstream failure can only be logged, not signalled to the client
   as an error response. The frontend hears truncated audio.
+- **Seed is best-effort.** Gemini does not guarantee identical output
+  for the same seed, so occasional voice drift at segment boundaries
+  remains possible, particularly under high API load.
 
 ## Revision history
 
 - 2026-04-19 — original version: pluggable `Synthesizer` /
   `StreamSynthesizer` interfaces, an `init()`-time registry, and
   OpenAI / ElevenLabs / Mistral provider files alongside Gemini.
-- 2026-04-25 — rewritten in place. Since the original decision, only
-  Gemini had been used; the other three implementations were never
-  exercised in production. With inline expressive tags landing as a
-  Gemini-coupled feature, we removed the abstraction to match
-  reality. Decisions 2–5 (streaming PCM, `onStart`, voice per
+- 2026-04-25 (first) — rewritten in place. Since the original
+  decision, only Gemini had been used; the other three implementations
+  were never exercised in production. With inline expressive tags
+  landing as a Gemini-coupled feature, we removed the abstraction to
+  match reality. Decisions 2–5 (streaming PCM, `onStart`, voice per
   philosopher, Web Audio playback) survive from the original design.
+- 2026-04-25 (second) — added decision 6. Discovered that
+  `gemini-3.1-flash-tts-preview` silently caps output at 3840 audio
+  tokens (~2 min) per call, signalled via `finish_reason: "OTHER"`.
+  `SynthesizeStream` now splits long inputs into ≤800-char segments
+  and synthesises each independently, with a fixed seed to maintain
+  voice consistency across the resulting API calls.
 
 ## Implementation
 
 - [backend/internal/tts/tts.go](../backend/internal/tts/tts.go) —
   `client` lazy singleton, `wrapWAV` / `sampleRateFromMime` helpers.
 - [backend/internal/tts/gemini.go](../backend/internal/tts/gemini.go)
-  — `Synthesize` / `SynthesizeStream` package API and the private
-  `geminiClient`.
+  — `Synthesize` / `SynthesizeStream` package API, the private
+  `geminiClient`, and `splitText`.
 - [backend/internal/tts/voices.go](../backend/internal/tts/voices.go)
   — per-philosopher voice resolution.
 - [backend/internal/server/handler_tts.go](../backend/internal/server/handler_tts.go)
