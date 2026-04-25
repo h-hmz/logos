@@ -31,39 +31,6 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
   const entriesRef = useRef<ChatEntry[]>([])
   useEffect(() => { entriesRef.current = entries }, [entries])
 
-  // Paced-reveal buffer: incoming tokens queue here and a 40ms ticker drains
-  // 2 chars/tick (~50 cps) into the last entry. Matches the debate-stream feel.
-  const pendingRef = useRef<string>('')
-  const tickerRef = useRef<number | null>(null)
-  const startRevealTicker = useCallback(() => {
-    if (tickerRef.current !== null) return
-    tickerRef.current = window.setInterval(() => {
-      const queued = pendingRef.current
-      if (!queued) {
-        clearInterval(tickerRef.current!)
-        tickerRef.current = null
-        return
-      }
-      const take = Math.min(queued.length, 2)
-      const emit = queued.slice(0, take)
-      pendingRef.current = queued.slice(take)
-      setEntries((prev) => {
-        const copy = prev.slice()
-        const last = copy[copy.length - 1]
-        if (last && last.role === 'tutor' && last.streaming) {
-          copy[copy.length - 1] = { ...last, content: last.content + emit }
-        }
-        return copy
-      })
-    }, 40)
-  }, [])
-  useEffect(() => () => {
-    if (tickerRef.current !== null) {
-      clearInterval(tickerRef.current)
-      tickerRef.current = null
-    }
-  }, [])
-
   const toHistory = (list: ChatEntry[]): TutorMessage[] =>
     list
       .filter((e) => !e.error && e.content.trim().length > 0)
@@ -89,19 +56,16 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
           debateId,
           { selection, turn_key: turnKey, history },
           (chunk) => {
-            pendingRef.current += chunk
-            startRevealTicker()
+            setEntries((prev) => {
+              const copy = prev.slice()
+              const last = copy[copy.length - 1]
+              if (last && last.role === 'tutor' && last.streaming) {
+                copy[copy.length - 1] = { ...last, content: last.content + chunk }
+              }
+              return copy
+            })
           },
         )
-        // Wait for the paced reveal to drain before flipping to "done" so
-        // we don't yank unrevealed text onto the screen in one jump.
-        await new Promise<void>((resolve) => {
-          const check = () => {
-            if (!pendingRef.current) resolve()
-            else setTimeout(check, 40)
-          }
-          check()
-        })
         setEntries((prev) => {
           const copy = prev.slice()
           const last = copy[copy.length - 1]
@@ -111,7 +75,6 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
           return copy
         })
       } catch (e) {
-        pendingRef.current = ''
         const msg = e instanceof Error ? e.message : 'Tutor request failed'
         setEntries((prev) => {
           const copy = prev.slice()
@@ -125,7 +88,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
         setBusy(false)
       }
     },
-    [busy, debateId, selection, turnKey, startRevealTicker],
+    [busy, debateId, selection, turnKey],
   )
 
   // Focus the composer on open (mount or reopen) and preselect the default so
