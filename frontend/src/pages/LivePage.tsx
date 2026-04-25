@@ -524,6 +524,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
       return map
     } catch { return {} }
   })
+  const [awaitingHuman, setAwaitingHuman] = useState(false)
+  const [autoAdvanceOnce, setAutoAdvanceOnce] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
   const [selPopover, setSelPopover] = useState<{
     x: number
@@ -603,6 +605,11 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
           return { ...prev, [stepIndex]: { ...cur, text: cur.text + chunk } }
         })
       })
+      if (result.awaiting_human) {
+        setBuffers((prev) => ({ ...prev, [stepIndex]: { text: '', done: false, tokens: 0, streaming: false } }))
+        setAwaitingHuman(true)
+        return
+      }
       setBuffers((prev) => ({
         ...prev,
         [stepIndex]: {
@@ -635,10 +642,36 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     }
   }, [idx, debate.id, debate.total_steps, onTurnCompleted])
 
+  const submitHumanTurn = useCallback(async (input: string) => {
+    if (inFlight.current) return
+    const stepIndex = idx
+    inFlight.current = true
+    setAwaitingHuman(false)
+    setBuffers((prev) => ({ ...prev, [stepIndex]: { text: '', done: false, tokens: 0, streaming: true } }))
+    try {
+      const result = await streamTurn(debate.id, () => {}, input)
+      setBuffers((prev) => ({
+        ...prev,
+        [stepIndex]: { text: result.content, done: true, tokens: 0, streaming: false },
+      }))
+      setTurnResults((prev) => ({ ...prev, [stepIndex]: result }))
+      onTurnCompleted(stepIndex, result)
+      setIdx(stepIndex + 1)
+      setAutoAdvanceOnce(true)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'submission failed'
+      setBuffers((prev) => ({ ...prev, [stepIndex]: { text: '', done: false, tokens: 0, streaming: false, error: msg } }))
+      setAwaitingHuman(true)
+    } finally {
+      inFlight.current = false
+    }
+  }, [idx, debate.id, onTurnCompleted])
+
   // Auto-advance: when a turn completes, wait 1.4s then kick off the next.
   const lastCompletedRef = useRef(-1)
   useEffect(() => {
     if (!auto) return
+    if (awaitingHuman) return
     if (idx === 0) return
     const prevStep = idx - 1
     const buf = buffers[prevStep]
@@ -648,7 +681,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     if (idx >= debate.total_steps) return
     const timer = setTimeout(() => { advance() }, 1400)
     return () => clearTimeout(timer)
-  }, [idx, auto, buffers, advance, debate.total_steps])
+  }, [idx, auto, awaitingHuman, buffers, advance, debate.total_steps])
 
   // Keyboard: → / Space advance, P auto toggle.
   useEffect(() => {
@@ -668,6 +701,15 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [idx])
+
+  // After a human turn is stored, auto-kick the next LLM step. We use a flag
+  // rather than calling advance() directly so React re-renders first and
+  // advance() picks up the new idx value.
+  useEffect(() => {
+    if (!autoAdvanceOnce) return
+    setAutoAdvanceOnce(false)
+    advance()
+  }, [autoAdvanceOnce, advance])
 
   // Detect text selection inside a completed philosopher turn body (marked with
   // data-turn-key). Show a floating "Explore" button anchored to the selection
@@ -851,6 +893,10 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         <div ref={bottomRef} />
       </section>
 
+      {awaitingHuman && (
+        <HumanTurnComposer onSubmit={submitHumanTurn} />
+      )}
+
       {composerOpen && (
         <InterjectionComposer
           onSubmit={submitInterjection}
@@ -913,6 +959,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         auto={auto}
         setAuto={setAuto}
         onAdvance={advance}
+        awaitingHuman={awaitingHuman}
         streaming={!!buffers[idx]?.streaming && !buffers[idx]?.done}
         canInterject={
           idx > 0 &&
@@ -1240,6 +1287,75 @@ function AudienceCurtain({ text }: { text: string }) {
 
 // ── Interjection composer ─────────────────────────────────────────────────────
 
+// ── Human turn composer ───────────────────────────────────────────────────────
+
+const HUMAN_TURN_MAX_WORDS = 500
+
+function HumanTurnComposer({ onSubmit }: { onSubmit: (text: string) => Promise<void> }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    ref.current?.focus()
+  }, [])
+
+  const trimmed = text.trim()
+  const wordCount = trimmed ? trimmed.split(/\s+/).length : 0
+  const canSubmit = !busy && wordCount > 0 && wordCount <= HUMAN_TURN_MAX_WORDS
+
+  const handleSubmit = async () => {
+    if (!canSubmit) return
+    setBusy(true)
+    setError(null)
+    try {
+      await onSubmit(trimmed)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Submission failed')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="interjection-composer">
+      <div className="interjection-composer-inner">
+        <div className="t-sc" style={{ marginBottom: 6 }}>Your argument</div>
+        <textarea
+          ref={ref}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSubmit() }
+          }}
+          placeholder="Make your case. The opponent will respond directly."
+          rows={5}
+          disabled={busy}
+        />
+        <div className="interjection-footer">
+          <span className={`counter ${wordCount > HUMAN_TURN_MAX_WORDS ? 'over' : ''}`}>
+            {wordCount} / {HUMAN_TURN_MAX_WORDS} words
+          </span>
+          <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            className="btn accent small"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+          >
+            {busy ? 'Submitting…' : 'Submit argument'}
+          </button>
+        </div>
+        {error && <div className="live-error" style={{ marginTop: 8 }}>{error}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ── Interjection composer ─────────────────────────────────────────────────────
+
 interface InterjectionComposerProps {
   onSubmit: (text: string) => Promise<void>
   onCancel: () => void
@@ -1364,7 +1480,7 @@ function TurnBlock({ who, side, label, text, fullText, streaming, tokens, active
           <span className="round">◆ {label}</span>
           <span className="stat" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {streaming ? `streaming · ${displayText.length} ch` : tokens ? `${tokens} tok` : ''}
-            {audioText && debateId && stepKey && (
+            {audioText && debateId && stepKey && who.name !== 'The Challenger' && (
               <PlayButton
                 debateId={debateId}
                 stepKey={stepKey}
@@ -1407,16 +1523,18 @@ interface NextBarProps {
   auto: boolean
   setAuto: (v: boolean) => void
   onAdvance: () => void
+  awaitingHuman: boolean
   streaming: boolean
   canInterject: boolean
   onInterject: () => void
 }
 
-function NextBar({ debate, a, b, idx, auto, setAuto, onAdvance, streaming, canInterject, onInterject }: NextBarProps) {
+function NextBar({ debate, a, b, idx, auto, setAuto, onAdvance, awaitingHuman, streaming, canInterject, onInterject }: NextBarProps) {
   const total = debate.total_steps
   const atEnd = idx >= total
   const step = debate.steps[Math.min(idx, total - 1)]
   const role = step ? roleForLabel(step.label, a.name, b.name) : null
+  const isHumanTurn = (role === 'a' && a.name === 'The Challenger') || (role === 'b' && b.name === 'The Challenger')
   const labelText = !step
     ? 'The bout is over'
     : role === 'moderator'
@@ -1425,9 +1543,13 @@ function NextBar({ debate, a, b, idx, auto, setAuto, onAdvance, streaming, canIn
         ? 'The critic speaks next'
         : role === 'judge'
           ? 'The judge renders a verdict'
-          : role === 'a'
-            ? `${a.name} — ${trimmedLabel(step.label, a.name, b.name)}`
-            : `${b.name} — ${trimmedLabel(step.label, a.name, b.name)}`
+          : isHumanTurn
+            ? `Your turn — ${trimmedLabel(step.label, a.name, b.name)}`
+            : role === 'a'
+              ? `${a.name} — ${trimmedLabel(step.label, a.name, b.name)}`
+              : `${b.name} — ${trimmedLabel(step.label, a.name, b.name)}`
+
+  const nextLabel = streaming ? 'Streaming…' : awaitingHuman ? 'Write your argument ↓' : isHumanTurn ? 'Your turn →' : 'Next →'
 
   return (
     <div className="next-bar">
@@ -1456,9 +1578,9 @@ function NextBar({ debate, a, b, idx, auto, setAuto, onAdvance, streaming, canIn
             type="button"
             className="btn accent small"
             onClick={onAdvance}
-            disabled={atEnd || streaming}
+            disabled={atEnd || streaming || awaitingHuman}
           >
-            {streaming ? 'Streaming…' : 'Next →'}
+            {nextLabel}
           </button>
         </div>
       </div>

@@ -17,11 +17,19 @@ import (
 	"google.golang.org/adk/session"
 )
 
+// HumanDebaterName is the catalog name for the human player entry. The critic
+// and judge refer to the human as "The Challenger" in their prose.
+const HumanDebaterName = "The Challenger"
+
+// IsHumanDebater reports whether the given philosopher name is the human player.
+func IsHumanDebater(name string) bool { return name == HumanDebaterName }
+
 // Step represents a single step in the debate pipeline (live, non-serializable).
 type Step struct {
-	Key   string
-	Label string
-	Agent agent.Agent
+	Key     string
+	Label   string
+	Agent   agent.Agent // nil when IsHuman == true
+	IsHuman bool
 }
 
 // StepMeta is the lightweight form of Step — no agent, safe to derive cheaply
@@ -270,43 +278,45 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 			bPrevKey = fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r-1)
 		}
 
-		agentA, err := philosopher.Make(ctx, philosopher.MakeOpts{
-			Data:                a,
-			AgentName:           fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			OutputKey:           fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			Situation:           roundSituation(r),
-			OpponentArgKey:      bPrevKey,
-			ModelID:             modelID,
-			MaxWords:            maxWords,
-			IncludeInterjection: true,
-		})
-		if err != nil {
-			return nil, err
+		aKey := fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r)
+		if IsHumanDebater(a.Name) {
+			steps = append(steps, Step{Key: aKey, Label: fmt.Sprintf("%s — Round %d", a.Name, r), IsHuman: true})
+		} else {
+			agentA, err := philosopher.Make(ctx, philosopher.MakeOpts{
+				Data:                a,
+				AgentName:           aKey,
+				OutputKey:           aKey,
+				Situation:           roundSituation(r),
+				OpponentArgKey:      bPrevKey,
+				ModelID:             modelID,
+				MaxWords:            maxWords,
+				IncludeInterjection: true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, Step{Key: aKey, Label: fmt.Sprintf("%s — Round %d", a.Name, r), Agent: agentA})
 		}
-		steps = append(steps, Step{
-			Key:   fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			Label: fmt.Sprintf("%s — Round %d", a.Name, r),
-			Agent: agentA,
-		})
 
-		agentB, err := philosopher.Make(ctx, philosopher.MakeOpts{
-			Data:                b,
-			AgentName:           fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
-			OutputKey:           fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
-			Situation:           fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
-			OpponentArgKey:      fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			ModelID:             modelID,
-			MaxWords:            maxWords,
-			IncludeInterjection: true,
-		})
-		if err != nil {
-			return nil, err
+		bKey := fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r)
+		if IsHumanDebater(b.Name) {
+			steps = append(steps, Step{Key: bKey, Label: fmt.Sprintf("%s — Round %d", b.Name, r), IsHuman: true})
+		} else {
+			agentB, err := philosopher.Make(ctx, philosopher.MakeOpts{
+				Data:                b,
+				AgentName:           bKey,
+				OutputKey:           bKey,
+				Situation:           fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
+				OpponentArgKey:      aKey,
+				ModelID:             modelID,
+				MaxWords:            maxWords,
+				IncludeInterjection: true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, Step{Key: bKey, Label: fmt.Sprintf("%s — Round %d", b.Name, r), Agent: agentB})
 		}
-		steps = append(steps, Step{
-			Key:   fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
-			Label: fmt.Sprintf("%s — Round %d", b.Name, r),
-			Agent: agentB,
-		})
 	}
 
 	// Critic
@@ -316,42 +326,44 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 	}
 	steps = append(steps, Step{Key: "critic_feedback", Label: "Critic Analysis", Agent: criticAgent})
 
-	// Philosopher responses to critic
-	aCrit, err := philosopher.Make(ctx, philosopher.MakeOpts{
-		Data:      a,
-		AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(a.Name)),
-		OutputKey: fmt.Sprintf("%s_critic_response", philosopher.Key(a.Name)),
-		Situation: "response to the critic — address their challenges and refine your position",
-		CriticKey: "critic_feedback",
-		ModelID:   modelID,
-		MaxWords:  maxWords,
-	})
-	if err != nil {
-		return nil, err
+	// Philosopher / human responses to critic
+	aCritKey := fmt.Sprintf("%s_critic_response", philosopher.Key(a.Name))
+	if IsHumanDebater(a.Name) {
+		steps = append(steps, Step{Key: aCritKey, Label: fmt.Sprintf("%s — Response to Critic", a.Name), IsHuman: true})
+	} else {
+		aCrit, err := philosopher.Make(ctx, philosopher.MakeOpts{
+			Data:      a,
+			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(a.Name)),
+			OutputKey: aCritKey,
+			Situation: "response to the critic — address their challenges and refine your position",
+			CriticKey: "critic_feedback",
+			ModelID:   modelID,
+			MaxWords:  maxWords,
+		})
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, Step{Key: aCritKey, Label: fmt.Sprintf("%s — Response to Critic", a.Name), Agent: aCrit})
 	}
-	steps = append(steps, Step{
-		Key:   fmt.Sprintf("%s_critic_response", philosopher.Key(a.Name)),
-		Label: fmt.Sprintf("%s — Response to Critic", a.Name),
-		Agent: aCrit,
-	})
 
-	bCrit, err := philosopher.Make(ctx, philosopher.MakeOpts{
-		Data:      b,
-		AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(b.Name)),
-		OutputKey: fmt.Sprintf("%s_critic_response", philosopher.Key(b.Name)),
-		Situation: "response to the critic — address their challenges and refine your position",
-		CriticKey: "critic_feedback",
-		ModelID:   modelID,
-		MaxWords:  maxWords,
-	})
-	if err != nil {
-		return nil, err
+	bCritKey := fmt.Sprintf("%s_critic_response", philosopher.Key(b.Name))
+	if IsHumanDebater(b.Name) {
+		steps = append(steps, Step{Key: bCritKey, Label: fmt.Sprintf("%s — Response to Critic", b.Name), IsHuman: true})
+	} else {
+		bCrit, err := philosopher.Make(ctx, philosopher.MakeOpts{
+			Data:      b,
+			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(b.Name)),
+			OutputKey: bCritKey,
+			Situation: "response to the critic — address their challenges and refine your position",
+			CriticKey: "critic_feedback",
+			ModelID:   modelID,
+			MaxWords:  maxWords,
+		})
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, Step{Key: bCritKey, Label: fmt.Sprintf("%s — Response to Critic", b.Name), Agent: bCrit})
 	}
-	steps = append(steps, Step{
-		Key:   fmt.Sprintf("%s_critic_response", philosopher.Key(b.Name)),
-		Label: fmt.Sprintf("%s — Response to Critic", b.Name),
-		Agent: bCrit,
-	})
 
 	// Judge
 	judgeAgent, err := judge.MakeJudge(ctx, a, b, numRounds, modelID)

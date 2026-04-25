@@ -68,6 +68,7 @@ export interface TurnResult {
   step_index: number
   total_steps: number
   done: boolean
+  awaiting_human?: boolean
   turn_input_tokens: number
   turn_output_tokens: number
   total_input_tokens: number
@@ -295,10 +296,13 @@ export function streamTutor(
   })
 }
 
-export async function nextTurn(debateId: string): Promise<TurnResult> {
-  const res = await fetch(`/debates/${debateId}/next`, { 
+export async function nextTurn(debateId: string, humanInput?: string): Promise<TurnResult> {
+  const res = await fetch(`/debates/${debateId}/next`, {
     method: 'POST',
-    headers: getAuthHeader(),
+    headers: humanInput
+      ? { 'Content-Type': 'application/json', ...getAuthHeader() }
+      : getAuthHeader(),
+    body: humanInput ? JSON.stringify({ human_input: humanInput }) : undefined,
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
@@ -312,12 +316,18 @@ export async function nextTurn(debateId: string): Promise<TurnResult> {
 export function streamTurn(
   debateId: string,
   onToken: (text: string) => void,
+  humanInput?: string,
 ): Promise<TurnResult> {
   return new Promise(async (resolve, reject) => {
     try {
       const res = await fetch(`/debates/${debateId}/next`, {
         method: 'POST',
-        headers: { Accept: 'text/event-stream', ...getAuthHeader() },
+        headers: {
+          Accept: 'text/event-stream',
+          ...(humanInput ? { 'Content-Type': 'application/json' } : {}),
+          ...getAuthHeader(),
+        },
+        body: humanInput ? JSON.stringify({ human_input: humanInput }) : undefined,
       })
       if (!res.ok || !res.body) {
         const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))

@@ -135,25 +135,72 @@ type TurnResult struct {
 	StepIndex         int
 	TotalSteps        int
 	Done              bool
+	AwaitingHuman     bool // true when the current step belongs to the human player and no input was provided
 	TurnInputTokens   int
 	TurnOutputTokens  int
 	TotalInputTokens  int
 	TotalOutputTokens int
 }
 
-// NextTurn runs the next pipeline step for the given debate. If onToken is
-// non-nil, partial tokens are streamed through it as they arrive; otherwise
-// the agent runs in non-streaming mode.
+// NextTurn runs the next pipeline step for the given debate. humanInput is the
+// user's typed argument; it is only consumed when the current step belongs to
+// the human player (IsHumanDebater). If humanInput is empty on a human step,
+// the call returns AwaitingHuman=true without advancing. If onToken is non-nil,
+// partial tokens are streamed through it for LLM steps.
 //
 // Returns ErrNotFound, ErrVersionConflict, or *ValidationError for callers
 // that need to distinguish cases.
-func (s *Service) NextTurn(ctx context.Context, debateID string, onToken func(string)) (*TurnResult, error) {
+func (s *Service) NextTurn(ctx context.Context, debateID string, humanInput string, onToken func(string)) (*TurnResult, error) {
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
 		return nil, err
 	}
 	if p.Current >= TotalSteps(p.NumRounds) {
 		return nil, validationErr("Debate is already complete")
+	}
+
+	// Resolve debater metadata cheaply — no agent construction needed yet.
+	a, okA := s.philMap[p.DebaterAName]
+	b, okB := s.philMap[p.DebaterBName]
+	if !okA || !okB {
+		return nil, fmt.Errorf("unknown philosopher in debate %s", debateID)
+	}
+
+	metas := BuildStepMeta(a, b, p.NumRounds)
+	currentMeta := metas[p.Current]
+
+	// Human step: handle without touching Hydrate or any LLM runner.
+	if strings.HasPrefix(currentMeta.Key, philosopher.Key(HumanDebaterName)+"_") {
+		trimmed := strings.TrimSpace(humanInput)
+		role := RoleForStep(currentMeta.Key, a, b)
+		if trimmed == "" {
+			return &TurnResult{
+				Step:          currentMeta,
+				AgentName:     HumanDebaterName,
+				Role:          role,
+				AwaitingHuman: true,
+				StepIndex:     p.Current,
+				TotalSteps:    TotalSteps(p.NumRounds),
+			}, nil
+		}
+		if p.StepOutputs == nil {
+			p.StepOutputs = map[string]string{}
+		}
+		p.StepOutputs[currentMeta.Key] = trimmed
+		stepIdx := p.Current
+		p.Current++
+		if err := s.repo.Update(ctx, p); err != nil {
+			return nil, fmt.Errorf("save human turn: %w", err)
+		}
+		return &TurnResult{
+			Step:       currentMeta,
+			AgentName:  HumanDebaterName,
+			Role:       role,
+			Content:    trimmed,
+			StepIndex:  stepIdx,
+			TotalSteps: TotalSteps(p.NumRounds),
+			Done:       p.Current >= TotalSteps(p.NumRounds),
+		}, nil
 	}
 
 	rt, err := Hydrate(ctx, p, s.philMap)
