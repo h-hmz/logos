@@ -39,10 +39,6 @@ var geminiAPIOnlyModels = map[string]bool{
 	"gemini-2.5-pro-preview-tts": true,
 }
 
-func init() {
-	Register("gemini", newGeminiClient)
-}
-
 // isGeminiAPIOnly reports whether model is only reachable via the public
 // Gemini API backend.
 func isGeminiAPIOnly(model string) bool { return geminiAPIOnlyModels[model] }
@@ -52,7 +48,7 @@ type geminiClient struct {
 	model string
 }
 
-func newGeminiClient(ctx context.Context) (Synthesizer, error) {
+func newGeminiClient(ctx context.Context) (*geminiClient, error) {
 	model := config.TTSModel()
 	apiKey := config.TTSAPIKey()
 	apiOnly := isGeminiAPIOnly(model)
@@ -95,7 +91,35 @@ func newGeminiClient(ctx context.Context) (Synthesizer, error) {
 	return &geminiClient{inner: c, model: model}, nil
 }
 
-func (c *geminiClient) Synthesize(ctx context.Context, text, voice, style string) ([]byte, error) {
+// Synthesize returns a self-contained WAV for the given text. voice and
+// style are optional: empty voice falls back to DefaultGeminiVoice; empty
+// style omits the leading directive in the prompt.
+func Synthesize(ctx context.Context, text, voice, style string) ([]byte, error) {
+	c, err := client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.synthesize(ctx, text, voice, style)
+}
+
+// SynthesizeStream streams raw 16-bit little-endian mono PCM as chunks
+// arrive from the model. onStart fires exactly once with the sample rate
+// the moment it's known — use it to flush response headers before writing
+// PCM bytes to w.
+func SynthesizeStream(
+	ctx context.Context,
+	text, voice, style string,
+	onStart func(sampleRate int),
+	w io.Writer,
+) error {
+	c, err := client(ctx)
+	if err != nil {
+		return err
+	}
+	return c.synthesizeStream(ctx, text, voice, style, onStart, w)
+}
+
+func (c *geminiClient) synthesize(ctx context.Context, text, voice, style string) ([]byte, error) {
 	if voice == "" {
 		voice = DefaultGeminiVoice
 	}
@@ -126,9 +150,7 @@ func (c *geminiClient) Synthesize(ctx context.Context, text, voice, style string
 	return wrapWAV(pcm, sampleRate, 1, 16), nil
 }
 
-// SynthesizeStream streams raw PCM chunks as they arrive from the model.
-// Implements tts.StreamSynthesizer.
-func (c *geminiClient) SynthesizeStream(
+func (c *geminiClient) synthesizeStream(
 	ctx context.Context,
 	text, voice, style string,
 	onStart func(sampleRate int),

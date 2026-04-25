@@ -84,44 +84,20 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	client, err := tts.Shared(ctx)
-	if err != nil || client == nil {
-		slog.ErrorContext(ctx, "tts client unavailable", "error", err)
-		writeError(w, http.StatusServiceUnavailable, "TTS client unavailable")
-		return
+	headerSent := false
+	onStart := func(rate int) {
+		w.Header().Set("Content-Type", fmt.Sprintf("audio/L16;rate=%d;channels=1", rate))
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-TTS-Voice", voice)
+		w.WriteHeader(http.StatusOK)
+		headerSent = true
 	}
-	// Prefer streaming when the provider supports it: first audio arrives in
-	// 1-3s instead of waiting for the full synthesis.
-	if streamer, ok := client.(tts.StreamSynthesizer); ok {
-		headerSent := false
-		onStart := func(rate int) {
-			w.Header().Set("Content-Type", fmt.Sprintf("audio/L16;rate=%d;channels=1", rate))
-			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("X-TTS-Voice", voice)
-			w.WriteHeader(http.StatusOK)
-			headerSent = true
+	if err := tts.SynthesizeStream(ctx, text, voice, style, onStart, w); err != nil {
+		if !headerSent {
+			slog.ErrorContext(ctx, "tts stream step failed", "step_key", req.StepKey, "error", err)
+			writeError(w, http.StatusBadGateway, "TTS synthesis failed")
+		} else {
+			slog.ErrorContext(ctx, "tts stream step interrupted mid-stream", "step_key", req.StepKey, "error", err)
 		}
-		if err := streamer.SynthesizeStream(ctx, text, voice, style, onStart, w); err != nil {
-			if !headerSent {
-				slog.ErrorContext(ctx, "tts stream step failed", "step_key", req.StepKey, "error", err)
-				writeError(w, http.StatusBadGateway, "TTS synthesis failed")
-			} else {
-				slog.ErrorContext(ctx, "tts stream step interrupted mid-stream", "step_key", req.StepKey, "error", err)
-			}
-		}
-		return
 	}
-
-	// Fallback: blocking synthesis returning a self-contained WAV.
-	wav, err := client.Synthesize(ctx, text, voice, style)
-	if err != nil {
-		slog.ErrorContext(ctx, "tts synthesize step failed", "step_key", req.StepKey, "error", err)
-		writeError(w, http.StatusBadGateway, "TTS synthesis failed")
-		return
-	}
-	w.Header().Set("Content-Type", "audio/wav")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-TTS-Voice", voice)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(wav)
 }

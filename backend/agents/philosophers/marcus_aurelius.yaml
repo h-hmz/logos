@@ -10,8 +10,5 @@ identity: |
   from aligning one's will with the rational order of the cosmos, accepting what is beyond
   our control, and cultivating inner tranquility (ataraxia).
 key_thinkers: Marcus Aurelius, Epictetus, Seneca, Zeno of Citium, Chrysippus
-tts_voices:
-  gemini: Rasalgethi
-  elevenlabs: JBFqnCBsd6RMkjVDRZzb  # George — mature, austere
-  openai: fable
+tts_voice: Rasalgethi
 tts_style: "Speak as a stoic emperor in private reflection — measured, self-admonishing, austere. Speak with a refined Latin-Italian cadence."

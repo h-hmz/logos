@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type JSX } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type JSX } from 'react'
 import { Bust } from '../components/Bust'
 import { InlineMd } from '../components/InlineMd'
 import { TokenPill } from '../components/TokenPill'
@@ -16,6 +16,7 @@ import {
 } from '../api'
 import { enrich, type EnrichedPhilosopher } from '../philosopher-meta'
 import { roleForLabel, trimmedLabel, type Role } from '../step-role'
+import { stripTTSTags, stripTTSTagsStreaming } from '../ttsTags'
 import type { Route } from '../components/Masthead'
 
 interface Props {
@@ -27,6 +28,10 @@ interface Props {
 
 interface TurnBuffer {
   text: string
+  // fullText is set the moment streamTurn resolves with the complete content,
+  // even while the paced reveal is still ticking text onto the screen. It
+  // unblocks audio synthesis ahead of the visual reveal.
+  fullText?: string
   done: boolean
   tokens: number
   streaming: boolean
@@ -138,6 +143,28 @@ function SpokenText({ text, activeIndex, asParagraphs }: SpokenTextProps) {
   )
 }
 
+// Single-active-audio coordinator: only one PlayButton may play at a time.
+// When a button starts (or resumes) playback it calls takeAudio with its own
+// pause callback; the previous active button (if any) is paused, not stopped,
+// so the user can resume it later by clicking it again.
+let activeAudioOwner: string | null = null
+let activeAudioPause: (() => void) | null = null
+
+function takeAudio(owner: string, pause: () => void) {
+  if (activeAudioOwner && activeAudioOwner !== owner && activeAudioPause) {
+    activeAudioPause()
+  }
+  activeAudioOwner = owner
+  activeAudioPause = pause
+}
+
+function releaseAudio(owner: string) {
+  if (activeAudioOwner === owner) {
+    activeAudioOwner = null
+    activeAudioPause = null
+  }
+}
+
 // PlayButton streams TTS for a step via Web Audio and plays chunks as they
 // arrive (first audio in ~1-2s). On completion, caches the full PCM so
 // replay and seek are instant.
@@ -160,6 +187,11 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [pos, setPos] = useState(0)
   const [dur, setDur] = useState(0)
+  const ownerId = useId()
+  const stateRef = useRef(state)
+  useEffect(() => { stateRef.current = state }, [state])
+  const onStateChangeRef = useRef(onStateChange)
+  useEffect(() => { onStateChangeRef.current = onStateChange }, [onStateChange])
 
   const ctxRef = useRef<AudioContext | null>(null)
   const sampleRateRef = useRef(24000)
@@ -197,12 +229,29 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
     clearEndTimer()
   }, [clearTicker, clearEndTimer])
 
+  // pauseSelf is invoked by the single-active-audio coordinator when another
+  // PlayButton starts playing. It mirrors the user-initiated pause branch in
+  // onToggle, but reads state through refs so its identity can stay stable
+  // across renders.
+  const pauseSelf = useCallback(() => {
+    const s = stateRef.current
+    if (s !== 'playing' && s !== 'streaming') return
+    const ctx = ctxRef.current
+    if (!ctx) return
+    pauseOffsetRef.current = ctx.currentTime - playStartRef.current
+    ctx.suspend().catch(() => { /* noop */ })
+    clearTicker()
+    setState('paused')
+    onStateChangeRef.current?.(false)
+  }, [clearTicker])
+
   useEffect(() => {
     return () => {
+      releaseAudio(ownerId)
       stopAll()
       if (ctxRef.current) { try { ctxRef.current.close() } catch { /* noop */ } ctxRef.current = null }
     }
-  }, [stopAll])
+  }, [stopAll, ownerId])
 
   const startTicker = useCallback(() => {
     clearTicker()
@@ -223,10 +272,11 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
           setState('idle')
           onStateChange?.(false)
           pauseOffsetRef.current = 0
+          releaseAudio(ownerId)
         }
       }
     }, 80)
-  }, [clearTicker, onStateChange, onTime, stopAll])
+  }, [clearTicker, onStateChange, onTime, stopAll, ownerId])
 
   const scheduleChunk = useCallback((f32: Float32Array) => {
     const ctx = ctxRef.current
@@ -257,6 +307,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
       clearTicker()
       setState('paused')
       onStateChange?.(false)
+      releaseAudio(ownerId)
       return
     }
 
@@ -268,6 +319,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
       startTicker()
       setState(doneRef.current ? 'playing' : 'streaming')
       onStateChange?.(true)
+      takeAudio(ownerId, pauseSelf)
       return
     }
 
@@ -290,6 +342,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
       startTicker()
       setState('playing')
       onStateChange?.(true)
+      takeAudio(ownerId, pauseSelf)
       return
     }
 
@@ -312,6 +365,7 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
 
       setState('streaming')
       onStateChange?.(true)
+      takeAudio(ownerId, pauseSelf)
       startTicker()
 
       for await (const chunk of chunks) {
@@ -340,8 +394,9 @@ function PlayButton({ debateId, stepKey, text, disabled, onTime, onDuration, onF
       setState('error')
       setErrorMsg(e instanceof Error ? e.message : 'TTS failed')
       onStateChange?.(false)
+      releaseAudio(ownerId)
     }
-  }, [state, debateId, stepKey, text, ensureCtx, scheduleChunk, startTicker, stopAll, clearTicker, onDuration, onFinalDuration, onStateChange, onTime])
+  }, [state, debateId, stepKey, text, ensureCtx, scheduleChunk, startTicker, stopAll, clearTicker, onDuration, onFinalDuration, onStateChange, onTime, ownerId, pauseSelf])
 
   const onSeek = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     // Seek is only supported after streaming completes.
@@ -478,7 +533,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   } | null>(null)
   const [tutorTarget, setTutorTarget] = useState<{ selection: string; turnKey: string } | null>(null)
   const [tutorPanelOpen, setTutorPanelOpen] = useState(false)
-  const [auto, setAuto] = useState(true)
+  const [auto, setAuto] = useState(false)
   const [totalIn, setTotalIn] = useState(() => {
     let max = 0
     for (const t of Object.values(initialTurns)) max = Math.max(max, t.total_input_tokens ?? 0)
@@ -589,6 +644,13 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
       const result = await streamTurn(debate.id, (chunk) => {
         pendingRef.current[stepIndex] = (pendingRef.current[stepIndex] ?? '') + chunk
         startRevealTicker()
+      })
+      // Expose the full content immediately so TTS can be requested while
+      // the paced reveal continues animating to the screen.
+      setBuffers((prev) => {
+        const cur = prev[stepIndex]
+        if (!cur) return prev
+        return { ...prev, [stepIndex]: { ...cur, fullText: result.content } }
       })
       // Wait for the paced reveal to drain before flipping to "done" so we
       // don't yank unrevealed text onto the screen in one jump.
@@ -810,6 +872,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 side={role}
                 label={trimmedLabel(step.label, nameA, nameB)}
                 text={buf.text}
+                fullText={buf.fullText}
                 streaming={buf.streaming && !buf.done}
                 tokens={buf.tokens}
                 active={i === idx - 1 || (i === idx && buf.streaming)}
@@ -1317,6 +1380,10 @@ interface TurnBlockProps {
   side: 'a' | 'b'
   label: string
   text: string
+  // fullText, when present, is the complete content even if the paced
+  // reveal hasn't finished animating yet. PlayButton uses this to start
+  // TTS as soon as the data is ready.
+  fullText?: string
   streaming: boolean
   tokens: number
   active: boolean
@@ -1325,16 +1392,23 @@ interface TurnBlockProps {
   stepKey?: string
 }
 
-function TurnBlock({ who, side, label, text, streaming, tokens, active, error, debateId, stepKey }: TurnBlockProps) {
+function TurnBlock({ who, side, label, text, fullText, streaming, tokens, active, error, debateId, stepKey }: TurnBlockProps) {
   const selectable = !streaming && !!text && !!stepKey
-  const paragraphs = text.split(/\n\n+/).filter((p) => p.length > 0)
+  // Raw `text` carries Gemini TTS delivery cues like [excited]; hide them
+  // from the reader while keeping the raw string for the TTS POST body.
+  const displayText = streaming ? stripTTSTagsStreaming(text) : stripTTSTags(text)
+  // audioText is whatever the TTS endpoint should receive: the full
+  // content as soon as the stream resolves, falling back to the revealed
+  // text once the reveal has caught up. Empty until either is ready.
+  const audioText = fullText ?? (streaming ? '' : text)
+  const paragraphs = displayText.split(/\n\n+/).filter((p) => p.length > 0)
   if (paragraphs.length === 0) paragraphs.push('')
   const [pos, setPos] = useState(0)
   const [finalDur, setFinalDur] = useState<number | undefined>(undefined)
   const [playing, setPlaying] = useState(false)
   // Flatten paragraphs to a linear sentence list to keep indices consistent
   // with what SpokenText renders internally.
-  const allSentences = useMemo(() => paragraphs.flatMap(splitSentences), [text])
+  const allSentences = useMemo(() => paragraphs.flatMap(splitSentences), [displayText])
   const starts = useMemo(() => sentenceStarts(allSentences, finalDur), [allSentences, finalDur])
   const activeIdx = activeSentenceIndex(starts, pos, playing)
   return (
@@ -1349,12 +1423,12 @@ function TurnBlock({ who, side, label, text, streaming, tokens, active, error, d
         <div className="label-row">
           <span className="round">◆ {label}</span>
           <span className="stat" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            {streaming ? `streaming · ${text.length} ch` : tokens ? `${tokens} tok` : ''}
-            {!streaming && text && debateId && stepKey && (
+            {streaming ? `streaming · ${displayText.length} ch` : tokens ? `${tokens} tok` : ''}
+            {audioText && debateId && stepKey && (
               <PlayButton
                 debateId={debateId}
                 stepKey={stepKey}
-                text={text}
+                text={audioText}
                 onTime={setPos}
                 onFinalDuration={setFinalDur}
                 onStateChange={setPlaying}
@@ -1374,7 +1448,7 @@ function TurnBlock({ who, side, label, text, streaming, tokens, active, error, d
               </p>
             ))
           ) : (
-            <SpokenText text={text} activeIndex={activeIdx} asParagraphs />
+            <SpokenText text={displayText} activeIndex={activeIdx} asParagraphs />
           )}
         </div>
         {error && <div className="live-error">{error}</div>}

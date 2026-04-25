@@ -1,6 +1,5 @@
-// Package tts synthesizes speech through a pluggable provider interface.
-// Providers (Gemini, Mistral/Voxtral, ElevenLabs, ...) register themselves
-// via init() and are selected at runtime by config.TTSProvider().
+// Package tts synthesizes speech through Google's Gemini TTS models.
+// A single process-wide client is constructed lazily on first use.
 package tts
 
 import (
@@ -8,78 +7,31 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"regexp"
 	"strconv"
 	"sync"
-
-	"github.com/h-hmz/logos/internal/config"
 )
-
-// Synthesizer produces a self-contained WAV byte slice for the given text.
-// voice and style are provider-specific; empty strings request provider
-// defaults. Implementations must be safe for concurrent use.
-type Synthesizer interface {
-	Synthesize(ctx context.Context, text, voice, style string) ([]byte, error)
-}
-
-// StreamSynthesizer is an optional capability: providers that can emit
-// audio progressively implement it so the server can stream raw 16-bit
-// little-endian mono PCM to the client. onStart fires exactly once, as
-// soon as the first chunk arrives and the sample rate is known — callers
-// should use it to flush response headers. Subsequent PCM chunks are
-// written to w (and w may be an http.Flusher to force partial delivery).
-type StreamSynthesizer interface {
-	Synthesizer
-	SynthesizeStream(ctx context.Context, text, voice, style string,
-		onStart func(sampleRate int), w io.Writer) error
-}
-
-// Factory builds a Synthesizer on demand. Factories run once per process
-// (results are cached by Shared).
-type Factory func(ctx context.Context) (Synthesizer, error)
 
 var (
-	registryMu sync.RWMutex
-	registry   = map[string]Factory{}
-
-	sharedMu     sync.Mutex
-	sharedClient Synthesizer
+	sharedMu sync.Mutex
+	shared   *geminiClient
 )
 
-// Register associates a provider name (e.g. "gemini", "mistral") with its
-// factory. Called from provider-specific init() functions.
-func Register(name string, f Factory) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registry[name] = f
-}
-
-// Shared returns the process-wide TTS client for the configured provider,
-// creating it on first use. Returns (nil, nil) when TTS is disabled.
-func Shared(ctx context.Context) (Synthesizer, error) {
-	if !config.TTSEnabled() {
-		return nil, nil
-	}
+// client returns the process-wide Gemini TTS client, constructing it on
+// first use. The factory runs exactly once; subsequent calls return the
+// cached client.
+func client(ctx context.Context) (*geminiClient, error) {
 	sharedMu.Lock()
 	defer sharedMu.Unlock()
-	if sharedClient != nil {
-		return sharedClient, nil
+	if shared != nil {
+		return shared, nil
 	}
-
-	name := config.TTSProvider()
-	registryMu.RLock()
-	factory, ok := registry[name]
-	registryMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("tts: unknown provider %q", name)
-	}
-	c, err := factory(ctx)
+	c, err := newGeminiClient(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("tts: init provider %q: %w", name, err)
+		return nil, fmt.Errorf("tts: init gemini client: %w", err)
 	}
-	sharedClient = c
-	return sharedClient, nil
+	shared = c
+	return shared, nil
 }
 
 var rateRe = regexp.MustCompile(`rate=(\d+)`)

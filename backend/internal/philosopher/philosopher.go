@@ -27,12 +27,10 @@ type Data struct {
 	Identity         string `yaml:"identity"`
 	KeyThinkers      string `yaml:"key_thinkers"`
 	EpistemicSources string `yaml:"epistemic_sources,omitempty"`
-	// TTSVoices maps lowercase provider name (matching config.TTSProvider(),
-	// e.g. "gemini", "elevenlabs", "openai") to the voice identifier for that
-	// provider. The resolver falls back to the provider's built-in default
-	// when the current provider has no entry here.
-	TTSVoices map[string]string `yaml:"tts_voices,omitempty" json:"-"`
-	TTSStyle  string            `yaml:"tts_style,omitempty"  json:"-"`
+	// TTSVoice is the Gemini voice id for this philosopher (e.g. "Kore",
+	// "Rasalgethi"). Empty string falls back to the package default.
+	TTSVoice string `yaml:"tts_voice,omitempty" json:"-"`
+	TTSStyle string `yaml:"tts_style,omitempty" json:"-"`
 }
 
 var keyRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -138,7 +136,24 @@ func Make(ctx context.Context, opts MakeOpts) (agent.Agent, error) {
 %s
 
 Speak in first person as %s. Be passionate but rigorous.
-`, d.Name, d.School, d.Identity, d.KeyThinkers, epistemicBlock, DebateRules(opts.MaxWords), opts.Situation, contextBlock, d.Name)
+
+## Expressive Delivery
+Your reply will be spoken aloud by Google's Gemini TTS, which
+supports a wide vocabulary of bracketed delivery cues — short
+lowercase tokens written inline, e.g. [excited], [whispers],
+[sighs], [laughs softly], [emphatic], [pause], [amused], [scoffs],
+[wearily], [thoughtful], and many more in the same shape. Pick
+whichever cue genuinely fits the emotional beat; you are not
+restricted to a fixed list.
+
+Constraints on use:
+- Brackets only — never parentheses.
+- Each cue is a short bracketed token (1–4 lowercase words). Do not
+  write long stage directions inside brackets.
+- Cues are instructions to the narrator and are never read aloud.
+- Plain prose remains the default; cues are seasoning, not structure.
+`,
+	d.Name, d.School, d.Identity, d.KeyThinkers, epistemicBlock, DebateRules(opts.MaxWords), opts.Situation, contextBlock, d.Name)
 
 	m, err := modelcache.Get(ctx, opts.ModelID)
 	if err != nil {

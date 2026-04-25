@@ -23,8 +23,5 @@ identity: |
   reason itself — and a patient defender of the institutions that make free cooperation
   possible.
 key_thinkers: Friedrich Hayek, Ludwig von Mises, Carl Menger, Adam Smith, David Hume
-tts_voices:
-  gemini: Iapetus
-  elevenlabs: onwK4e9ZLuTAKqWW03F9  # Daniel — precise, deliberate
-  openai: onyx
+tts_voice: Iapetus
 tts_style: "Speak as a soft-spoken Austrian theorist — careful, measured, patient in dismantling an error. Speak with a mild Viennese accent."

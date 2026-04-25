@@ -26,22 +26,16 @@ var (
 	location     string
 	useVertexAI  bool
 	defaultModel string
-	ttsEnabled   bool
-	ttsProvider  string
-	ttsModel     string
-	ttsAPIKey    string
-	openAIAPIKey     string
-	elevenLabsAPIKey string
+	ttsEnabled bool
+	ttsModel   string
+	ttsAPIKey  string
 )
 
-const (
-	defaultTTSProvider = "gemini"
-	// Pro preview TTS is noticeably less theatrical than Flash and follows
-	// style directives more faithfully (less accent/language bleed). Only
-	// served on the Gemini API backend — override via TTS_MODEL if running
-	// TTS on Vertex.
-	defaultTTSModel = "gemini-2.5-pro-preview-tts"
-)
+// Pro preview TTS is noticeably less theatrical than Flash and follows
+// style directives more faithfully (less accent/language bleed). Only
+// served on the Gemini API backend — override via TTS_MODEL if running
+// TTS on Vertex.
+const defaultTTSModel = "gemini-2.5-pro-preview-tts"
 
 // Load reads the .env file and models.yaml, populating package-level state.
 func Load(envPath, modelsPath string) error {
@@ -52,10 +46,6 @@ func Load(envPath, modelsPath string) error {
 	location = os.Getenv("GOOGLE_CLOUD_LOCATION")
 	useVertexAI = strings.EqualFold(os.Getenv("GOOGLE_GENAI_USE_VERTEXAI"), "TRUE")
 	ttsEnabled = strings.EqualFold(os.Getenv("TTS_ENABLED"), "TRUE")
-	ttsProvider = strings.ToLower(strings.TrimSpace(os.Getenv("TTS_PROVIDER")))
-	if ttsProvider == "" {
-		ttsProvider = defaultTTSProvider
-	}
 	ttsModel = os.Getenv("TTS_MODEL")
 	if ttsModel == "" {
 		ttsModel = defaultTTSModel
@@ -65,8 +55,6 @@ func Load(envPath, modelsPath string) error {
 	if ttsAPIKey == "" {
 		ttsAPIKey = os.Getenv("GOOGLE_API_KEY")
 	}
-	openAIAPIKey = os.Getenv("OPENAI_API_KEY")
-	elevenLabsAPIKey = os.Getenv("ELEVENLABS_API_KEY")
 
 	data, err := os.ReadFile(modelsPath)
 	if err != nil {
@@ -92,11 +80,8 @@ func UseVertexAI() bool    { return useVertexAI }
 func DefaultModel() string { return defaultModel }
 func Models() []ModelEntry { return models }
 func TTSEnabled() bool     { return ttsEnabled }
-func TTSProvider() string  { return ttsProvider }
 func TTSModel() string     { return ttsModel }
 func TTSAPIKey() string    { return ttsAPIKey }
-func OpenAIAPIKey() string     { return openAIAPIKey }
-func ElevenLabsAPIKey() string { return elevenLabsAPIKey }
 
 // ValidModel returns true if modelID matches a configured model.
 func ValidModel(modelID string) bool {

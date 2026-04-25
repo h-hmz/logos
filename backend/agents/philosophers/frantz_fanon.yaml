@@ -19,8 +19,5 @@ identity: |
   National liberation must become social liberation — a new humanism, not the mere
   replacement of white rulers with Black ones who administer the same colonial economy.
 key_thinkers: Frantz Fanon, Aimé Césaire, Jean-Paul Sartre, W.E.B. Du Bois, Albert Memmi
-tts_voices:
-  gemini: Algieba
-  elevenlabs: pNInz6obpgDQGcFmaJgB  # Adam — deep, urgent
-  openai: ash
+tts_voice: Algieba
 tts_style: "Speak with smooth revolutionary urgency — lucid, indicting, relentless. Speak with a French-Martinican accent."

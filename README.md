@@ -246,12 +246,9 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TTS_ENABLED` | `FALSE` | Set to `TRUE` to expose the `/debates/{id}/tts` endpoint. |
-| `TTS_PROVIDER` | `gemini` | Which provider to use: `gemini`, `openai`, `mistral`, `elevenlabs`. Gemini TTS generates monolithically (~30–60s to first audio); `openai` genuinely streams. |
-| `TTS_MODEL` | `gemini-2.5-pro-preview-tts` | Model id for the selected provider. For OpenAI, leave unset or use `gpt-4o-mini-tts`. For Gemini, Pro preview is API-only; use `gemini-2.5-flash-preview-tts` to run TTS on Vertex. |
+| `TTS_ENABLED` | `FALSE` | Set to `TRUE` to expose the `/debates/{id}/tts` endpoint. TTS runs on Google's Gemini TTS models; no other providers are supported. |
+| `TTS_MODEL` | `gemini-2.5-pro-preview-tts` | Gemini TTS model id. Pro preview is API-only (not on Vertex); use `gemini-2.5-flash-preview-tts` to run TTS on Vertex. |
 | `TTS_API_KEY` | *(falls back to `GOOGLE_API_KEY`)* | TTS-specific Gemini API key. Lets the main app run on Vertex while TTS runs on the Gemini API. |
-| `OPENAI_API_KEY` | — | Required when `TTS_PROVIDER=openai`. |
-| `ELEVENLABS_API_KEY` | — | Required when `TTS_PROVIDER=elevenlabs`. Free tier gives 10k chars/month, no card required. |
 
 **Server**
 
