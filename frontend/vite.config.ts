@@ -5,7 +5,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/models': 'http://localhost:8000',
       '/philosophers': 'http://localhost:8000',
       '/debates': 'http://localhost:8000',
     },

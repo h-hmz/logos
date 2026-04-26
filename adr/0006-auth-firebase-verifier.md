@@ -52,15 +52,15 @@ Two implementations ship: `NewFirebaseVerifier` (production) and
 is installed on a chi `Group` containing only the protected
 routes; public routes sit outside it:
 
-- Public: `/healthz`, `/readyz`, `/models`, `/philosophers`.
+- Public: `/healthz`, `/readyz`, `/philosophers`.
 - Protected: `/debates`, `/debates/{id}/next`, `/debates/{id}/interject`,
   `/debates/{id}/tts`, `/suggest-topic`.
 
 Health checks must never trigger auth work: probes and bots hammer
-them at high frequency and they must cost nothing. `/models` and
-`/philosophers` are cheap static reads that the SPA calls before the
-user signs in; putting them behind auth would force a login just to
-render the landing page.
+them at high frequency and they must cost nothing. `/philosophers` is
+a cheap static read that the SPA calls before the user signs in;
+putting it behind auth would force a login just to render the landing
+page.
 
 **4. UID propagated via `context.Context`, logged automatically.** The
 middleware stashes the verified UID under an unexported `ctxKeyUID`.

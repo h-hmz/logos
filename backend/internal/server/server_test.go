@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,28 +17,26 @@ import (
 	"github.com/h-hmz/logos/internal/philosopher"
 )
 
-// testServer builds a Server and chi router with a fixed philosopher roster
-// and model list, suitable for handler-level tests that don't invoke the ADK
-// runner. Call once per test; config.Load is process-global so repeated calls
-// are safe but must pass a consistent models.yaml.
+// testServer builds a Server and chi router with a fixed philosopher roster,
+// suitable for handler-level tests that don't invoke the ADK runner.
 func testServer(t *testing.T) (*Server, http.Handler) {
 	t.Helper()
 	phils := []philosopher.Data{
 		{Name: "Socrates", School: "Classical", Identity: "id-a", KeyThinkers: "k"},
 		{Name: "Kant", School: "German Idealism", Identity: "id-b", KeyThinkers: "k"},
 	}
-	models := []config.ModelEntry{{ID: "test-model", Name: "Test Model"}}
-	seedConfig(t, models)
+	if err := config.Load(""); err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
 	repo := debate.NewMemoryRepo()
 	philMap := map[string]philosopher.Data{phils[0].Name: phils[0], phils[1].Name: phils[1]}
 	s := &Server{
 		philosophers: phils,
 		philMap:      philMap,
-		models:       models,
 		repo:         repo,
 		svc:          debate.NewService(repo, philMap),
 	}
-	router := New(phils, models, repo, auth.NewNoopVerifier())
+	router := New(phils, repo, auth.NewNoopVerifier())
 	// Existing handler tests predate auth; inject a bearer so the noop verifier
 	// accepts them. Dedicated 401 coverage lives in auth_test.go.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,22 +46,6 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 		router.ServeHTTP(w, r)
 	})
 	return s, handler
-}
-
-func seedConfig(t *testing.T, models []config.ModelEntry) {
-	t.Helper()
-	dir := t.TempDir()
-	y := "models:\n"
-	for _, m := range models {
-		y += "  - id: " + m.ID + "\n    name: " + m.Name + "\n"
-	}
-	path := filepath.Join(dir, "models.yaml")
-	if err := os.WriteFile(path, []byte(y), 0o600); err != nil {
-		t.Fatalf("write models.yaml: %v", err)
-	}
-	if err := config.Load(filepath.Join(dir, ".env.missing"), path); err != nil {
-		t.Fatalf("config.Load: %v", err)
-	}
 }
 
 // chiReq wraps an httptest request with a chi RouteContext carrying URL params,
@@ -80,23 +60,6 @@ func chiReq(method, target string, body io.Reader, params map[string]string) *ht
 }
 
 // ── Handler tests ───────────────────────────────────────────────────────────
-
-func TestListModels(t *testing.T) {
-	_, h := testServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/models", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	var got []config.ModelEntry
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got) != 1 || got[0].ID != "test-model" {
-		t.Fatalf("unexpected models: %+v", got)
-	}
-}
 
 func TestListPhilosophers(t *testing.T) {
 	_, h := testServer(t)
@@ -135,11 +98,10 @@ func TestCreateDebate_ValidationErrors(t *testing.T) {
 		name string
 		body map[string]any
 	}{
-		{"unknown philosopher", map[string]any{"topic": "t", "debater_a": "Ghost", "debater_b": "Kant", "model": "test-model"}},
-		{"same debater", map[string]any{"topic": "t", "debater_a": "Kant", "debater_b": "Kant", "model": "test-model"}},
-		{"empty topic", map[string]any{"topic": "", "debater_a": "Socrates", "debater_b": "Kant", "model": "test-model"}},
-		{"bad rounds", map[string]any{"topic": "t", "debater_a": "Socrates", "debater_b": "Kant", "num_rounds": 99, "model": "test-model"}},
-		{"bad model", map[string]any{"topic": "t", "debater_a": "Socrates", "debater_b": "Kant", "model": "mystery"}},
+		{"unknown philosopher", map[string]any{"topic": "t", "debater_a": "Ghost", "debater_b": "Kant"}},
+		{"same debater", map[string]any{"topic": "t", "debater_a": "Kant", "debater_b": "Kant"}},
+		{"empty topic", map[string]any{"topic": "", "debater_a": "Socrates", "debater_b": "Kant"}},
+		{"bad rounds", map[string]any{"topic": "t", "debater_a": "Socrates", "debater_b": "Kant", "num_rounds": 99}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -315,18 +277,18 @@ func testServerWithChallenger(t *testing.T) (*Server, http.Handler) {
 		{Name: debate.HumanDebaterName, School: "Human debater"},
 		{Name: "Socrates", School: "Classical", Identity: "id-a", KeyThinkers: "k"},
 	}
-	models := []config.ModelEntry{{ID: "test-model", Name: "Test Model"}}
-	seedConfig(t, models)
+	if err := config.Load(""); err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
 	repo := debate.NewMemoryRepo()
 	philMap := map[string]philosopher.Data{phils[0].Name: phils[0], phils[1].Name: phils[1]}
 	s := &Server{
 		philosophers: phils,
 		philMap:      philMap,
-		models:       models,
 		repo:         repo,
 		svc:          debate.NewService(repo, philMap),
 	}
-	router := New(phils, models, repo, auth.NewNoopVerifier())
+	router := New(phils, repo, auth.NewNoopVerifier())
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" {
 			r.Header.Set("Authorization", "Bearer test")

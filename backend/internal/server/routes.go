@@ -11,25 +11,23 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/h-hmz/logos/internal/auth"
-	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 )
 
 // Server holds the shared state for the HTTP handlers. Debate orchestration
 // lives in debate.Service; this struct carries the transport-adjacent pieces
-// (catalog for responses, model list, TTS resolution).
+// (catalog for responses, TTS resolution).
 type Server struct {
 	philosophers []philosopher.Data
 	philMap      map[string]philosopher.Data
-	models       []config.ModelEntry
 	repo         debate.Repository
 	svc          *debate.Service
 }
 
 // New creates a chi router with all endpoints registered. The verifier gates
 // protected routes; pass auth.NewNoopVerifier() for local dev/tests.
-func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debate.Repository, verifier auth.Verifier) *chi.Mux {
+func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier) *chi.Mux {
 	philMap := make(map[string]philosopher.Data, len(philosophers))
 	for _, p := range philosophers {
 		philMap[p.Name] = p
@@ -37,7 +35,6 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debat
 	s := &Server{
 		philosophers: philosophers,
 		philMap:      philMap,
-		models:       models,
 		repo:         repo,
 		svc:          debate.NewService(repo, philMap),
 	}
@@ -56,7 +53,6 @@ func New(philosophers []philosopher.Data, models []config.ModelEntry, repo debat
 	// Public routes:
 	r.Get("/healthz", s.healthz)
 	r.Get("/readyz", s.healthz)
-	r.Get("/models", s.listModels)
 	r.Get("/philosophers", s.listPhilosophers)
 
 	// Protected routes:
@@ -83,12 +79,6 @@ func (s *Server) debaters(p *debate.Persisted) (a, b philosopher.Data, ok bool) 
 	a, okA = s.philMap[p.DebaterAName]
 	b, okB = s.philMap[p.DebaterBName]
 	return a, b, okA && okB
-}
-
-// ── GET /models ─────────────────────────────────────────────────────────────
-
-func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.models)
 }
 
 // ── JSON helpers ────────────────────────────────────────────────────────────

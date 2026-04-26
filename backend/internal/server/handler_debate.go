@@ -53,7 +53,6 @@ type createDebateRequest struct {
 	DebaterA  string `json:"debater_a"`
 	DebaterB  string `json:"debater_b"`
 	NumRounds int    `json:"num_rounds"`
-	Model     string `json:"model"`
 	MaxWords  int    `json:"max_words"`
 }
 
@@ -89,7 +88,6 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 		DebaterA:  req.DebaterA,
 		DebaterB:  req.DebaterB,
 		NumRounds: req.NumRounds,
-		Model:     req.Model,
 		MaxWords:  req.MaxWords,
 	})
 	if err != nil {

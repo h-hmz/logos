@@ -57,7 +57,6 @@ type CreateDebateParams struct {
 	DebaterA  string
 	DebaterB  string
 	NumRounds int
-	Model     string
 	MaxWords  int
 }
 
@@ -77,9 +76,6 @@ func (s *Service) CreateDebate(ctx context.Context, in CreateDebateParams) (*Cre
 	if in.NumRounds == 0 {
 		in.NumRounds = 2
 	}
-	if in.Model == "" {
-		in.Model = config.DefaultModel()
-	}
 	if in.MaxWords == 0 {
 		in.MaxWords = 250
 	}
@@ -98,9 +94,6 @@ func (s *Service) CreateDebate(ctx context.Context, in CreateDebateParams) (*Cre
 	if in.Topic == "" {
 		return nil, validationErr("Topic cannot be empty")
 	}
-	if !config.ValidModel(in.Model) {
-		return nil, validationErr("Unknown model id")
-	}
 
 	p := &Persisted{
 		ID:           uuid.NewString(),
@@ -108,7 +101,7 @@ func (s *Service) CreateDebate(ctx context.Context, in CreateDebateParams) (*Cre
 		DebaterAName: a.Name,
 		DebaterBName: b.Name,
 		NumRounds:    in.NumRounds,
-		ModelID:      in.Model,
+		ModelID:      config.DefaultModel(),
 		MaxWords:     in.MaxWords,
 		StepOutputs:  map[string]string{},
 	}

@@ -62,16 +62,15 @@ func run(ctx context.Context, w io.Writer, args []string) error {
 	if dataDir == "" {
 		exe, _ := os.Executable()
 		dataDir = filepath.Dir(exe)
-		if _, err := os.Stat(filepath.Join(dataDir, "models.yaml")); err != nil {
+		if _, err := os.Stat(filepath.Join(dataDir, "agents")); err != nil {
 			dataDir = "."
 		}
 	}
 
 	envPath := filepath.Join(dataDir, ".env")
-	modelsPath := filepath.Join(dataDir, "models.yaml")
 	philDir := filepath.Join(dataDir, "agents", "philosophers")
 
-	if err := config.Load(envPath, modelsPath); err != nil {
+	if err := config.Load(envPath); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 
@@ -89,7 +88,7 @@ func run(ctx context.Context, w io.Writer, args []string) error {
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	router := server.New(philosophers, config.Models(), repo, verifier)
+	router := server.New(philosophers, repo, verifier)
 
 	port := os.Getenv("PORT")
 	if port == "" {

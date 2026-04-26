@@ -1,10 +1,5 @@
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export interface Model {
-  id: string
-  name: string
-}
-
 export interface Philosopher {
   name: string
   school: string
@@ -86,7 +81,6 @@ export interface CreateDebateParams {
   debater_a: string
   debater_b: string
   num_rounds: number
-  model: string
   max_words: number
 }
 
@@ -96,12 +90,6 @@ function getAuthHeader(): Record<string, string> {
   // TODO: Replace with actual Firebase ID token when auth is integrated.
   // The backend's noop verifier requires *some* Bearer token to be present.
   return { 'Authorization': 'Bearer local-dev-token' }
-}
-
-export async function fetchModels(): Promise<Model[]> {
-  const res = await fetch('/models')
-  if (!res.ok) throw new Error('Failed to load models')
-  return res.json()
 }
 
 export async function fetchPhilosophers(): Promise<Philosopher[]> {

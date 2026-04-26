@@ -261,17 +261,13 @@ button { font-family: inherit; }
 .topic-input::placeholder { color: var(--rule); font-style: italic; }
 
 /* Setup row */
-.setup-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 18px; }
+.setup-row { display: grid; grid-template-columns: auto 1fr; gap: 20px; margin-top: 18px; align-items: start; }
 .setup-row .field label { display: block; font-family: var(--sc); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }
 .setup-row .field .val { font-family: var(--serif-d); font-size: 20px; }
 .setup-row .segmented { display: flex; gap: 0; border: 1px solid var(--rule); width: fit-content; }
 .setup-row .segmented button { background: transparent; border: none; padding: 4px 10px; font-family: var(--serif-d); font-size: 18px; cursor: pointer; color: var(--ink-soft); border-right: 1px solid var(--rule); }
 .setup-row .segmented button:last-child { border-right: none; }
 .setup-row .segmented button.on { background: var(--ink); color: var(--panel); }
-.setup-row select {
-  width: 100%; font-family: var(--serif); font-size: 16px; padding: 6px 8px;
-  border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
-}
 .setup-row input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .setup-footer {

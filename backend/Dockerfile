@@ -8,7 +8,6 @@ FROM gcr.io/distroless/base-debian12
 COPY --from=build /logos /logos
 COPY --from=build /app/agents/philosophers /agents/philosophers
 COPY --from=build /app/.env /.env
-COPY --from=build /app/models.yaml /models.yaml
 ENV DATA_DIR=/
 ENV PORT=8080
 EXPOSE 8080

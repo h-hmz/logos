@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/h-hmz/logos/internal/auth"
-	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 )
@@ -27,17 +26,15 @@ func (f *fakeVerifier) Verify(_ context.Context, idToken string) (string, error)
 }
 
 // authRouter builds a router backed by the given verifier and a minimal
-// server state. Handlers won't be reached in 401 tests, so the roster/models
-// just need to be non-empty for handler_debate validation to survive.
+// server state. Handlers won't be reached in 401 tests, so the roster
+// just needs to be non-empty for handler_debate validation to survive.
 func authRouter(t *testing.T, v auth.Verifier) http.Handler {
 	t.Helper()
 	phils := []philosopher.Data{
 		{Name: "Socrates", School: "Classical"},
 		{Name: "Kant", School: "German Idealism"},
 	}
-	models := []config.ModelEntry{{ID: "test-model", Name: "Test Model"}}
-	seedConfig(t, models)
-	return New(phils, models, debate.NewMemoryRepo(), v)
+	return New(phils, debate.NewMemoryRepo(), v)
 }
 
 func TestAuthMiddleware_MissingHeader(t *testing.T) {
@@ -89,7 +86,7 @@ func TestAuthMiddleware_RejectedByVerifier(t *testing.T) {
 
 func TestAuthMiddleware_PublicRoutesOpen(t *testing.T) {
 	h := authRouter(t, &fakeVerifier{err: errors.New("should not be called")})
-	for _, path := range []string{"/healthz", "/readyz", "/models", "/philosophers"} {
+	for _, path := range []string{"/healthz", "/readyz", "/philosophers"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)

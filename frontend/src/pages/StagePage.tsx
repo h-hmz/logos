@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bust } from '../components/Bust'
 import { RuleOrnament } from '../components/RuleOrnament'
-import { createDebate, fetchModels, fetchPhilosophers, type DebateSession, type Model, type Philosopher } from '../api'
+import { createDebate, fetchPhilosophers, type DebateSession, type Philosopher } from '../api'
 import { enrich, ERAS, type EnrichedPhilosopher } from '../philosopher-meta'
 
 interface Props {
@@ -129,13 +129,11 @@ const ARCHIVE = [
 
 export function StagePage({ onDebateCreated }: Props) {
   const [philosophers, setPhilosophers] = useState<EnrichedPhilosopher[]>([])
-  const [models, setModels] = useState<Model[]>([])
   const [topic, setTopic] = useState('')
   const [pickA, setPickA] = useState<EnrichedPhilosopher | null>(null)
   const [pickB, setPickB] = useState<EnrichedPhilosopher | null>(null)
   const [rounds, setRounds] = useState(3)
   const [words, setWords] = useState(250)
-  const [model, setModel] = useState('')
   const [era, setEra] = useState<'All' | string>('All')
   const [slot, setSlot] = useState<'a' | 'b'>('a')
   const [loading, setLoading] = useState(false)
@@ -145,12 +143,8 @@ export function StagePage({ onDebateCreated }: Props) {
   const rosterRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    Promise.all([fetchPhilosophers(), fetchModels()])
-      .then(([phils, mods]: [Philosopher[], Model[]]) => {
-        setPhilosophers(phils.map(enrich))
-        setModels(mods)
-        if (mods.length > 0) setModel(mods[0].id)
-      })
+    fetchPhilosophers()
+      .then((phils: Philosopher[]) => setPhilosophers(phils.map(enrich)))
       .catch((e: Error) => setError(e.message))
   }, [])
 
@@ -185,7 +179,6 @@ export function StagePage({ onDebateCreated }: Props) {
         debater_a: pickA.name,
         debater_b: pickB.name,
         num_rounds: rounds,
-        model,
         max_words: words,
       })
       onDebateCreated(debate)
@@ -340,14 +333,6 @@ export function StagePage({ onDebateCreated }: Props) {
                   value={words}
                   onChange={(e) => setWords(+e.target.value)}
                 />
-              </div>
-              <div className="field">
-                <label>Model</label>
-                <select value={model} onChange={(e) => setModel(e.target.value)}>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </select>
               </div>
             </div>
 

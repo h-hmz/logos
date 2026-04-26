@@ -12,11 +12,10 @@ backend/
 ├── go.mod
 ├── Dockerfile
 ├── .env                            # credentials (gitignored)
-├── models.yaml                     # available Gemini models (controls the UI dropdown)
 ├── agents/
 │   └── philosophers/               # philosopher repository — one YAML file per philosopher
 └── internal/
-    ├── config/       config.go     # .env + models.yaml loading
+    ├── config/       config.go     # .env loading
     ├── modelcache/   modelcache.go # lazy model.LLM cache (string ID → ADK model object)
     ├── philosopher/  philosopher.go # YAML loader, Key() normalizer, Make() factory
     ├── critic/       critic.go     # FallacyTaxonomy, MakeCritic() factory
@@ -165,14 +164,7 @@ epistemic_sources: |
 
 ## API
 
-The backend exposes four endpoints. The frontend proxies all of them transparently.
-
-### `GET /models`
-Returns the list of available models from `models.yaml`.
-
-```json
-[{"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"}, ...]
-```
+The backend exposes three endpoints. The frontend proxies all of them transparently.
 
 ### `GET /philosophers`
 Returns all loaded philosophers.
@@ -190,7 +182,6 @@ Creates a new debate session. Returns the full step manifest.
   "debater_a": "Karl Marx",
   "debater_b": "Friedrich Hayek",
   "num_rounds": 2,
-  "model": "gemini-2.5-pro",
   "max_words": 250
 }
 ```
@@ -222,12 +213,11 @@ Token counts are tracked cumulatively on the debate state and returned on every 
 
 | What | Where | Effect |
 |---|---|---|
-| Available models | `backend/models.yaml` | Controls model dropdown; first entry is the default |
+| Model | `MODEL` env var | Gemini model id used for all agents; defaults to `gemini-3-flash-preview` |
 | Philosopher pool | `backend/agents/philosophers/*.yaml` | Add / remove / edit — restart to pick up changes |
 | Max rounds | `POST /debates` — `num_rounds` | 1–5 |
 | Word limit | `POST /debates` — `max_words` | Philosopher turns; critic gets `2×`, moderator gets `0.8×` |
-| Model | `POST /debates` — `model` | Must be a valid id from `models.yaml` |
-| Data directory | `DATA_DIR` env var | Override path to `agents/` and `models.yaml` (default: binary directory) |
+| Data directory | `DATA_DIR` env var | Override path to `agents/` (default: binary directory) |
 
 ### Environment Variables
 
@@ -254,8 +244,9 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `MODEL` | `gemini-3-flash-preview` | Gemini model id used for all debate agents. |
 | `PORT` | `8000` | HTTP listen port. |
-| `DATA_DIR` | *(binary directory)* | Path to the directory containing `agents/` and `models.yaml`. |
+| `DATA_DIR` | *(binary directory)* | Path to the directory containing `agents/`. |
 
 ---
 
@@ -285,7 +276,7 @@ cd backend && go run .
 cd frontend && yarn dev
 ```
 
-The Vite dev server proxies `/philosophers`, `/debates`, and `/models` to `localhost:8000` — no CORS configuration needed in development.
+The Vite dev server proxies `/philosophers` and `/debates` to `localhost:8000` — no CORS configuration needed in development.
 
 ### Docker (Cloud Run)
 ```bash
