@@ -1,3 +1,6 @@
+import { useAuth } from '../AuthContext'
+import { firebaseEnabled } from '../firebase'
+
 export type Route =
   | { page: 'stage' }
   | { page: 'live'; id: string }
@@ -13,6 +16,7 @@ interface MastheadProps {
 
 export function Masthead({ route, debateId, navigate, theme, onToggleTheme }: MastheadProps) {
   const page = route.page
+  const { user, signOut } = useAuth()
   const liveHref = debateId ? { page: 'live' as const, id: debateId } : null
   const verdictHref = debateId ? { page: 'verdict' as const, id: debateId } : null
 
@@ -63,6 +67,21 @@ export function Masthead({ route, debateId, navigate, theme, onToggleTheme }: Ma
         >
           {theme === 'dark' ? '☉' : '☾'}
         </button>
+        {firebaseEnabled && user && (
+          <span className="masthead-user">
+            {user.photoURL && (
+              <img
+                src={user.photoURL}
+                alt={user.displayName ?? 'User'}
+                className="masthead-avatar"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <button type="button" className="masthead-signout" onClick={signOut}>
+              Sign out
+            </button>
+          </span>
+        )}
       </nav>
     </header>
   )

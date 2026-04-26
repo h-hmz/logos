@@ -247,6 +247,7 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 | `MODEL` | `gemini-3-flash-preview` | Gemini model id used for all debate agents. |
 | `PORT` | `8000` | HTTP listen port. |
 | `DATA_DIR` | *(binary directory)* | Path to the directory containing `agents/`. |
+| `AUTH_BACKEND` | `firebase` | Auth verifier for protected routes (`/debates/*`). `firebase` validates Google/Firebase ID tokens; `none` accepts any non-empty Bearer token (local dev only — never use in production). |
 
 ---
 
@@ -276,7 +277,7 @@ cd backend && go run .
 cd frontend && yarn dev
 ```
 
-The Vite dev server proxies `/philosophers` and `/debates` to `localhost:8000` — no CORS configuration needed in development.
+The Vite dev server proxies `/philosophers` and `/debates` to the target defined in `frontend/vite.config.ts` — no CORS configuration needed in development. The default target is `localhost:8000`; change `BACKEND` in that file to point at a deployed Cloud Run URL instead.
 
 ### Docker (Cloud Run)
 ```bash

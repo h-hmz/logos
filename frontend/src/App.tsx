@@ -4,6 +4,8 @@ import { StagePage } from './pages/StagePage'
 import { LivePage } from './pages/LivePage'
 import { VerdictPage } from './pages/VerdictPage'
 import type { DebateSession, TurnResult } from './api'
+import { AuthProvider, useAuth } from './AuthContext'
+import { firebaseEnabled } from './firebase'
 
 const DEBATE_STORAGE_KEY = (id: string) => `logos_debate_${id}`
 const TURNS_STORAGE_KEY = (id: string) => `logos_turns_${id}`
@@ -36,7 +38,17 @@ function hashFor(r: Route): string {
 }
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AppInner />
+    </AuthProvider>
+  )
+}
+
+function AppInner() {
+  const { user, loading, signIn } = useAuth()
   const [route, setRoute] = useState<Route>(() => parseHash())
+
   const [debate, setDebate] = useState<DebateSession | null>(null)
   const [turns, setTurns] = useState<Record<number, TurnResult>>({})
   const [theme, setTheme] = useState<Theme>(() => initialTheme())
@@ -119,6 +131,24 @@ export default function App() {
   }
 
   const debateId = debate?.id
+
+  if (firebaseEnabled && !loading && !user) {
+    return (
+      <div className="app">
+        <Masthead route={route} debateId={debateId} navigate={navigate} theme={theme} onToggleTheme={toggleTheme} />
+        <main className="container" style={{ padding: '120px 48px', textAlign: 'center' }}>
+          <div className="t-eyebrow" style={{ marginBottom: 12 }}>Enter the Agora</div>
+          <div style={{ fontFamily: 'var(--serif-d)', fontSize: 38, fontStyle: 'italic', color: 'var(--ink-2)', marginBottom: 24 }}>
+            Sign in to attend the debate.
+          </div>
+          <button type="button" className="btn accent" onClick={signIn}>
+            Sign in with Google →
+          </button>
+        </main>
+      </div>
+    )
+  }
+
   return (
     <div className="app">
       <Masthead route={route} debateId={debateId} navigate={navigate} theme={theme} onToggleTheme={toggleTheme} />

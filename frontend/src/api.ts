@@ -86,10 +86,15 @@ export interface CreateDebateParams {
 
 // ── API ────────────────────────────────────────────────────────────────────────
 
-function getAuthHeader(): Record<string, string> {
-  // TODO: Replace with actual Firebase ID token when auth is integrated.
-  // The backend's noop verifier requires *some* Bearer token to be present.
-  return { 'Authorization': 'Bearer local-dev-token' }
+import { auth, firebaseEnabled } from './firebase'
+
+async function getAuthHeader(): Promise<Record<string, string>> {
+  if (firebaseEnabled && auth?.currentUser) {
+    const token = await auth.currentUser.getIdToken()
+    return { Authorization: `Bearer ${token}` }
+  }
+  // Local dev fallback: noop verifier accepts any non-empty token.
+  return { Authorization: 'Bearer local-dev-token' }
 }
 
 export async function fetchPhilosophers(): Promise<Philosopher[]> {
@@ -101,7 +106,7 @@ export async function fetchPhilosophers(): Promise<Philosopher[]> {
 export async function createDebate(params: CreateDebateParams): Promise<DebateSession> {
   const res = await fetch('/debates', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    headers: { 'Content-Type': 'application/json', ...await getAuthHeader() },
     body: JSON.stringify(params),
   })
   if (!res.ok) {
@@ -114,7 +119,7 @@ export async function createDebate(params: CreateDebateParams): Promise<DebateSe
 export async function interject(debateId: string, text: string): Promise<Interjection> {
   const res = await fetch(`/debates/${debateId}/interject`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    headers: { 'Content-Type': 'application/json', ...await getAuthHeader() },
     body: JSON.stringify({ text }),
   })
   if (!res.ok) {
@@ -142,7 +147,7 @@ export async function streamTTS(
 ): Promise<TTSStream> {
   const res = await fetch(`/debates/${debateId}/tts`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+    headers: { 'Content-Type': 'application/json', ...await getAuthHeader() },
     body: JSON.stringify({ step_key: stepKey, text }),
   })
   if (!res.ok || !res.body) {
@@ -218,7 +223,7 @@ export function streamTutor(
         headers: {
           Accept: 'text/event-stream',
           'Content-Type': 'application/json',
-          ...getAuthHeader(),
+          ...await getAuthHeader(),
         },
         body: JSON.stringify(body),
       })
@@ -288,8 +293,8 @@ export async function nextTurn(debateId: string, humanInput?: string): Promise<T
   const res = await fetch(`/debates/${debateId}/next`, {
     method: 'POST',
     headers: humanInput
-      ? { 'Content-Type': 'application/json', ...getAuthHeader() }
-      : getAuthHeader(),
+      ? { 'Content-Type': 'application/json', ...await getAuthHeader() }
+      : await getAuthHeader(),
     body: humanInput ? JSON.stringify({ human_input: humanInput }) : undefined,
   })
   if (!res.ok) {
@@ -313,7 +318,7 @@ export function streamTurn(
         headers: {
           Accept: 'text/event-stream',
           ...(humanInput ? { 'Content-Type': 'application/json' } : {}),
-          ...getAuthHeader(),
+          ...await getAuthHeader(),
         },
         body: humanInput ? JSON.stringify({ human_input: humanInput }) : undefined,
       })

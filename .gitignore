@@ -1,5 +1,6 @@
 # Secrets
 backend/.env
+frontend/.env.local
 
 # ADK
 backend/agents/.adk/
