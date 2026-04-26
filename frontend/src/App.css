@@ -289,9 +289,6 @@ button { font-family: inherit; }
 .roster-card { cursor: pointer; padding: 12px; background: var(--panel); border: 1px solid var(--rule); transition: all .15s ease; position: relative; text-align: left; font: inherit; color: inherit; }
 .roster-card:hover { border-color: var(--ink); transform: translateY(-2px); }
 .roster-card.picked { border-color: var(--accent); background: #f4e6d2; }
-.roster-card.picked::after {
-  content: '◆'; position: absolute; top: 8px; right: 10px; color: var(--accent); font-size: 14px;
-}
 .roster-card .name { font-family: var(--serif-d); font-size: 15px; line-height: 1.1; margin-top: 8px; font-weight: 500; }
 .roster-card .school { font-family: var(--sc); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); margin-top: 2px; }
 .roster-card .era { font-family: var(--mono); font-size: 9px; color: var(--ink-soft); margin-top: 2px; }
