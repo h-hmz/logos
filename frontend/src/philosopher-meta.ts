@@ -77,7 +77,7 @@ export interface EnrichedPhilosopher extends PhilosopherMeta {
 
 export function avatarFor(name: string): string {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
-  return `/avatars/${slug}.jpg`
+  return `/avatars/${slug}.webp`
 }
 
 export function enrich(p: Philosopher): EnrichedPhilosopher {
