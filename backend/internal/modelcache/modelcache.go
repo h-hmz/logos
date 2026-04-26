@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/h-hmz/logos/internal/config"
+	"github.com/h-hmz/logos/internal/gibberish"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/model/gemini"
 	"google.golang.org/genai"
@@ -19,6 +20,12 @@ var cache sync.Map // map[string]model.LLM
 func Get(ctx context.Context, modelID string) (model.LLM, error) {
 	if v, ok := cache.Load(modelID); ok {
 		return v.(model.LLM), nil
+	}
+
+	if modelID == gibberish.ModelID {
+		m := &gibberish.Model{}
+		actual, _ := cache.LoadOrStore(modelID, m)
+		return actual.(model.LLM), nil
 	}
 
 	cfg := &genai.ClientConfig{}

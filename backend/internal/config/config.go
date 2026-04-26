@@ -23,7 +23,7 @@ var (
 // served on the Gemini API backend — override via TTS_MODEL if running
 // TTS on Vertex.
 const defaultTTSModel = "gemini-2.5-pro-preview-tts"
-const fallbackModel = "gemini-3-flash-preview"
+const fallbackModel = "local-gibberish"
 
 // Load reads the .env file and environment variables, populating package-level state.
 func Load(envPath string) error {
