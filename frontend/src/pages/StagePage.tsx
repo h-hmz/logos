@@ -137,6 +137,7 @@ export function StagePage({ onDebateCreated }: Props) {
   const [era, setEra] = useState<'All' | string>('All')
   const [slot, setSlot] = useState<'a' | 'b'>('a')
   const [loading, setLoading] = useState(false)
+  const [loadingRoster, setLoadingRoster] = useState(true)
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>(() => pickRandomTopics(5))
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -146,6 +147,7 @@ export function StagePage({ onDebateCreated }: Props) {
     fetchPhilosophers()
       .then((phils: Philosopher[]) => setPhilosophers(phils.map(enrich)))
       .catch((e: Error) => setError(e.message))
+      .finally(() => setLoadingRoster(false))
   }, [])
 
   const challenger = useMemo(
@@ -157,7 +159,7 @@ export function StagePage({ onDebateCreated }: Props) {
     [philosophers, era]
   )
 
-  const canBegin = !!(pickA && pickB && pickA.name !== pickB.name && topic.trim().length > 4 && !loading)
+  const canBegin = !!(pickA && pickB && pickA.name !== pickB.name && topic.trim().length > 4 && !loading && !loadingRoster)
 
   const handlePick = (p: EnrichedPhilosopher) => {
     if (pickA && pickA.name === p.name) { setPickA(null); setSlot('a'); return }
@@ -386,7 +388,12 @@ export function StagePage({ onDebateCreated }: Props) {
           </div>
         </div>
         <div className="roster-grid">
-          {challenger && (() => {
+          {loadingRoster && (
+            <div style={{ gridColumn: '1 / -1', padding: '48px 0', textAlign: 'center', color: 'var(--ink-soft)', fontStyle: 'italic' }}>
+              Awaiting the thinkers…
+            </div>
+          )}
+          {!loadingRoster && challenger && (() => {
             const picked = (pickA?.name === challenger.name) || (pickB?.name === challenger.name)
             return (
               <button

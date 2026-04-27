@@ -45,6 +45,19 @@ export default function App() {
   )
 }
 
+function isDebateSession(v: unknown): v is DebateSession {
+  if (!v || typeof v !== 'object') return false
+  const o = v as Record<string, unknown>
+  return typeof o.id === 'string' && typeof o.topic === 'string' && Array.isArray(o.steps)
+}
+
+function isTurnResultMap(v: unknown): v is Record<number, TurnResult> {
+  if (!v || typeof v !== 'object') return false
+  return Object.values(v as object).every(
+    (t) => t && typeof t === 'object' && typeof (t as Record<string, unknown>).key === 'string',
+  )
+}
+
 function AppInner() {
   const { user, loading, signIn } = useAuth()
   const [route, setRoute] = useState<Route>(() => parseHash())
@@ -81,21 +94,35 @@ function AppInner() {
     if (debate && debate.id === id) return
     try {
       const raw = localStorage.getItem(DEBATE_STORAGE_KEY(id))
-      if (raw) setDebate(JSON.parse(raw) as DebateSession)
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw)
+        if (isDebateSession(parsed)) setDebate(parsed)
+        else console.warn('[logos] Discarding malformed debate from localStorage')
+      }
       const rawTurns = localStorage.getItem(TURNS_STORAGE_KEY(id))
-      if (rawTurns) setTurns(JSON.parse(rawTurns) as Record<number, TurnResult>)
-    } catch { /* noop */ }
+      if (rawTurns) {
+        const parsed: unknown = JSON.parse(rawTurns)
+        if (isTurnResultMap(parsed)) setTurns(parsed)
+        else console.warn('[logos] Discarding malformed turns from localStorage')
+      }
+    } catch (e) {
+      console.warn('[logos] Failed to restore debate from localStorage:', e)
+    }
   }, [route, debate])
 
   // Persist debate & turns for refresh.
   useEffect(() => {
     if (!debate) return
-    try { localStorage.setItem(DEBATE_STORAGE_KEY(debate.id), JSON.stringify(debate)) } catch { /* noop */ }
+    try { localStorage.setItem(DEBATE_STORAGE_KEY(debate.id), JSON.stringify(debate)) } catch (e) {
+      console.warn('[logos] Failed to persist debate:', e)
+    }
   }, [debate])
 
   useEffect(() => {
     if (!debate) return
-    try { localStorage.setItem(TURNS_STORAGE_KEY(debate.id), JSON.stringify(turns)) } catch { /* noop */ }
+    try { localStorage.setItem(TURNS_STORAGE_KEY(debate.id), JSON.stringify(turns)) } catch (e) {
+      console.warn('[logos] Failed to persist turns:', e)
+    }
   }, [turns, debate])
 
   const onDebateCreated = useCallback((d: DebateSession) => {

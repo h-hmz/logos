@@ -211,82 +211,75 @@ export interface TutorResult {
 // Stream a tutor explanation via SSE; invokes onToken for each partial token
 // and resolves with the final content and follow-up suggestions carried on the
 // `done` event.
-export function streamTutor(
+export async function streamTutor(
   debateId: string,
   body: { selection: string; turn_key: string; history: TutorMessage[] },
   onToken: (text: string) => void,
 ): Promise<TutorResult> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const res = await fetch(`/debates/${debateId}/tutor`, {
-        method: 'POST',
-        headers: {
-          Accept: 'text/event-stream',
-          'Content-Type': 'application/json',
-          ...await getAuthHeader(),
-        },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok || !res.body) {
-        const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
-        reject(new Error(err?.detail ?? 'Stream failed'))
-        return
+  const res = await fetch(`/debates/${debateId}/tutor`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+      ...await getAuthHeader(),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok || !res.body) {
+    const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
+    throw new Error(err?.detail ?? 'Stream failed')
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalResult: TutorResult | null = null
+  let errorMsg: string | null = null
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let idx: number
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const raw = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+
+      let eventName = 'message'
+      const dataLines: string[] = []
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim()
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
       }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let finalResult: TutorResult | null = null
-      let errorMsg: string | null = null
+      const data = dataLines.join('\n')
 
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        let idx: number
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const raw = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-
-          let eventName = 'message'
-          const dataLines: string[] = []
-          for (const line of raw.split('\n')) {
-            if (line.startsWith('event:')) eventName = line.slice(6).trim()
-            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
-          }
-          const data = dataLines.join('\n')
-
-          if (eventName === 'token') {
-            try {
-              const parsed = JSON.parse(data)
-              const text = typeof parsed === 'string' ? parsed : parsed?.text ?? ''
-              if (text) onToken(text)
-            } catch {
-              if (data) onToken(data)
-            }
-          } else if (eventName === 'done') {
-            try {
-              const parsed = JSON.parse(data) as { content?: string; suggestions?: string[] }
-              finalResult = { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [] }
-            } catch { /* noop */ }
-          } else if (eventName === 'error') {
-            try {
-              const parsed = JSON.parse(data)
-              errorMsg = parsed?.error ?? parsed?.detail ?? data
-            } catch {
-              errorMsg = data
-            }
-          }
+      if (eventName === 'token') {
+        try {
+          const parsed = JSON.parse(data)
+          const text = typeof parsed === 'string' ? parsed : parsed?.text ?? ''
+          if (text) onToken(text)
+        } catch {
+          if (data) onToken(data)
+        }
+      } else if (eventName === 'done') {
+        try {
+          const parsed = JSON.parse(data) as { content?: string; suggestions?: string[] }
+          finalResult = { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [] }
+        } catch { /* noop */ }
+      } else if (eventName === 'error') {
+        try {
+          const parsed = JSON.parse(data)
+          errorMsg = parsed?.error ?? parsed?.detail ?? data
+        } catch {
+          errorMsg = data
         }
       }
-
-      if (errorMsg) { reject(new Error(errorMsg)); return }
-      if (finalResult !== null) { resolve(finalResult); return }
-      reject(new Error('Stream ended without a result'))
-    } catch (e) {
-      reject(e)
     }
-  })
+  }
+
+  if (errorMsg) throw new Error(errorMsg)
+  if (finalResult !== null) return finalResult
+  throw new Error('Stream ended without a result')
 }
 
 export async function nextTurn(debateId: string, humanInput?: string): Promise<TurnResult> {
@@ -306,79 +299,72 @@ export async function nextTurn(debateId: string, humanInput?: string): Promise<T
 
 // Stream a turn via SSE; invokes onToken for each partial token and resolves with the
 // final TurnResult carried on the `done` event. Throws on `error` events.
-export function streamTurn(
+export async function streamTurn(
   debateId: string,
   onToken: (text: string) => void,
   humanInput?: string,
 ): Promise<TurnResult> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const res = await fetch(`/debates/${debateId}/next`, {
-        method: 'POST',
-        headers: {
-          Accept: 'text/event-stream',
-          ...(humanInput ? { 'Content-Type': 'application/json' } : {}),
-          ...await getAuthHeader(),
-        },
-        body: humanInput ? JSON.stringify({ human_input: humanInput }) : undefined,
-      })
-      if (!res.ok || !res.body) {
-        const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
-        reject(new Error(err?.detail ?? 'Stream failed'))
-        return
+  const res = await fetch(`/debates/${debateId}/next`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      ...(humanInput ? { 'Content-Type': 'application/json' } : {}),
+      ...await getAuthHeader(),
+    },
+    body: humanInput ? JSON.stringify({ human_input: humanInput }) : undefined,
+  })
+  if (!res.ok || !res.body) {
+    const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
+    throw new Error(err?.detail ?? 'Stream failed')
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let currentEvent = 'message'
+  let finalResult: TurnResult | null = null
+  let errorMsg: string | null = null
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let idx: number
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const raw = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+
+      let eventName = 'message'
+      const dataLines: string[] = []
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim()
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
       }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let currentEvent = 'message'
-      let finalResult: TurnResult | null = null
-      let errorMsg: string | null = null
+      const data = dataLines.join('\n')
+      currentEvent = eventName
 
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        let idx: number
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const raw = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-
-          let eventName = 'message'
-          const dataLines: string[] = []
-          for (const line of raw.split('\n')) {
-            if (line.startsWith('event:')) eventName = line.slice(6).trim()
-            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
-          }
-          const data = dataLines.join('\n')
-          currentEvent = eventName
-
-          if (currentEvent === 'token') {
-            try {
-              const parsed = JSON.parse(data)
-              const text = typeof parsed === 'string' ? parsed : parsed?.text ?? ''
-              if (text) onToken(text)
-            } catch {
-              if (data) onToken(data)
-            }
-          } else if (currentEvent === 'done') {
-            try { finalResult = JSON.parse(data) as TurnResult } catch { /* noop */ }
-          } else if (currentEvent === 'error') {
-            try {
-              const parsed = JSON.parse(data)
-              errorMsg = parsed?.detail ?? parsed?.message ?? data
-            } catch {
-              errorMsg = data
-            }
-          }
+      if (currentEvent === 'token') {
+        try {
+          const parsed = JSON.parse(data)
+          const text = typeof parsed === 'string' ? parsed : parsed?.text ?? ''
+          if (text) onToken(text)
+        } catch {
+          if (data) onToken(data)
+        }
+      } else if (currentEvent === 'done') {
+        try { finalResult = JSON.parse(data) as TurnResult } catch { /* noop */ }
+      } else if (currentEvent === 'error') {
+        try {
+          const parsed = JSON.parse(data)
+          errorMsg = parsed?.detail ?? parsed?.message ?? data
+        } catch {
+          errorMsg = data
         }
       }
-
-      if (errorMsg) { reject(new Error(errorMsg)); return }
-      if (finalResult) { resolve(finalResult); return }
-      reject(new Error('Stream ended without a result'))
-    } catch (e) {
-      reject(e)
     }
-  })
+  }
+
+  if (errorMsg) throw new Error(errorMsg)
+  if (finalResult) return finalResult
+  throw new Error('Stream ended without a result')
 }
