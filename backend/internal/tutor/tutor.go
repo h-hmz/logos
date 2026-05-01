@@ -11,10 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-
-	"github.com/h-hmz/logos/internal/modelcache"
+	"github.com/h-hmz/logos/internal/agent"
 )
 
 // Message is one entry in the tutor chat history.
@@ -67,14 +64,13 @@ Each suggestion must be a short question (≤ 10 words) that follows naturally f
 // MakeTutor constructs the tutor LLM agent. The instruction is static; all
 // debate-specific grounding is passed through the user message (see
 // BuildUserMessage) because this agent is invoked without a debate session.
-func MakeTutor(ctx context.Context, modelID string) (agent.Agent, error) {
-	m, err := modelcache.Get(ctx, modelID)
+func MakeTutor(ctx context.Context, modelID string) (*agent.Agent, error) {
+	m, err := agent.Get(ctx, modelID)
 	if err != nil {
 		return nil, fmt.Errorf("get model %s: %w", modelID, err)
 	}
-	return llmagent.New(llmagent.Config{
+	return agent.New(agent.Config{
 		Name:        "Noctua",
-		Description: "Owl-companion tutor that explains concepts a user highlighted in a debate.",
 		Model:       m,
 		Instruction: instruction,
 	})

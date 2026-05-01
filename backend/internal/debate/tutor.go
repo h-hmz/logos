@@ -5,11 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/runner"
-	"google.golang.org/adk/session"
-	"google.golang.org/genai"
-
+	"github.com/h-hmz/logos/internal/agent"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/tutor"
 )
@@ -118,24 +114,6 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		return TutorResult{}, fmt.Errorf("make tutor: %w", err)
 	}
 
-	sessSvc := session.InMemoryService()
-	cr, err := sessSvc.Create(ctx, &session.CreateRequest{
-		AppName: "logos",
-		UserID:  "web",
-	})
-	if err != nil {
-		return TutorResult{}, fmt.Errorf("tutor: create session: %w", err)
-	}
-
-	rn, err := runner.New(runner.Config{
-		Agent:          tutorAgent,
-		AppName:        "logos",
-		SessionService: sessSvc,
-	})
-	if err != nil {
-		return TutorResult{}, fmt.Errorf("tutor: runner create: %w", err)
-	}
-
 	userText := tutor.BuildUserMessage(tutor.ExplainInput{
 		Topic:        p.Topic,
 		Selection:    selection,
@@ -145,59 +123,45 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		OpponentTurn: opponentTurn,
 		History:      toTutorMessages(req.History),
 	})
-	msg := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{genai.NewPartFromText(userText)},
-	}
-
-	runCfg := agent.RunConfig{}
-	if onToken != nil {
-		runCfg.StreamingMode = agent.StreamingModeSSE
-	}
 
 	// accumBuf collects all partial tokens for delimiter detection.
 	// filteredLen tracks how many bytes have been forwarded via onToken.
-	// Once the <!--suggestions--> delimiter is found, streaming stops so the
-	// suggestions block never reaches the client as visible text.
+	// Once the <!--suggestions--> delimiter is found, streaming stops so
+	// the suggestions block never reaches the client as visible text.
 	var accumBuf string
 	var filteredLen int
 	var delimFound bool
-	var content string
 
-	for event, runErr := range rn.Run(ctx, "web", cr.Session.ID(), msg, runCfg) {
-		if runErr != nil {
-			return TutorResult{}, fmt.Errorf("tutor runner: %w", runErr)
+	filteredOnToken := func(delta string) {
+		if onToken == nil || delimFound {
+			return
 		}
-		if event.Content != nil && len(event.Content.Parts) > 0 {
-			for _, part := range event.Content.Parts {
-				if part.Text != "" {
-					if onToken != nil && event.Partial && !delimFound {
-						accumBuf += part.Text
-						if di := strings.Index(accumBuf, tutor.SuggOpen); di >= 0 {
-							delimFound = true
-							if di > filteredLen {
-								onToken(accumBuf[filteredLen:di])
-							}
-						} else {
-							// Hold back enough bytes to guard against the delimiter
-							// being split across chunk boundaries.
-							safeEnd := len(accumBuf) - len(tutor.SuggOpen) + 1
-							if safeEnd < 0 {
-								safeEnd = 0
-							}
-							if safeEnd > filteredLen {
-								onToken(accumBuf[filteredLen:safeEnd])
-								filteredLen = safeEnd
-							}
-						}
-					}
-					content = part.Text
-				}
+		accumBuf += delta
+		if di := strings.Index(accumBuf, tutor.SuggOpen); di >= 0 {
+			delimFound = true
+			if di > filteredLen {
+				onToken(accumBuf[filteredLen:di])
 			}
+			return
+		}
+		// Hold back enough bytes to guard against the delimiter being
+		// split across chunk boundaries.
+		safeEnd := len(accumBuf) - len(tutor.SuggOpen) + 1
+		if safeEnd < 0 {
+			safeEnd = 0
+		}
+		if safeEnd > filteredLen {
+			onToken(accumBuf[filteredLen:safeEnd])
+			filteredLen = safeEnd
 		}
 	}
 
-	cleanContent, suggestions := tutor.ParseSuggestions(content)
+	result, err := tutorAgent.Run(ctx, agent.State{}, userText, filteredOnToken)
+	if err != nil {
+		return TutorResult{}, fmt.Errorf("tutor: %w", err)
+	}
+
+	cleanContent, suggestions := tutor.ParseSuggestions(result.Text)
 	return TutorResult{Content: cleanContent, Suggestions: suggestions}, nil
 }
 

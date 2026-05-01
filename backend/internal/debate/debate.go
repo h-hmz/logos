@@ -6,15 +6,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 
+	"github.com/h-hmz/logos/internal/agent"
 	"github.com/h-hmz/logos/internal/critic"
 	"github.com/h-hmz/logos/internal/judge"
-	"github.com/h-hmz/logos/internal/modelcache"
 	"github.com/h-hmz/logos/internal/philosopher"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
-	"google.golang.org/adk/session"
 )
 
 // HumanDebaterName is the catalog name for the human player entry. The critic
@@ -28,7 +26,7 @@ func IsHumanDebater(name string) bool { return name == HumanDebaterName }
 type Step struct {
 	Key     string
 	Label   string
-	Agent   agent.Agent // nil when IsHuman == true
+	Agent   *agent.Agent // nil when IsHuman == true
 	IsHuman bool
 }
 
@@ -50,22 +48,22 @@ type Interjection struct {
 // Persisted is the JSON-serializable state of a debate. It stores debater
 // names (not full philosopher.Data) so the catalog can evolve independently.
 // StepOutputs holds completed step content keyed by step key; used to seed a
-// fresh session on each subsequent request.
+// fresh session on each subsequent request. The pending interjection (if any)
+// is derived at hydrate time from the unconsumed entry in Interjections[].
 type Persisted struct {
-	ID                  string            `json:"id"                          firestore:"id"`
-	Topic               string            `json:"topic"                       firestore:"topic"`
-	DebaterAName        string            `json:"debater_a"                   firestore:"debater_a"`
-	DebaterBName        string            `json:"debater_b"                   firestore:"debater_b"`
-	NumRounds           int               `json:"num_rounds"                  firestore:"num_rounds"`
-	ModelID             string            `json:"model_id"                    firestore:"model_id"`
-	MaxWords            int               `json:"max_words"                   firestore:"max_words"`
-	Current             int               `json:"current"                     firestore:"current"`
-	TotalInputTokens    int               `json:"total_input_tokens"          firestore:"total_input_tokens"`
-	TotalOutputTokens   int               `json:"total_output_tokens"         firestore:"total_output_tokens"`
-	Interjections       []Interjection    `json:"interjections,omitempty"     firestore:"interjections,omitempty"`
-	StepOutputs         map[string]string `json:"step_outputs,omitempty"      firestore:"step_outputs,omitempty"`
-	PendingInterjection string            `json:"pending_interjection,omitempty" firestore:"pending_interjection,omitempty"`
-	Version             int64             `json:"version"                     firestore:"version"`
+	ID                string            `json:"id"                          firestore:"id"`
+	Topic             string            `json:"topic"                       firestore:"topic"`
+	DebaterAName      string            `json:"debater_a"                   firestore:"debater_a"`
+	DebaterBName      string            `json:"debater_b"                   firestore:"debater_b"`
+	NumRounds         int               `json:"num_rounds"                  firestore:"num_rounds"`
+	ModelID           string            `json:"model_id"                    firestore:"model_id"`
+	MaxWords          int               `json:"max_words"                   firestore:"max_words"`
+	Current           int               `json:"current"                     firestore:"current"`
+	TotalInputTokens  int               `json:"total_input_tokens"          firestore:"total_input_tokens"`
+	TotalOutputTokens int               `json:"total_output_tokens"         firestore:"total_output_tokens"`
+	Interjections     []Interjection    `json:"interjections,omitempty"     firestore:"interjections,omitempty"`
+	StepOutputs       map[string]string `json:"step_outputs,omitempty"      firestore:"step_outputs,omitempty"`
+	Version           int64             `json:"version"                     firestore:"version"`
 }
 
 // Clone returns a deep copy safe to mutate without affecting the original.
@@ -76,22 +74,21 @@ func (p *Persisted) Clone() *Persisted {
 	}
 	if p.StepOutputs != nil {
 		cp.StepOutputs = make(map[string]string, len(p.StepOutputs))
-		for k, v := range p.StepOutputs {
-			cp.StepOutputs[k] = v
-		}
+		maps.Copy(cp.StepOutputs, p.StepOutputs)
 	}
 	return &cp
 }
 
 // Runtime is the per-request working copy of a debate: persisted fields plus
-// the non-serializable pieces (agents, live session) rebuilt by Hydrate.
+// the non-serializable pieces (agents, live state map) rebuilt by Hydrate.
+// State carries the per-request scratchpad agents read via {key}
+// substitution and write to via OutputKey (see ADR 0003).
 type Runtime struct {
 	*Persisted
-	DebaterA       philosopher.Data
-	DebaterB       philosopher.Data
-	Steps          []Step
-	SessionService session.Service
-	SessionID      string
+	DebaterA philosopher.Data
+	DebaterB philosopher.Data
+	Steps    []Step
+	State    agent.State
 }
 
 // TotalSteps returns the pipeline length for a given round count:
@@ -127,8 +124,8 @@ func BuildStepMeta(a, b philosopher.Data, numRounds int) []StepMeta {
 }
 
 // Hydrate rebuilds a Runtime from a Persisted snapshot: resolves debater data
-// via the catalog map, constructs the pipeline agents, and creates a fresh
-// in-memory session seeded with prior step outputs and any pending interjection.
+// via the catalog map, constructs the pipeline agents, and seeds a fresh
+// agent.State map with prior step outputs and any pending interjection.
 // The returned Runtime shares the input *Persisted — handler mutations flow
 // back through repo.Update.
 func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.Data) (*Runtime, error) {
@@ -143,30 +140,29 @@ func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.D
 		return nil, fmt.Errorf("hydrate: build steps: %w", err)
 	}
 
-	state := map[string]any{"topic": p.Topic}
-	for k, v := range p.StepOutputs {
-		state[k] = v
-	}
-	state[philosopher.InterjectionStateKey] = p.PendingInterjection
-
-	svc := session.InMemoryService()
-	createResp, err := svc.Create(ctx, &session.CreateRequest{
-		AppName: "logos",
-		UserID:  "web",
-		State:   state,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("hydrate: create session: %w", err)
-	}
+	state := agent.State{"topic": p.Topic}
+	maps.Copy(state, p.StepOutputs)
+	state[philosopher.InterjectionStateKey] = formatInterjection(pendingInterjectionText(p))
 
 	return &Runtime{
-		Persisted:      p,
-		DebaterA:       a,
-		DebaterB:       b,
-		Steps:          steps,
-		SessionService: svc,
-		SessionID:      createResp.Session.ID(),
+		Persisted: p,
+		DebaterA:  a,
+		DebaterB:  b,
+		Steps:     steps,
+		State:     state,
 	}, nil
+}
+
+// pendingInterjectionText returns the raw text of the unconsumed Interjection
+// for the upcoming step, or "" if none. The single source of truth for
+// "is there an interjection pending right now" lives in p.Interjections[].
+func pendingInterjectionText(p *Persisted) string {
+	for _, it := range p.Interjections {
+		if it.BeforeStepIndex == p.Current && it.ConsumedByKey == "" {
+			return it.Text
+		}
+	}
+	return ""
 }
 
 // Repository persists debates. Implementations: MemoryRepo (in-process),
@@ -236,19 +232,18 @@ func (r *MemoryRepo) Update(_ context.Context, p *Persisted) error {
 	return nil
 }
 
-// BuildSteps constructs the full debate pipeline, mirroring _build_steps() in server.py.
+// BuildSteps constructs the full debate pipeline.
 func BuildSteps(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string, maxWords int) ([]Step, error) {
 	var steps []Step
 
 	// Moderator
-	modModel, err := modelcache.Get(ctx, modelID)
+	modModel, err := agent.Get(ctx, modelID)
 	if err != nil {
 		return nil, fmt.Errorf("get model for moderator: %w", err)
 	}
-	modAgent, err := llmagent.New(llmagent.Config{
-		Name:        "Moderator",
-		Description: "Introduces the head-to-head debate.",
-		Model:       modModel,
+	modAgent, err := agent.New(agent.Config{
+		Name:  "Moderator",
+		Model: modModel,
 		Instruction: fmt.Sprintf(`You are the **Debate Moderator** — a ring announcer, not a lecturer.
 
 Tonight: **%s** (%s) vs. **%s** (%s).

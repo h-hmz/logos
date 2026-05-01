@@ -1,8 +1,8 @@
 # ADR 0002: Single-provider TTS on Gemini, with progressive PCM streaming
 
 Date: 2026-04-19
-Revised: 2026-04-25 (×2)
-Status: Accepted (revised)
+Revised: 2026-04-25 (×2), 2026-04-30
+Status: Accepted (revised — provider routing changed)
 
 ## Context
 
@@ -114,11 +114,12 @@ Each segment is synthesised as a separate API call; the resulting PCM
 is written to `w` sequentially, producing a single uninterrupted byte
 stream from the client's perspective.
 
-A fixed seed (`Seed: 42`) is set on the shared `GenerateContentConfig`
-for every segment call as a best-effort measure to reduce voice variance.
-In practice it does not fully eliminate audible timbre shifts at segment
-boundaries; the Gemini TTS API offers no audio-context carryover mechanism
-to enforce prosodic continuity across independent calls.
+Voice consistency across segments is best-effort. The OpenAI-format
+`/audio/speech` endpoint exposed by OpenRouter does not accept a `seed`
+parameter, so we cannot pin the model's prosody random-walk between
+calls; audible timbre shifts at segment boundaries are possible and we
+accept them as a tradeoff for the hard spend cap (see
+[ADR 0007](0007-llm-tts-via-openrouter-for-spend-caps.md)).
 
 Gap risk: the first chunk of segment N arrives ~13 s after its API call
 starts. Because each segment produces ~60 s of audio and the calls are
@@ -154,9 +155,9 @@ at handoff — no audible gap in practice.
   fired, the response status is 200 and headers are flushed; a later
   upstream failure can only be logged, not signalled to the client
   as an error response. The frontend hears truncated audio.
-- **Seed is best-effort.** Gemini does not guarantee identical output
-  for the same seed, so occasional voice drift at segment boundaries
-  remains possible, particularly under high API load.
+- **No seed parameter.** OpenRouter's OpenAI-compatible
+  `/audio/speech` endpoint has no `seed` field. Prosody at segment
+  boundaries varies slightly between otherwise-identical runs.
 
 ## Revision history
 
@@ -175,14 +176,29 @@ at handoff — no audible gap in practice.
   `SynthesizeStream` now splits long inputs into ≤800-char segments
   and synthesises each independently, with a fixed seed to maintain
   voice consistency across the resulting API calls.
+- 2026-04-30 — TTS now routes through OpenRouter (per
+  [ADR 0007](0007-llm-tts-via-openrouter-for-spend-caps.md)) for
+  hard spend caps. Underlying model and inline-tag vocabulary
+  unchanged (`google/gemini-3.1-flash-tts-preview` resolves to the
+  same Gemini weights). Implementation file renamed `gemini.go` →
+  `openrouter.go`. The `Seed: 42` mechanism is dropped because the
+  OpenAI-format endpoint doesn't expose seeding; sample rate is
+  hardcoded to 24000 Hz instead of parsed from MIME (OpenRouter
+  doesn't surface the rate header). Decisions 1–6 otherwise
+  unchanged.
 
 ## Implementation
 
 - [backend/internal/tts/tts.go](../backend/internal/tts/tts.go) —
-  `client` lazy singleton, `wrapWAV` / `sampleRateFromMime` helpers.
-- [backend/internal/tts/gemini.go](../backend/internal/tts/gemini.go)
+  `client` lazy singleton and the `wrapWAV` helper. The
+  `sampleRateFromMime` helper was removed alongside the Seed
+  parameter — sample rate is now hardcoded to 24000 Hz at the call
+  site since OpenRouter's `/audio/speech` does not return a MIME
+  header.
+- [backend/internal/tts/openrouter.go](../backend/internal/tts/openrouter.go)
   — `Synthesize` / `SynthesizeStream` package API, the private
-  `geminiClient`, and `splitText`.
+  `openrouterTTSClient` (openai-go via OpenRouter base URL), and
+  `splitText`.
 - [backend/internal/tts/voices.go](../backend/internal/tts/voices.go)
   — per-philosopher voice resolution.
 - [backend/internal/server/handler_tts.go](../backend/internal/server/handler_tts.go)

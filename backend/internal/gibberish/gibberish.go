@@ -1,23 +1,23 @@
-// Package gibberish provides a local model.LLM that generates random
-// philosophical-sounding nonsense — no network calls required.
-// Used as the default when no MODEL env var is set.
+// Package gibberish provides a local agent.LLM that generates random
+// philosophical-sounding nonsense — no network calls required. Used
+// as the default when MODEL=local-gibberish (or when no MODEL env var
+// is set). Side-effect import: blank-importing this package triggers
+// the init() that registers the mock with internal/agent.
 package gibberish
 
 import (
 	"context"
-	"iter"
 	"math/rand/v2"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"google.golang.org/adk/model"
-	"google.golang.org/genai"
+	"github.com/h-hmz/logos/internal/agent"
 )
 
-var wordLimitRe = regexp.MustCompile(`under (\d+) words`)
-
 const ModelID = "local-gibberish"
+
+var wordLimitRe = regexp.MustCompile(`under (\d+) words`)
 
 var wordList = []string{
 	"wherefore", "ontological", "epistemological", "dialectical", "phenomenological",
@@ -32,61 +32,54 @@ var wordList = []string{
 	"pleasure", "pain", "truth", "beauty", "justice",
 }
 
-// Model satisfies model.LLM with locally generated gibberish text.
+// Model is the gibberish LLM. Stateless and goroutine-safe.
 type Model struct{}
+
+func init() {
+	agent.RegisterFactory(ModelID, func() agent.LLM { return &Model{} })
+}
 
 func (m *Model) Name() string { return ModelID }
 
-func (m *Model) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	text := generate(wordLimitFrom(req))
-	inputTokens := int32(requestChars(req) / 4)
-	outputTokens := int32(len(text) / 4)
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{
-			Content: &genai.Content{
-				Role:  "model",
-				Parts: []*genai.Part{genai.NewPartFromText(text)},
-			},
-			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{
-				PromptTokenCount:     inputTokens,
-				CandidatesTokenCount: outputTokens,
-				TotalTokenCount:      inputTokens + outputTokens,
-			},
-			TurnComplete: true,
-		}, nil)
-	}
-}
-
-// requestChars sums the character lengths of all text in the request.
-func requestChars(req *model.LLMRequest) int {
-	if req == nil {
-		return 0
-	}
-	n := 0
-	if req.Config != nil && req.Config.SystemInstruction != nil {
-		for _, p := range req.Config.SystemInstruction.Parts {
-			n += len(p.Text)
+// Generate emits the gibberish text in two halves so SSE streaming is
+// observable in local dev. UsageMetadata is approximated by char/4.
+func (m *Model) Generate(
+	_ context.Context,
+	req agent.Request,
+	onChunk func(agent.Chunk) error,
+) (string, []agent.ToolCall, agent.Usage, error) {
+	systemText := ""
+	inputChars := 0
+	for _, msg := range req.Messages {
+		inputChars += len(msg.Content)
+		if msg.Role == agent.RoleSystem {
+			systemText = msg.Content
 		}
 	}
-	for _, c := range req.Contents {
-		for _, p := range c.Parts {
-			n += len(p.Text)
+	text := generate(wordLimitFrom(systemText))
+	usage := agent.Usage{
+		InputTokens:  inputChars / 4,
+		OutputTokens: len(text) / 4,
+	}
+
+	if onChunk != nil {
+		mid := len(text) / 2
+		if err := onChunk(agent.Chunk{Delta: text[:mid]}); err != nil {
+			return "", nil, agent.Usage{}, err
+		}
+		if err := onChunk(agent.Chunk{Delta: text[mid:]}); err != nil {
+			return "", nil, agent.Usage{}, err
 		}
 	}
-	return n
+	return text, nil, usage, nil
 }
 
-// wordLimitFrom extracts the "under N words" constraint from the system
-// instruction the ADK injects into every LLMRequest, returning 150 if absent.
-func wordLimitFrom(req *model.LLMRequest) int {
-	if req == nil || req.Config == nil || req.Config.SystemInstruction == nil {
-		return 150
-	}
-	for _, p := range req.Config.SystemInstruction.Parts {
-		if m := wordLimitRe.FindStringSubmatch(p.Text); m != nil {
-			if n, err := strconv.Atoi(m[1]); err == nil {
-				return n
-			}
+// wordLimitFrom extracts the "under N words" constraint from the
+// system instruction, returning 150 if absent.
+func wordLimitFrom(systemText string) int {
+	if m := wordLimitRe.FindStringSubmatch(systemText); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return n
 		}
 	}
 	return 150

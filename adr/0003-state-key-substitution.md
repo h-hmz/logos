@@ -1,7 +1,8 @@
 # ADR 0003: Conversational context via a named-slot scratchpad, not a rolling message history
 
 Date: 2026-04-19
-Status: Accepted
+Revised: 2026-04-30
+Status: Accepted (revised — substitution implementation moved to internal/agent)
 
 ## Context
 
@@ -31,10 +32,12 @@ reproducible and the per-turn prompt to be auditable.
 
 ## Decision
 
-We use **option 3**, built on top of Google ADK's session-state and
-`OutputKey` mechanism. No message history is ever passed to the
-model; each turn is a standalone prompt with named slots filled
-from persisted prior outputs.
+We use **option 3**, originally built on top of Google ADK's
+session-state and `OutputKey` mechanism and now implemented directly
+in `internal/agent` (per
+[ADR 0008](0008-in-house-agent-layer-replacing-adk.md)). No message
+history is ever passed to the model; each turn is a standalone prompt
+with named slots filled from persisted prior outputs.
 
 ### The round trip
 
@@ -47,46 +50,52 @@ raw generated text.
 One full turn cycle:
 
 1. **Prompt is authored with named slots.** Every agent's
-   `Instruction` is a plain Go-formatted string containing ADK
-   template placeholders like `{topic}`, `{karl_marx_r1}`,
-   `{critic_feedback}`, `{pending_interjection}`. Each placeholder
-   names a key the agent expects to find in session state.
-   See [philosopher.go:115-141](../backend/internal/philosopher/philosopher.go#L115-L141).
-2. **The session is seeded on every request.** `Hydrate` creates a
-   fresh `session.InMemoryService` session and writes three groups
-   of entries into its state map: the static `{topic}`, every prior
-   entry of `StepOutputs` flattened in as its own key, and the
-   current `{pending_interjection}` (empty string if none). That is
-   the agent's entire universe of context for the turn.
-   See [debate.go:138-152](../backend/internal/debate/debate.go#L138-L152).
-3. **ADK substitutes before dispatch.** When the runner executes the
-   agent, ADK walks the `Instruction` string, replaces each `{key}`
-   with the string value at `state[key]`, and sends the resulting
-   text to Vertex. Any placeholder whose key is missing stays
-   literal — which is why we always seed an empty
-   `pending_interjection`.
+   `Instruction` is a plain Go-formatted string containing template
+   placeholders like `{topic}`, `{karl_marx_r1}`, `{critic_feedback}`,
+   `{pending_interjection}`. Each placeholder names a key the agent
+   expects to find in the per-request `agent.State` map.
+   See [philosopher.go](../backend/internal/philosopher/philosopher.go).
+2. **The state map is seeded on every request.** `Hydrate` builds a
+   fresh `agent.State` (a `map[string]any`) containing three groups
+   of entries: the static `{topic}`, every prior entry of
+   `StepOutputs` flattened in as its own key, and the current
+   `{pending_interjection}` (empty string if none). That is the
+   agent's entire universe of context for the turn.
+   See [debate.go](../backend/internal/debate/debate.go).
+3. **`agent.Run` substitutes before dispatch.** Before calling the
+   underlying LLM, `Agent.Run` walks the `Instruction` string,
+   replaces each `{identifier}` with the string value at
+   `state[identifier]`, and sends the resulting text as the system
+   message. Any placeholder whose key is missing resolves to the
+   empty string — which is why we always seed an empty
+   `pending_interjection`. Implementation:
+   [internal/agent/state.go](../backend/internal/agent/state.go)
+   (`Substitute`).
 4. **The output is written back under a declared key.** Every agent
-   is constructed with an `OutputKey` (e.g. `"karl_marx_r1"` at
-   [debate.go:278](../backend/internal/debate/debate.go#L278)).
-   ADK writes the generated text into session state under that key
-   as the turn completes. The service layer then copies that value
-   into `Persisted.StepOutputs[step.Key]` and commits via the repo
-   ([service.go:210-213](../backend/internal/debate/service.go#L210-L213)).
+   is constructed with an `OutputKey`. When `Agent.Run` finishes,
+   it writes the generated text into the `State` map under that key
+   (skipped when `OutputKey == ""`, e.g. for the ephemeral tutor).
+   The service layer then copies that value into
+   `Persisted.StepOutputs[step.Key]` and commits via the repo. See
+   [internal/agent/agent.go](../backend/internal/agent/agent.go) and
+   [debate/service.go](../backend/internal/debate/service.go).
 
-The next request hydrates a brand new session from `StepOutputs` and
-the loop repeats. Session state itself is throwaway — the durable
-memory lives in `Persisted`, which is JSON-serialisable and stored
-through the ADR 0001 repository.
+The next request hydrates a brand new state map from `StepOutputs`
+and the loop repeats. State itself is throwaway — the durable memory
+lives in `Persisted`, which is JSON-serialisable and stored through
+the ADR 0001 repository.
 
-### What we rely on from ADK, and what we don't
+### What we own
 
-- **We use:** session state as a string map, `{key}` template
-  substitution on `Instruction`, and `OutputKey` for capturing turn
-  output into state. These are load-bearing.
-- **We don't use:** ADK's event history, memory services, or any
-  agent-driven state mutation. A pure `strings.Replace` loop plus a
-  map would reproduce the behaviour we depend on; ADK is a
-  convenience, not the architecture.
+Substitution is implemented in
+[internal/agent/state.go](../backend/internal/agent/state.go) as a
+regex-based `{identifier}` resolver against an `agent.State`
+(`map[string]any`). `OutputKey` write-back happens at the end of
+`Agent.Run` in
+[internal/agent/agent.go](../backend/internal/agent/agent.go). Both
+behaviours match the pre-2026-04-30 ADK semantics; the migration
+preserved them by design (per
+[ADR 0008](0008-in-house-agent-layer-replacing-adk.md)).
 
 ## Consequences
 
@@ -131,11 +140,30 @@ through the ADR 0001 repository.
   debates or external source material, this design gives us no
   hook for it — we'd need to add option 2 alongside, not extend
   this.
+- **The substitution regex is now ours to maintain.** Strict
+  `\{[a-zA-Z_]\w*\}` matching guards against literal JSON braces in
+  critic/judge instructions but won't catch shapes like
+  `{ identifier }` (with whitespace) — by design, since ADK didn't
+  either.
+
+## Revision history
+
+- 2026-04-19 — original; substitution and `OutputKey` provided by ADK.
+- 2026-04-30 — substitution and `OutputKey` write-back moved into
+  `internal/agent` (per
+  [ADR 0008](0008-in-house-agent-layer-replacing-adk.md)). No
+  behavioural change to debaters, critic, or judge prompts; the
+  named-slot scratchpad design (option 3) remains the chosen
+  approach.
 
 ## Implementation
 
+- [backend/internal/agent/state.go](../backend/internal/agent/state.go)
+  — `State` map type and the `Substitute` resolver.
+- [backend/internal/agent/agent.go](../backend/internal/agent/agent.go)
+  — `Agent.Run` performs substitution and the `OutputKey` write-back.
 - [backend/internal/debate/debate.go](../backend/internal/debate/debate.go)
-  — `Persisted.StepOutputs`, `Hydrate` (session seeding), and
+  — `Persisted.StepOutputs`, `Hydrate` (state seeding), and
   `BuildSteps` (per-agent `OutputKey` wiring).
 - [backend/internal/debate/service.go](../backend/internal/debate/service.go)
   — copies the post-turn output into `StepOutputs` and commits.

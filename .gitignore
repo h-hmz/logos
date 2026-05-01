@@ -22,7 +22,4 @@ Thumbs.db
 .claude
 
 # Internal
-ROADMAP.md
-SUGGESTIONS.md
-SECURITY.md
-MONITORING_PLAN.md
+internal/

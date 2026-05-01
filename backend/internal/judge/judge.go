@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/h-hmz/logos/internal/modelcache"
+	"github.com/h-hmz/logos/internal/agent"
 	"github.com/h-hmz/logos/internal/philosopher"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 )
 
 func fullTranscriptBlock(a, b philosopher.Data, numRounds int) string {
@@ -32,7 +30,7 @@ func fullTranscriptBlock(a, b philosopher.Data, numRounds int) string {
 // structured JSON verdict. The frontend renders each section of the JSON
 // independently (positions, clashes, shifts, ranking, synthesis, confidence,
 // open questions), so plain prose is no longer acceptable output.
-func MakeJudge(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string) (agent.Agent, error) {
+func MakeJudge(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string) (*agent.Agent, error) {
 	instruction := fmt.Sprintf(`You are the **Debate Judge**. You have observed a %d-round head-to-head philosophical debate followed by a critic intervention and responses.
 
 ## Topic: {topic}
@@ -90,14 +88,13 @@ Rules:
 - Do NOT prepend or append any commentary.
 `, numRounds, fullTranscriptBlock(a, b, numRounds), a.Name, b.Name)
 
-	m, err := modelcache.Get(ctx, modelID)
+	m, err := agent.Get(ctx, modelID)
 	if err != nil {
 		return nil, fmt.Errorf("get model %s: %w", modelID, err)
 	}
 
-	return llmagent.New(llmagent.Config{
+	return agent.New(agent.Config{
 		Name:        "Judge",
-		Description: "Synthesizes the full debate into a structured JSON verdict.",
 		Model:       m,
 		Instruction: instruction,
 		OutputKey:   "final_verdict",

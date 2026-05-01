@@ -18,6 +18,11 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/server"
+
+	// Side-effect import: registers the local-gibberish mock LLM
+	// with the agent package so MODEL=local-gibberish works without
+	// network access. See ADR 0007 §4.
+	_ "github.com/h-hmz/logos/internal/gibberish"
 )
 
 func main() {
@@ -50,7 +55,7 @@ func (h contextHandler) WithGroup(name string) slog.Handler {
 	return contextHandler{h.Handler.WithGroup(name)}
 }
 
-func run(ctx context.Context, w io.Writer, args []string) error {
+func run(ctx context.Context, w io.Writer, _ []string) error {
 	slog.SetDefault(slog.New(contextHandler{slog.NewJSONHandler(w, nil)}))
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

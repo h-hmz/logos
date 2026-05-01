@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/h-hmz/logos/internal/modelcache"
+	"github.com/h-hmz/logos/internal/agent"
 	"github.com/h-hmz/logos/internal/philosopher"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
 )
 
 const FallacyTaxonomy = `
@@ -45,7 +43,7 @@ func exchangeBlock(a, b philosopher.Data, numRounds int) string {
 // MakeCritic creates the critic agent that reviews the full debate. The agent
 // emits a structured JSON object (schema below) so the frontend can render
 // it as a findings grid rather than free-form prose.
-func MakeCritic(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string, maxWords int) (agent.Agent, error) {
+func MakeCritic(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string, maxWords int) (*agent.Agent, error) {
 	instruction := fmt.Sprintf(`You are the **Debate Critic**, an expert in logic, argumentation theory, and critical thinking.
 
 You do NOT take sides. Evaluate the *quality of reasoning* across the full debate.
@@ -88,14 +86,13 @@ Rules:
 - Keep the total JSON under roughly %d words of content (excluding field names).
 `, FallacyTaxonomy, exchangeBlock(a, b, numRounds), a.Name, b.Name, maxWords)
 
-	m, err := modelcache.Get(ctx, modelID)
+	m, err := agent.Get(ctx, modelID)
 	if err != nil {
 		return nil, fmt.Errorf("get model %s: %w", modelID, err)
 	}
 
-	return llmagent.New(llmagent.Config{
+	return agent.New(agent.Config{
 		Name:        "Critic",
-		Description: "Reviews the full debate for logical fallacies and reasoning quality (JSON output).",
 		Model:       m,
 		Instruction: instruction,
 		OutputKey:   "critic_feedback",

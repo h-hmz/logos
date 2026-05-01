@@ -10,9 +10,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/runner"
-	"google.golang.org/genai"
 
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/philosopher"
@@ -202,50 +199,13 @@ func (s *Service) NextTurn(ctx context.Context, debateID string, humanInput stri
 	}
 	step := rt.Steps[rt.Current]
 
-	rn, err := runner.New(runner.Config{
-		Agent:          step.Agent,
-		AppName:        "logos",
-		SessionService: rt.SessionService,
-	})
+	result, err := step.Agent.Run(ctx, rt.State, "continue", onToken)
 	if err != nil {
-		return nil, fmt.Errorf("runner create: %w", err)
+		return nil, fmt.Errorf("agent run: %w", err)
 	}
-
-	msg := &genai.Content{
-		Role:  "user",
-		Parts: []*genai.Part{genai.NewPartFromText("continue")},
-	}
-
-	runCfg := agent.RunConfig{}
-	if onToken != nil {
-		runCfg.StreamingMode = agent.StreamingModeSSE
-	}
-
-	var content string
-	var turnInput, turnOutput int
-	for event, runErr := range rn.Run(ctx, "web", rt.SessionID, msg, runCfg) {
-		if runErr != nil {
-			return nil, fmt.Errorf("runner: %w", runErr)
-		}
-		if event.UsageMetadata != nil {
-			if event.UsageMetadata.PromptTokenCount > 0 {
-				turnInput = int(event.UsageMetadata.PromptTokenCount)
-			}
-			if event.UsageMetadata.CandidatesTokenCount > 0 {
-				turnOutput = int(event.UsageMetadata.CandidatesTokenCount)
-			}
-		}
-		if event.Content != nil && len(event.Content.Parts) > 0 {
-			for _, part := range event.Content.Parts {
-				if part.Text != "" {
-					if onToken != nil && event.Partial {
-						onToken(part.Text)
-					}
-					content = part.Text
-				}
-			}
-		}
-	}
+	content := result.Text
+	turnInput := result.Usage.InputTokens
+	turnOutput := result.Usage.OutputTokens
 
 	if p.StepOutputs == nil {
 		p.StepOutputs = map[string]string{}
@@ -261,7 +221,6 @@ func (s *Service) NextTurn(ctx context.Context, debateID string, humanInput stri
 		it := &p.Interjections[i]
 		if it.BeforeStepIndex == stepIndex && it.ConsumedByKey == "" {
 			it.ConsumedByKey = step.Key
-			p.PendingInterjection = ""
 			break
 		}
 	}
@@ -342,7 +301,6 @@ func (s *Service) Interject(ctx context.Context, debateID, text string) (Interje
 			}
 		}
 
-		p.PendingInterjection = formatInterjection(text)
 		it := Interjection{
 			Text:            text,
 			BeforeStepIndex: p.Current,

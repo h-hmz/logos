@@ -11,9 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/h-hmz/logos/internal/modelcache"
-	"google.golang.org/adk/agent"
-	"google.golang.org/adk/agent/llmagent"
+	"github.com/h-hmz/logos/internal/agent"
 	"gopkg.in/yaml.v3"
 )
 
@@ -101,8 +99,8 @@ type MakeOpts struct {
 // when the user interjects, then clears it after the next turn consumes it.
 const InterjectionStateKey = "pending_interjection"
 
-// Make creates an LlmAgent for a single debate turn.
-func Make(ctx context.Context, opts MakeOpts) (agent.Agent, error) {
+// Make creates an agent.Agent for a single debate turn.
+func Make(ctx context.Context, opts MakeOpts) (*agent.Agent, error) {
 	d := opts.Data
 
 	var epistemicBlock string
@@ -155,14 +153,13 @@ Constraints on use:
 `,
 	d.Name, d.School, d.Identity, d.KeyThinkers, epistemicBlock, DebateRules(opts.MaxWords), opts.Situation, contextBlock, d.Name)
 
-	m, err := modelcache.Get(ctx, opts.ModelID)
+	m, err := agent.Get(ctx, opts.ModelID)
 	if err != nil {
 		return nil, fmt.Errorf("get model %s: %w", opts.ModelID, err)
 	}
 
-	a, err := llmagent.New(llmagent.Config{
+	a, err := agent.New(agent.Config{
 		Name:        opts.AgentName,
-		Description: fmt.Sprintf("%s (%s) — %s", d.Name, d.School, opts.Situation),
 		Model:       m,
 		Instruction: instruction,
 		OutputKey:   opts.OutputKey,

@@ -9,39 +9,40 @@ import (
 )
 
 var (
-	project      string
-	location     string
-	useVertexAI  bool
 	defaultModel string
 	ttsEnabled   bool
 	ttsModel     string
-	ttsAPIKey    string
+	llmAPIKey    string
+	llmBaseURL   string
+	gcpProject   string // for Firebase auth + Firestore (not LLM/TTS)
 )
 
-// Pro preview TTS is noticeably less theatrical than Flash and follows
-// style directives more faithfully (less accent/language bleed). Only
-// served on the Gemini API backend — override via TTS_MODEL if running
-// TTS on Vertex.
-const defaultTTSModel = "gemini-2.5-pro-preview-tts"
+// DefaultLLMBaseURL is the default OpenAI-compatible endpoint when
+// LLM_BASE_URL is unset. OpenRouter is the recommended provider
+// because of its prepaid hard spend cap (see ADR 0007), but the
+// implementation works against any OpenAI-compatible API (OpenAI,
+// Together AI, Groq, Azure OpenAI, vLLM, Ollama, etc.).
+const DefaultLLMBaseURL = "https://openrouter.ai/api/v1"
+
+// Default TTS model in OpenRouter provider/model form. Resolves to
+// the same Gemini weights we used pre-migration (per ADR 0002 rev).
+const defaultTTSModel = "google/gemini-3.1-flash-tts-preview"
 const fallbackModel = "local-gibberish"
 
 // Load reads the .env file and environment variables, populating package-level state.
 func Load(envPath string) error {
-	// Load .env (ignore error if file doesn't exist)
 	_ = godotenv.Load(envPath)
 
-	project = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	location = os.Getenv("GOOGLE_CLOUD_LOCATION")
-	useVertexAI = strings.EqualFold(os.Getenv("GOOGLE_GENAI_USE_VERTEXAI"), "TRUE")
+	llmAPIKey = os.Getenv("LLM_API_KEY")
+	llmBaseURL = os.Getenv("LLM_BASE_URL")
+	if llmBaseURL == "" {
+		llmBaseURL = DefaultLLMBaseURL
+	}
+	gcpProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	ttsEnabled = strings.EqualFold(os.Getenv("TTS_ENABLED"), "TRUE")
 	ttsModel = os.Getenv("TTS_MODEL")
 	if ttsModel == "" {
 		ttsModel = defaultTTSModel
-	}
-	// Resolution order: explicit TTS override, then the app-wide Google key.
-	ttsAPIKey = os.Getenv("TTS_API_KEY")
-	if ttsAPIKey == "" {
-		ttsAPIKey = os.Getenv("GOOGLE_API_KEY")
 	}
 	defaultModel = os.Getenv("MODEL")
 	if defaultModel == "" {
@@ -51,10 +52,20 @@ func Load(envPath string) error {
 	return nil
 }
 
-func Project() string      { return project }
-func Location() string     { return location }
-func UseVertexAI() bool    { return useVertexAI }
 func DefaultModel() string { return defaultModel }
 func TTSEnabled() bool     { return ttsEnabled }
 func TTSModel() string     { return ttsModel }
-func TTSAPIKey() string    { return ttsAPIKey }
+
+// LLMAPIKey returns the API key for the OpenAI-compatible LLM
+// provider configured via LLM_BASE_URL (OpenRouter by default).
+func LLMAPIKey() string { return llmAPIKey }
+
+// LLMBaseURL returns the OpenAI-compatible base URL. Defaults to
+// OpenRouter; override via LLM_BASE_URL env var to target any other
+// OpenAI-compatible endpoint.
+func LLMBaseURL() string { return llmBaseURL }
+
+// Project returns GOOGLE_CLOUD_PROJECT for Firebase auth + Firestore.
+// LLM and TTS no longer go through GCP; this is kept only for those
+// two services.
+func Project() string { return gcpProject }
