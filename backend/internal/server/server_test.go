@@ -18,8 +18,9 @@ import (
 )
 
 // testServer builds a Server and chi router with a fixed philosopher roster,
-// suitable for handler-level tests that don't invoke the ADK runner.
-func testServer(t *testing.T) (*Server, http.Handler) {
+// suitable for handler-level tests that don't invoke the ADK runner. The repo
+// is returned so tests can seed fixtures without reaching through Server.
+func testServer(t *testing.T) (*Server, *debate.MemoryRepo, http.Handler) {
 	t.Helper()
 	phils := []philosopher.Data{
 		{Name: "Socrates", School: "Classical", Identity: "id-a", KeyThinkers: "k"},
@@ -33,7 +34,6 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 	s := &Server{
 		philosophers: phils,
 		philMap:      philMap,
-		repo:         repo,
 		svc:          debate.NewService(repo, philMap),
 	}
 	router := New(phils, repo, auth.NewNoopVerifier())
@@ -45,7 +45,7 @@ func testServer(t *testing.T) (*Server, http.Handler) {
 		}
 		router.ServeHTTP(w, r)
 	})
-	return s, handler
+	return s, repo, handler
 }
 
 // chiReq wraps an httptest request with a chi RouteContext carrying URL params,
@@ -62,7 +62,7 @@ func chiReq(method, target string, body io.Reader, params map[string]string) *ht
 // ── Handler tests ───────────────────────────────────────────────────────────
 
 func TestListPhilosophers(t *testing.T) {
-	_, h := testServer(t)
+	_, _, h := testServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/philosophers", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -82,7 +82,7 @@ func TestListPhilosophers(t *testing.T) {
 }
 
 func TestCreateDebate_InvalidJSON(t *testing.T) {
-	_, h := testServer(t)
+	_, _, h := testServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/debates", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -93,7 +93,7 @@ func TestCreateDebate_InvalidJSON(t *testing.T) {
 }
 
 func TestCreateDebate_ValidationErrors(t *testing.T) {
-	_, h := testServer(t)
+	_, _, h := testServer(t)
 	cases := []struct {
 		name string
 		body map[string]any
@@ -118,7 +118,7 @@ func TestCreateDebate_ValidationErrors(t *testing.T) {
 }
 
 func TestNextTurn_NotFound(t *testing.T) {
-	_, h := testServer(t)
+	_, _, h := testServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/debates/nope/next", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -128,7 +128,7 @@ func TestNextTurn_NotFound(t *testing.T) {
 }
 
 func TestNextTurn_AlreadyComplete(t *testing.T) {
-	s, _ := testServer(t)
+	s, repo, _ := testServer(t)
 	p := &debate.Persisted{
 		ID:           "d1",
 		DebaterAName: s.philosophers[0].Name,
@@ -138,7 +138,7 @@ func TestNextTurn_AlreadyComplete(t *testing.T) {
 		MaxWords:     100,
 		Current:      debate.TotalSteps(1),
 	}
-	if err := s.repo.Create(context.Background(), p); err != nil {
+	if err := repo.Create(context.Background(), p); err != nil {
 		t.Fatalf("repo.Create: %v", err)
 	}
 
@@ -151,7 +151,7 @@ func TestNextTurn_AlreadyComplete(t *testing.T) {
 }
 
 func TestInterject_NotFound(t *testing.T) {
-	_, h := testServer(t)
+	_, _, h := testServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/debates/nope/interject", strings.NewReader(`{"text":"hi"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -162,7 +162,7 @@ func TestInterject_NotFound(t *testing.T) {
 }
 
 func TestInterject_ValidationErrors(t *testing.T) {
-	s, _ := testServer(t)
+	s, repo, _ := testServer(t)
 	phils := s.philosophers
 	p := &debate.Persisted{
 		ID:           "d1",
@@ -173,7 +173,7 @@ func TestInterject_ValidationErrors(t *testing.T) {
 		MaxWords:     100,
 		Current:      1, // before {a}_r1
 	}
-	if err := s.repo.Create(context.Background(), p); err != nil {
+	if err := repo.Create(context.Background(), p); err != nil {
 		t.Fatalf("repo.Create: %v", err)
 	}
 
@@ -200,7 +200,7 @@ func TestInterject_ValidationErrors(t *testing.T) {
 }
 
 func TestInterject_BeforeModerator(t *testing.T) {
-	s, _ := testServer(t)
+	s, repo, _ := testServer(t)
 	p := &debate.Persisted{
 		ID:           "d1",
 		DebaterAName: s.philosophers[0].Name,
@@ -210,7 +210,7 @@ func TestInterject_BeforeModerator(t *testing.T) {
 		MaxWords:     100,
 		Current:      0,
 	}
-	if err := s.repo.Create(context.Background(), p); err != nil {
+	if err := repo.Create(context.Background(), p); err != nil {
 		t.Fatalf("repo.Create: %v", err)
 	}
 	r := chiReq(http.MethodPost, "/debates/d1/interject", strings.NewReader(`{"text":"hi"}`), map[string]string{"debateID": "d1"})
@@ -225,7 +225,7 @@ func TestInterject_BeforeModerator(t *testing.T) {
 }
 
 func TestInterject_WrongStepKind(t *testing.T) {
-	s, _ := testServer(t)
+	s, repo, _ := testServer(t)
 	// With NumRounds=1, step 3 is critic_feedback — interject before it should 400.
 	p := &debate.Persisted{
 		ID:           "d1",
@@ -236,7 +236,7 @@ func TestInterject_WrongStepKind(t *testing.T) {
 		MaxWords:     100,
 		Current:      3,
 	}
-	if err := s.repo.Create(context.Background(), p); err != nil {
+	if err := repo.Create(context.Background(), p); err != nil {
 		t.Fatalf("repo.Create: %v", err)
 	}
 	r := chiReq(http.MethodPost, "/debates/d1/interject", strings.NewReader(`{"text":"hi"}`), map[string]string{"debateID": "d1"})
@@ -250,7 +250,7 @@ func TestInterject_WrongStepKind(t *testing.T) {
 // TestRequestBodyClosed verifies the fix for issue #1: handlers must close
 // r.Body after reading. Regression guard.
 func TestRequestBodyClosed(t *testing.T) {
-	_, h := testServer(t)
+	_, _, h := testServer(t)
 	b := &trackedBody{Reader: strings.NewReader(`{}`)}
 	req := httptest.NewRequest(http.MethodPost, "/debates", b)
 	req.Body = b
@@ -271,7 +271,7 @@ func (t *trackedBody) Close() error { t.closed = true; return nil }
 
 // testServerWithChallenger is like testServer but includes The Challenger in the
 // roster, enabling handler tests for human-debater turns without LLM calls.
-func testServerWithChallenger(t *testing.T) (*Server, http.Handler) {
+func testServerWithChallenger(t *testing.T) (*Server, *debate.MemoryRepo, http.Handler) {
 	t.Helper()
 	phils := []philosopher.Data{
 		{Name: debate.HumanDebaterName, School: "Human debater"},
@@ -285,7 +285,6 @@ func testServerWithChallenger(t *testing.T) (*Server, http.Handler) {
 	s := &Server{
 		philosophers: phils,
 		philMap:      philMap,
-		repo:         repo,
 		svc:          debate.NewService(repo, philMap),
 	}
 	router := New(phils, repo, auth.NewNoopVerifier())
@@ -295,12 +294,12 @@ func testServerWithChallenger(t *testing.T) (*Server, http.Handler) {
 		}
 		router.ServeHTTP(w, r)
 	})
-	return s, handler
+	return s, repo, handler
 }
 
 // challengerDebate seeds a debate with The Challenger as debater A at the given
 // Current step and returns the debate ID.
-func seedChallengerDebate(t *testing.T, s *Server, id string, current int) {
+func seedChallengerDebate(t *testing.T, repo *debate.MemoryRepo, id string, current int) {
 	t.Helper()
 	p := &debate.Persisted{
 		ID:           id,
@@ -312,14 +311,14 @@ func seedChallengerDebate(t *testing.T, s *Server, id string, current int) {
 		Current:      current,
 		StepOutputs:  map[string]string{"moderator_intro": "The debate begins."},
 	}
-	if err := s.repo.Create(context.Background(), p); err != nil {
+	if err := repo.Create(context.Background(), p); err != nil {
 		t.Fatalf("repo.Create: %v", err)
 	}
 }
 
 func TestNextTurn_HumanStep_AwaitingHuman(t *testing.T) {
-	s, _ := testServerWithChallenger(t)
-	seedChallengerDebate(t, s, "d1", 1) // step 1 = the_challenger_r1
+	s, repo, _ := testServerWithChallenger(t)
+	seedChallengerDebate(t, repo, "d1", 1) // step 1 = the_challenger_r1
 
 	r := chiReq(http.MethodPost, "/debates/d1/next", nil, map[string]string{"debateID": "d1"})
 	rr := httptest.NewRecorder()
@@ -343,8 +342,8 @@ func TestNextTurn_HumanStep_AwaitingHuman(t *testing.T) {
 }
 
 func TestNextTurn_HumanStep_SubmitsInput(t *testing.T) {
-	s, _ := testServerWithChallenger(t)
-	seedChallengerDebate(t, s, "d1", 1)
+	s, repo, _ := testServerWithChallenger(t)
+	seedChallengerDebate(t, repo, "d1", 1)
 
 	const arg = "Knowledge requires justified true belief."
 	body := `{"human_input":"` + arg + `"}`
@@ -370,8 +369,8 @@ func TestNextTurn_HumanStep_SubmitsInput(t *testing.T) {
 }
 
 func TestNextTurn_HumanStep_EmptyBodyTreatedAsNoInput(t *testing.T) {
-	s, _ := testServerWithChallenger(t)
-	seedChallengerDebate(t, s, "d1", 1)
+	s, repo, _ := testServerWithChallenger(t)
+	seedChallengerDebate(t, repo, "d1", 1)
 
 	// POST with no body at all — should still return awaiting_human, not 400.
 	r := chiReq(http.MethodPost, "/debates/d1/next", strings.NewReader(""), map[string]string{"debateID": "d1"})
@@ -388,4 +387,3 @@ func TestNextTurn_HumanStep_EmptyBodyTreatedAsNoInput(t *testing.T) {
 		t.Fatalf("awaiting_human = false, want true for empty body")
 	}
 }
-

@@ -1,5 +1,4 @@
-// Package judge provides a factory for the debate judge agent.
-package judge
+package philosopher
 
 import (
 	"context"
@@ -7,47 +6,40 @@ import (
 	"strings"
 
 	"github.com/h-hmz/logos/internal/agent"
-	"github.com/h-hmz/logos/internal/philosopher"
 )
 
-func fullTranscriptBlock(a, b philosopher.Data, numRounds int) string {
-	var lines []string
-	for r := 1; r <= numRounds; r++ {
-		lines = append(lines, fmt.Sprintf("### Round %d", r))
-		lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_r%d}", a.Name, a.School, philosopher.Key(a.Name), r))
-		lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_r%d}", b.Name, b.School, philosopher.Key(b.Name), r))
+// fullTranscriptBlock extends the round-by-round exchange with the critic's
+// intervention and each debater's response — the record the judge sees.
+func fullTranscriptBlock(a, b Data, numRounds int) string {
+	tail := []string{
+		"",
+		"### Critic Intervention",
+		"{critic_feedback}",
+		"",
+		"### Responses to Critic",
+		fmt.Sprintf("**%s (%s):** {%s_critic_response}", a.Name, a.School, Key(a.Name)),
+		fmt.Sprintf("**%s (%s):** {%s_critic_response}", b.Name, b.School, Key(b.Name)),
 	}
-
-	lines = append(lines, "\n### Critic Intervention\n{critic_feedback}")
-	lines = append(lines, "\n### Responses to Critic")
-	lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_critic_response}", a.Name, a.School, philosopher.Key(a.Name)))
-	lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_critic_response}", b.Name, b.School, philosopher.Key(b.Name)))
-
-	return strings.Join(lines, "\n")
+	return exchangeBlock(a, b, numRounds) + "\n" + strings.Join(tail, "\n")
 }
 
-// MakeJudge creates the judge agent that synthesizes the full debate into a
-// structured JSON verdict. The frontend renders each section of the JSON
-// independently (positions, clashes, shifts, ranking, synthesis, confidence,
-// open questions), so plain prose is no longer acceptable output.
-func MakeJudge(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string) (*agent.Agent, error) {
-	instruction := fmt.Sprintf(`You are the **Debate Judge**. You have observed a %d-round head-to-head philosophical debate followed by a critic intervention and responses.
+const judgeTemplate = `You are the **Debate Judge**. You have observed a {{.NumRounds}}-round head-to-head philosophical debate followed by a critic intervention and responses.
 
 ## Topic: {topic}
 
 ## Full Debate Record
-%s
+{{.Transcript}}
 
 ## Output Format — STRICT
 Return ONLY a JSON object (no prose, no markdown fences, no preamble). Use this exact schema:
 
 {
   "summary_a": {
-    "name": %q,
+    "name": {{printf "%q" .NameA}},
     "thesis": "<2-3 sentence distillation of their central thesis>"
   },
   "summary_b": {
-    "name": %q,
+    "name": {{printf "%q" .NameB}},
     "thesis": "<2-3 sentence distillation of their central thesis>"
   },
   "clashes": [
@@ -86,7 +78,27 @@ Rules:
 - open: 2-3 items.
 - Do NOT wrap the JSON in code fences.
 - Do NOT prepend or append any commentary.
-`, numRounds, fullTranscriptBlock(a, b, numRounds), a.Name, b.Name)
+`
+
+// MakeJudge creates the judge agent that synthesizes the full debate into a
+// structured JSON verdict. The frontend renders each section of the JSON
+// independently (positions, clashes, shifts, ranking, synthesis, confidence,
+// open questions), so plain prose is no longer acceptable output.
+func MakeJudge(ctx context.Context, a, b Data, numRounds int, modelID string) (*agent.Agent, error) {
+	instruction, err := render("judge", judgeTemplate, struct {
+		NumRounds  int
+		Transcript string
+		NameA      string
+		NameB      string
+	}{
+		NumRounds:  numRounds,
+		Transcript: fullTranscriptBlock(a, b, numRounds),
+		NameA:      a.Name,
+		NameB:      b.Name,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	m, err := agent.Get(ctx, modelID)
 	if err != nil {

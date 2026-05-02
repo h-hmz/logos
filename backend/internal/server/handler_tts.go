@@ -44,7 +44,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	debateID := chi.URLParam(r, "debateID")
-	p, err := s.repo.Get(r.Context(), debateID)
+	p, err := s.svc.Get(r.Context(), debateID)
 	if errors.Is(err, debate.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "Debate not found")
 		return

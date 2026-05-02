@@ -69,7 +69,7 @@ func challengerDebate(t *testing.T, current int) (*Service, *MemoryRepo, string)
 	t.Helper()
 	philMap := map[string]philosopher.Data{
 		HumanDebaterName: {Name: HumanDebaterName, School: "Human debater"},
-		"Socrates":        {Name: "Socrates", School: "Classical"},
+		"Socrates":       {Name: "Socrates", School: "Classical"},
 	}
 	repo := NewMemoryRepo()
 	p := &Persisted{
@@ -175,7 +175,7 @@ func TestNextTurn_HumanStep_CriticResponse(t *testing.T) {
 func TestNextTurn_HumanStep_AsDebaterB(t *testing.T) {
 	// The Challenger as debater B: step 2 = the_challenger_r1 (b goes second).
 	philMap := map[string]philosopher.Data{
-		"Socrates":        {Name: "Socrates", School: "Classical"},
+		"Socrates":       {Name: "Socrates", School: "Classical"},
 		HumanDebaterName: {Name: HumanDebaterName, School: "Human debater"},
 	}
 	repo := NewMemoryRepo()

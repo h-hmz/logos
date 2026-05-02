@@ -21,7 +21,6 @@ import (
 type Server struct {
 	philosophers []philosopher.Data
 	philMap      map[string]philosopher.Data
-	repo         debate.Repository
 	svc          *debate.Service
 }
 
@@ -35,7 +34,6 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 	s := &Server{
 		philosophers: philosophers,
 		philMap:      philMap,
-		repo:         repo,
 		svc:          debate.NewService(repo, philMap),
 	}
 

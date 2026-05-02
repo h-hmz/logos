@@ -7,11 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"sync"
 
 	"github.com/h-hmz/logos/internal/agent"
-	"github.com/h-hmz/logos/internal/critic"
-	"github.com/h-hmz/logos/internal/judge"
 	"github.com/h-hmz/logos/internal/philosopher"
 )
 
@@ -165,104 +162,20 @@ func pendingInterjectionText(p *Persisted) string {
 	return ""
 }
 
-// Repository persists debates. Implementations: MemoryRepo (in-process),
-// and later a Firestore-backed version for Cloud Run.
-type Repository interface {
-	Get(ctx context.Context, id string) (*Persisted, error)
-	Create(ctx context.Context, p *Persisted) error
-	// Update applies an optimistic write: fails with ErrVersionConflict if the
-	// stored Version differs from p.Version. On success, p.Version is advanced
-	// to the newly stored version.
-	Update(ctx context.Context, p *Persisted) error
-}
-
 var (
 	ErrNotFound        = errors.New("debate not found")
 	ErrAlreadyExists   = errors.New("debate already exists")
 	ErrVersionConflict = errors.New("debate version conflict")
 )
 
-// MemoryRepo is a process-local Repository for tests and single-instance use.
-type MemoryRepo struct {
-	mu      sync.RWMutex
-	debates map[string]*Persisted
-}
-
-func NewMemoryRepo() *MemoryRepo {
-	return &MemoryRepo{debates: make(map[string]*Persisted)}
-}
-
-func (r *MemoryRepo) Get(_ context.Context, id string) (*Persisted, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	p, ok := r.debates[id]
-	if !ok {
-		return nil, ErrNotFound
-	}
-	return p.Clone(), nil
-}
-
-func (r *MemoryRepo) Create(_ context.Context, p *Persisted) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.debates[p.ID]; exists {
-		return ErrAlreadyExists
-	}
-	cp := p.Clone()
-	cp.Version = 1
-	r.debates[p.ID] = cp
-	p.Version = 1
-	return nil
-}
-
-func (r *MemoryRepo) Update(_ context.Context, p *Persisted) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	existing, ok := r.debates[p.ID]
-	if !ok {
-		return ErrNotFound
-	}
-	if existing.Version != p.Version {
-		return ErrVersionConflict
-	}
-	cp := p.Clone()
-	cp.Version = p.Version + 1
-	r.debates[p.ID] = cp
-	p.Version = cp.Version
-	return nil
-}
-
 // BuildSteps constructs the full debate pipeline.
 func BuildSteps(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string, maxWords int) ([]Step, error) {
 	var steps []Step
 
 	// Moderator
-	modModel, err := agent.Get(ctx, modelID)
+	modAgent, err := philosopher.MakeModerator(ctx, a, b, modelID)
 	if err != nil {
-		return nil, fmt.Errorf("get model for moderator: %w", err)
-	}
-	modAgent, err := agent.New(agent.Config{
-		Name:  "Moderator",
-		Model: modModel,
-		Instruction: fmt.Sprintf(`You are the **Debate Moderator** — a ring announcer, not a lecturer.
-
-Tonight: **%s** (%s) vs. **%s** (%s).
-Topic: {topic}
-
-Write **one paragraph, 40 words or fewer**. Frame the clash this topic forces between these two — what's actually at stake between them — then hand off to **%s**. That's it.
-
-Do **not**:
-- Introduce the debaters' biographies.
-- Explain the format, rounds, critic, or judge — the audience already knows.
-- Welcome the audience or thank anyone.
-- Use generic openers ("Ladies and gentlemen", "Tonight we gather", "Welcome to").
-
-Be theatrical and specific to the topic. One sharp beat, then step aside.`,
-			a.Name, a.School, b.Name, b.School, a.Name),
-		OutputKey: "moderator_intro",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create moderator: %w", err)
+		return nil, err
 	}
 	steps = append(steps, Step{Key: "moderator_intro", Label: "Introduction", Agent: modAgent})
 
@@ -277,7 +190,7 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 		if IsHumanDebater(a.Name) {
 			steps = append(steps, Step{Key: aKey, Label: fmt.Sprintf("%s — Round %d", a.Name, r), IsHuman: true})
 		} else {
-			agentA, err := philosopher.Make(ctx, philosopher.MakeOpts{
+			agentA, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
 				Data:                a,
 				AgentName:           aKey,
 				OutputKey:           aKey,
@@ -297,7 +210,7 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 		if IsHumanDebater(b.Name) {
 			steps = append(steps, Step{Key: bKey, Label: fmt.Sprintf("%s — Round %d", b.Name, r), IsHuman: true})
 		} else {
-			agentB, err := philosopher.Make(ctx, philosopher.MakeOpts{
+			agentB, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
 				Data:                b,
 				AgentName:           bKey,
 				OutputKey:           bKey,
@@ -315,7 +228,7 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 	}
 
 	// Critic
-	criticAgent, err := critic.MakeCritic(ctx, a, b, numRounds, modelID, maxWords*2)
+	criticAgent, err := philosopher.MakeCritic(ctx, a, b, numRounds, modelID, maxWords*2)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +239,7 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 	if IsHumanDebater(a.Name) {
 		steps = append(steps, Step{Key: aCritKey, Label: fmt.Sprintf("%s — Response to Critic", a.Name), IsHuman: true})
 	} else {
-		aCrit, err := philosopher.Make(ctx, philosopher.MakeOpts{
+		aCrit, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
 			Data:      a,
 			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(a.Name)),
 			OutputKey: aCritKey,
@@ -345,7 +258,7 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 	if IsHumanDebater(b.Name) {
 		steps = append(steps, Step{Key: bCritKey, Label: fmt.Sprintf("%s — Response to Critic", b.Name), IsHuman: true})
 	} else {
-		bCrit, err := philosopher.Make(ctx, philosopher.MakeOpts{
+		bCrit, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
 			Data:      b,
 			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(b.Name)),
 			OutputKey: bCritKey,
@@ -361,7 +274,7 @@ Be theatrical and specific to the topic. One sharp beat, then step aside.`,
 	}
 
 	// Judge
-	judgeAgent, err := judge.MakeJudge(ctx, a, b, numRounds, modelID)
+	judgeAgent, err := philosopher.MakeJudge(ctx, a, b, numRounds, modelID)
 	if err != nil {
 		return nil, err
 	}

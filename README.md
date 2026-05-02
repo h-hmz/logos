@@ -24,12 +24,15 @@ backend/
     │                openai_compat.go    # openai-go-backed LLM (any OpenAI-compatible endpoint)
     │                registry.go         # process-wide LLM cache + factory hook
     ├── auth/        auth.go             # Firebase + noop verifiers for protected routes
-    ├── philosopher/ philosopher.go      # YAML loader, Key() normalizer, Make() factory
-    ├── critic/      critic.go           # FallacyTaxonomy, MakeCritic() factory
-    ├── judge/       judge.go            # MakeJudge() factory
+    ├── philosopher/ philosopher.go      # YAML loader, Key() normalizer, MakePhilosopher() factory
+    │                moderator.go        # MakeModerator() factory
+    │                critic.go           # fallacy taxonomy, MakeCritic() factory
+    │                judge.go            # MakeJudge() factory
     ├── tutor/       tutor.go            # tutor agent factory (used by /tutor handler)
     ├── debate/      debate.go           # Step, Persisted, Runtime, BuildSteps(), Hydrate()
     │                service.go          # CreateDebate, NextTurn, Interject, TutorExplain
+    │                repository.go       # Repository interface + sentinel errors
+    │                memory_repo.go      # in-process Repository
     │                firestore_repo.go   # Firestore-backed Repository
     ├── tts/         tts.go              # synthesis entry point + WAV header helper
     │                openai_compat.go    # OpenAI-format /audio/speech client
@@ -101,10 +104,10 @@ A per-debate optimistic version on `Persisted.Version` serializes concurrent wri
 
 ## Agents
 
-### Moderator
-Inline agent constructed in [`debate.BuildSteps`](backend/internal/debate/debate.go). Introduces the pair, frames the topic-specific clash, and hands off to A. Reads `{topic}`. Writes `moderator_intro`.
+### Moderator — `philosopher.MakeModerator()`
+Defined in [`internal/philosopher/moderator.go`](backend/internal/philosopher/moderator.go). Introduces the pair, frames the topic-specific clash, and hands off to A. Reads `{topic}`. Writes `moderator_intro`.
 
-### Philosopher — `philosopher.Make()`
+### Philosopher — `philosopher.MakePhilosopher()`
 Defined in [`internal/philosopher/philosopher.go`](backend/internal/philosopher/philosopher.go). One `agent.Agent` is created per debate turn; each instance gets a unique `Name` and `OutputKey`.
 
 The prompt is assembled from the philosopher's YAML fields:
@@ -125,7 +128,7 @@ The factory also injects:
 - `{opponent_arg_key}` — the opponent's previous turn (if any)
 - `{critic_key}` — the critic's feedback (for post-critic turns)
 - `{pending_interjection}` — formatted audience challenge (round turns only)
-- `DebateRules(maxWords)` — shared rules block with the configured word limit
+- A shared rules block with the configured word limit (`maxWords`)
 - An "Expressive Delivery" block describing inline `[bracketed]` TTS cues
 
 #### `philosopher.Key(name)`
@@ -139,10 +142,10 @@ philosopher.Key("Simone de Beauvoir") // → "simone_de_beauvoir"
 
 This allows full display names in YAML while keeping state keys and agent names alphanumeric.
 
-### Critic — `critic.MakeCritic()`
-Defined in [`internal/critic/critic.go`](backend/internal/critic/critic.go). Receives the full debate transcript via `{name_key}_r{n}` substitutions.
+### Critic — `philosopher.MakeCritic()`
+Defined in [`internal/philosopher/critic.go`](backend/internal/philosopher/critic.go). Receives the full debate transcript via `{name_key}_r{n}` substitutions.
 
-Evaluates reasoning quality using `FallacyTaxonomy`:
+Evaluates reasoning quality using a fallacy taxonomy:
 
 - Ad hominem, Straw man, Circular reasoning
 - Appeal to authority, False dichotomy, Equivocation
@@ -155,8 +158,8 @@ Evaluates reasoning quality using `FallacyTaxonomy`:
 
 Output per debater: strongest argument, key weakness, detected fallacies, pointed challenge. Writes to `critic_feedback`.
 
-### Judge — `judge.MakeJudge()`
-Defined in [`internal/judge/judge.go`](backend/internal/judge/judge.go). Receives the complete record: all rounds, critic feedback, and both critic responses.
+### Judge — `philosopher.MakeJudge()`
+Defined in [`internal/philosopher/judge.go`](backend/internal/philosopher/judge.go). Receives the complete record: all rounds, critic feedback, and both critic responses.
 
 Produces a structured verdict:
 1. **Summary of core positions**

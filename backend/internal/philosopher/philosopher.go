@@ -1,5 +1,3 @@
-// Package philosopher loads philosopher data from YAML files and provides
-// a factory for creating LlmAgent instances for debate turns.
 package philosopher
 
 import (
@@ -10,10 +8,25 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/h-hmz/logos/internal/agent"
 	"gopkg.in/yaml.v3"
 )
+
+// render parses tmpl and executes it against data, returning the rendered string.
+// Used to keep prompt templates readable (named fields beat positional %s).
+func render(name, tmpl string, data any) (string, error) {
+	t, err := template.New(name).Parse(tmpl)
+	if err != nil {
+		return "", fmt.Errorf("parse %s template: %w", name, err)
+	}
+	var buf strings.Builder
+	if err := t.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("execute %s template: %w", name, err)
+	}
+	return buf.String(), nil
+}
 
 // Data holds the fields loaded from a philosopher YAML file.
 type Data struct {
@@ -39,8 +52,8 @@ func Key(name string) string {
 	return strings.Trim(keyRe.ReplaceAllString(strings.ToLower(name), "_"), "_")
 }
 
-// DebateRules returns the shared rules block injected into every philosopher prompt.
-func DebateRules(maxWords int) string {
+// debateRules returns the shared rules block injected into every philosopher prompt.
+func debateRules(maxWords int) string {
 	return fmt.Sprintf(`## Debate Rules
 - Ground your arguments in your philosophical tradition.
 - Reference key thinkers when relevant, but engage with the logic — don't just cite names.
@@ -51,8 +64,8 @@ func DebateRules(maxWords int) string {
 `, maxWords)
 }
 
-// LoadAll reads every .yaml file in dir and returns the parsed philosopher data.
-func LoadAll(dir string) ([]Data, error) {
+// LoadAllPhilosophers reads every .yaml file in dir and returns the parsed philosopher data.
+func LoadAllPhilosophers(dir string) ([]Data, error) {
 	matches, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return nil, err
@@ -81,8 +94,8 @@ func LoadAll(dir string) ([]Data, error) {
 	return philosophers, nil
 }
 
-// MakeOpts holds the parameters for creating a philosopher agent.
-type MakeOpts struct {
+// MakePhilosopherOpts holds the parameters for creating a philosopher agent.
+type MakePhilosopherOpts struct {
 	Data                Data
 	AgentName           string
 	OutputKey           string
@@ -99,8 +112,40 @@ type MakeOpts struct {
 // when the user interjects, then clears it after the next turn consumes it.
 const InterjectionStateKey = "pending_interjection"
 
-// Make creates an agent.Agent for a single debate turn.
-func Make(ctx context.Context, opts MakeOpts) (*agent.Agent, error) {
+const philosopherTemplate = `You are **{{.Name}}**, a philosopher representing **{{.School}}**.
+
+## Your Identity
+{{.Identity}}
+## Key Thinkers
+{{.KeyThinkers}}
+{{.EpistemicBlock}}{{.DebateRules}}
+## Debate Topic
+{topic}
+
+## Your Task: {{.Situation}}
+{{.ContextBlock}}
+
+Speak in first person as {{.Name}}. Be passionate but rigorous.
+
+## Expressive Delivery
+Your reply will be spoken aloud by Google's Gemini TTS, which
+supports a wide vocabulary of bracketed delivery cues — short
+lowercase tokens written inline, e.g. [excited], [whispers],
+[sighs], [laughs softly], [emphatic], [pause], [amused], [scoffs],
+[wearily], [thoughtful], and many more in the same shape. Pick
+whichever cue genuinely fits the emotional beat; you are not
+restricted to a fixed list.
+
+Constraints on use:
+- Brackets only — never parentheses.
+- Each cue is a short bracketed token (1–4 lowercase words). Do not
+  write long stage directions inside brackets.
+- Cues are instructions to the narrator and are never read aloud.
+- Plain prose remains the default; cues are seasoning, not structure.
+`
+
+// MakePhilosopher creates an agent.Agent for a single debate turn.
+func MakePhilosopher(ctx context.Context, opts MakePhilosopherOpts) (*agent.Agent, error) {
 	d := opts.Data
 
 	var epistemicBlock string
@@ -120,38 +165,28 @@ func Make(ctx context.Context, opts MakeOpts) (*agent.Agent, error) {
 	}
 	contextBlock := strings.Join(contextParts, "\n\n")
 
-	instruction := fmt.Sprintf(`You are **%s**, a philosopher representing **%s**.
-
-## Your Identity
-%s
-## Key Thinkers
-%s
-%s%s
-## Debate Topic
-{topic}
-
-## Your Task: %s
-%s
-
-Speak in first person as %s. Be passionate but rigorous.
-
-## Expressive Delivery
-Your reply will be spoken aloud by Google's Gemini TTS, which
-supports a wide vocabulary of bracketed delivery cues — short
-lowercase tokens written inline, e.g. [excited], [whispers],
-[sighs], [laughs softly], [emphatic], [pause], [amused], [scoffs],
-[wearily], [thoughtful], and many more in the same shape. Pick
-whichever cue genuinely fits the emotional beat; you are not
-restricted to a fixed list.
-
-Constraints on use:
-- Brackets only — never parentheses.
-- Each cue is a short bracketed token (1–4 lowercase words). Do not
-  write long stage directions inside brackets.
-- Cues are instructions to the narrator and are never read aloud.
-- Plain prose remains the default; cues are seasoning, not structure.
-`,
-	d.Name, d.School, d.Identity, d.KeyThinkers, epistemicBlock, DebateRules(opts.MaxWords), opts.Situation, contextBlock, d.Name)
+	instruction, err := render("philosopher", philosopherTemplate, struct {
+		Name           string
+		School         string
+		Identity       string
+		KeyThinkers    string
+		EpistemicBlock string
+		DebateRules    string
+		Situation      string
+		ContextBlock   string
+	}{
+		Name:           d.Name,
+		School:         d.School,
+		Identity:       d.Identity,
+		KeyThinkers:    d.KeyThinkers,
+		EpistemicBlock: epistemicBlock,
+		DebateRules:    debateRules(opts.MaxWords),
+		Situation:      opts.Situation,
+		ContextBlock:   contextBlock,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	m, err := agent.Get(ctx, opts.ModelID)
 	if err != nil {

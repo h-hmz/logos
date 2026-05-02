@@ -45,6 +45,12 @@ func NewService(repo Repository, philMap map[string]philosopher.Data) *Service {
 	return &Service{repo: repo, philMap: philMap}
 }
 
+// Get returns the persisted debate record by ID. Thin pass-through so handlers
+// can read state without holding a Repository reference of their own.
+func (s *Service) Get(ctx context.Context, id string) (*Persisted, error) {
+	return s.repo.Get(ctx, id)
+}
+
 // ── CreateDebate ───────────────────────────────────────────────────────────
 
 // CreateDebateParams is the caller-supplied input; defaults are applied inside

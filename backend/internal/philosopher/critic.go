@@ -1,5 +1,4 @@
-// Package critic provides a factory for the debate critic agent.
-package critic
+package philosopher
 
 import (
 	"context"
@@ -7,10 +6,9 @@ import (
 	"strings"
 
 	"github.com/h-hmz/logos/internal/agent"
-	"github.com/h-hmz/logos/internal/philosopher"
 )
 
-const FallacyTaxonomy = `
+const fallacyTaxonomy = `
 ### Logical Fallacies to Watch For
 - **Ad hominem**: Attacking the person rather than the argument
 - **Straw man**: Misrepresenting the opponent's position
@@ -30,30 +28,26 @@ Apply the following distinctions:
 - **Still a fallacy**: Citing a *scholar or theologian* (not scripture) as proof without engaging their argument. This remains an Appeal to Authority.
 `
 
-func exchangeBlock(a, b philosopher.Data, numRounds int) string {
+func exchangeBlock(a, b Data, numRounds int) string {
 	var lines []string
 	for r := 1; r <= numRounds; r++ {
 		lines = append(lines, fmt.Sprintf("### Round %d", r))
-		lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_r%d}", a.Name, a.School, philosopher.Key(a.Name), r))
-		lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_r%d}", b.Name, b.School, philosopher.Key(b.Name), r))
+		lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_r%d}", a.Name, a.School, Key(a.Name), r))
+		lines = append(lines, fmt.Sprintf("**%s (%s):** {%s_r%d}", b.Name, b.School, Key(b.Name), r))
 	}
 	return strings.Join(lines, "\n")
 }
 
-// MakeCritic creates the critic agent that reviews the full debate. The agent
-// emits a structured JSON object (schema below) so the frontend can render
-// it as a findings grid rather than free-form prose.
-func MakeCritic(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string, maxWords int) (*agent.Agent, error) {
-	instruction := fmt.Sprintf(`You are the **Debate Critic**, an expert in logic, argumentation theory, and critical thinking.
+const criticTemplate = `You are the **Debate Critic**, an expert in logic, argumentation theory, and critical thinking.
 
 You do NOT take sides. Evaluate the *quality of reasoning* across the full debate.
 
-%s
+{{.Taxonomy}}
 
 ## Topic: {topic}
 
 ## Full Debate Transcript
-%s
+{{.Transcript}}
 
 ## Output Format — STRICT
 Return ONLY a JSON object (no prose, no markdown fences, no preamble). Use this exact schema:
@@ -61,7 +55,7 @@ Return ONLY a JSON object (no prose, no markdown fences, no preamble). Use this 
 {
   "intro": "<one-sentence framing of the overall exchange>",
   "debater_a": {
-    "name": %q,
+    "name": {{printf "%q" .NameA}},
     "strongest": "<their most compelling point and why>",
     "weakness": "<the most significant flaw or gap>",
     "fallacies": [
@@ -70,7 +64,7 @@ Return ONLY a JSON object (no prose, no markdown fences, no preamble). Use this 
     "challenge": "<one pointed question they must address>"
   },
   "debater_b": {
-    "name": %q,
+    "name": {{printf "%q" .NameB}},
     "strongest": "...",
     "weakness": "...",
     "fallacies": [ { "name": "...", "instance": "..." } ],
@@ -83,8 +77,29 @@ Rules:
 - Empty fallacies list is allowed — use [].
 - Do NOT wrap the JSON in code fences.
 - Do NOT prepend or append any commentary.
-- Keep the total JSON under roughly %d words of content (excluding field names).
-`, FallacyTaxonomy, exchangeBlock(a, b, numRounds), a.Name, b.Name, maxWords)
+- Keep the total JSON under roughly {{.MaxWords}} words of content (excluding field names).
+`
+
+// MakeCritic creates the critic agent that reviews the full debate. The agent
+// emits a structured JSON object (schema below) so the frontend can render
+// it as a findings grid rather than free-form prose.
+func MakeCritic(ctx context.Context, a, b Data, numRounds int, modelID string, maxWords int) (*agent.Agent, error) {
+	instruction, err := render("critic", criticTemplate, struct {
+		Taxonomy   string
+		Transcript string
+		NameA      string
+		NameB      string
+		MaxWords   int
+	}{
+		Taxonomy:   fallacyTaxonomy,
+		Transcript: exchangeBlock(a, b, numRounds),
+		NameA:      a.Name,
+		NameB:      b.Name,
+		MaxWords:   maxWords,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	m, err := agent.Get(ctx, modelID)
 	if err != nil {

@@ -79,7 +79,7 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	philosophers, err := philosopher.LoadAll(philDir)
+	philosophers, err := philosopher.LoadAllPhilosophers(philDir)
 	if err != nil {
 		return fmt.Errorf("philosophers: %w", err)
 	}
