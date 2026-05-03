@@ -3,7 +3,7 @@ import { Masthead, type Route } from './components/Masthead'
 import { StagePage } from './pages/StagePage'
 import { LivePage } from './pages/LivePage'
 import { VerdictPage } from './pages/VerdictPage'
-import type { DebateSession, TurnResult } from './api'
+import { getDebate, type DebateSession, type TurnResult } from './api'
 import { AuthProvider, useAuth } from './AuthContext'
 import { firebaseEnabled } from './firebase'
 
@@ -87,27 +87,50 @@ function AppInner() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  // Load cached debate session when routing to /d/:id
+  // Load cached debate session when routing to /d/:id, falling back to the
+  // backend snapshot when localStorage is empty (cross-browser / cleared).
   useEffect(() => {
     if (route.page === 'stage') return
     const id = route.id
     if (debate && debate.id === id) return
+
+    let cancelled = false
+    let restored = false
     try {
       const raw = localStorage.getItem(DEBATE_STORAGE_KEY(id))
       if (raw) {
         const parsed: unknown = JSON.parse(raw)
-        if (isDebateSession(parsed)) setDebate(parsed)
-        else console.warn('[logos] Discarding malformed debate from localStorage')
-      }
-      const rawTurns = localStorage.getItem(TURNS_STORAGE_KEY(id))
-      if (rawTurns) {
-        const parsed: unknown = JSON.parse(rawTurns)
-        if (isTurnResultMap(parsed)) setTurns(parsed)
-        else console.warn('[logos] Discarding malformed turns from localStorage')
+        if (isDebateSession(parsed)) {
+          setDebate(parsed)
+          restored = true
+          const rawTurns = localStorage.getItem(TURNS_STORAGE_KEY(id))
+          if (rawTurns) {
+            const parsedT: unknown = JSON.parse(rawTurns)
+            if (isTurnResultMap(parsedT)) setTurns(parsedT)
+            else console.warn('[logos] Discarding malformed turns from localStorage')
+          }
+        } else {
+          console.warn('[logos] Discarding malformed debate from localStorage')
+        }
       }
     } catch (e) {
       console.warn('[logos] Failed to restore debate from localStorage:', e)
     }
+
+    if (!restored) {
+      void (async () => {
+        try {
+          const snapshot = await getDebate(id)
+          if (cancelled) return
+          setDebate(snapshot.session)
+          setTurns(snapshot.turns ?? {})
+        } catch (e) {
+          console.warn('[logos] Failed to fetch debate from backend:', e)
+        }
+      })()
+    }
+
+    return () => { cancelled = true }
   }, [route, debate])
 
   // Persist debate & turns for refresh.

@@ -35,12 +35,17 @@ export function useDebatePlayback(
   auto: boolean,
 ): DebatePlayback {
   const [idx, setIdx] = useState<number>(() => {
+    let fromTurns = 0
+    for (const k of Object.keys(initialTurns)) {
+      const i = parseInt(k, 10)
+      if (Number.isFinite(i) && i + 1 > fromTurns) fromTurns = i + 1
+    }
+    let fromStorage = 0
     try {
       const saved = parseInt(localStorage.getItem(STORAGE_KEY(debate.id)) || '', 10)
-      return Number.isFinite(saved) ? Math.max(0, Math.min(saved, debate.total_steps)) : 0
-    } catch {
-      return 0
-    }
+      if (Number.isFinite(saved)) fromStorage = saved
+    } catch { /* noop */ }
+    return Math.max(0, Math.min(Math.max(fromStorage, fromTurns), debate.total_steps))
   })
   const [buffers, setBuffers] = useState<Record<number, TurnBuffer>>(() => {
     const b: Record<number, TurnBuffer> = {}

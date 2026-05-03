@@ -108,6 +108,54 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// ── GET /debates/{debateID} ─────────────────────────────────────────────────
+
+type getDebateResponse struct {
+	ID         string             `json:"id"`
+	Topic      string             `json:"topic"`
+	DebaterA   debaterInfo        `json:"debater_a"`
+	DebaterB   debaterInfo        `json:"debater_b"`
+	Steps      []stepInfo         `json:"steps"`
+	TotalSteps int                `json:"total_steps"`
+	Turns      map[int]turnResult `json:"turns"`
+}
+
+func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
+	debateID := chi.URLParam(r, "debateID")
+	res, err := s.svc.GetSession(r.Context(), debateID)
+	if err != nil {
+		writeServiceError(r.Context(), w, err)
+		return
+	}
+	resp := getDebateResponse{
+		ID:         res.Debate.ID,
+		Topic:      res.Debate.Topic,
+		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School},
+		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School},
+		TotalSteps: len(res.Steps),
+		Turns:      make(map[int]turnResult, len(res.Turns)),
+	}
+	for _, m := range res.Steps {
+		resp.Steps = append(resp.Steps, stepInfo{Key: m.Key, Label: m.Label})
+	}
+	for i, t := range res.Turns {
+		resp.Turns[i] = turnResult{
+			Key:               t.Step.Key,
+			Label:             t.Step.Label,
+			Author:            t.AgentName,
+			Role:              t.Role,
+			Content:           t.Content,
+			Structured:        t.Structured,
+			StepIndex:         t.StepIndex,
+			TotalSteps:        t.TotalSteps,
+			Done:              t.Done,
+			TotalInputTokens:  t.TotalInputTokens,
+			TotalOutputTokens: t.TotalOutputTokens,
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // ── POST /debates/{debateID}/next ───────────────────────────────────────────
 
 type turnResult struct {

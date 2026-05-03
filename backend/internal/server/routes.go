@@ -57,6 +57,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 	r.Group(func(pr chi.Router) {
 		pr.Use(authMiddleware(verifier))
 		pr.Post("/debates", s.createDebate)
+		pr.Get("/debates/{debateID}", s.getDebate)
 		pr.Post("/debates/{debateID}/next", s.nextTurn)
 		pr.Post("/debates/{debateID}/interject", s.interject)
 		pr.Post("/debates/{debateID}/tutor", s.tutorExplain)

@@ -103,6 +103,23 @@ export async function fetchPhilosophers(): Promise<Philosopher[]> {
   return res.json()
 }
 
+export interface DebateSnapshot {
+  session: DebateSession
+  turns: Record<number, TurnResult>
+}
+
+export async function getDebate(debateId: string): Promise<DebateSnapshot> {
+  const res = await fetch(`/debates/${debateId}`, {
+    headers: await getAuthHeader(),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
+    throw new Error(err.detail ?? 'Failed to load debate')
+  }
+  const { turns, ...session } = await res.json() as DebateSession & { turns: Record<number, TurnResult> }
+  return { session, turns: turns ?? {} }
+}
+
 export async function createDebate(params: CreateDebateParams): Promise<DebateSession> {
   const res = await fetch('/debates', {
     method: 'POST',

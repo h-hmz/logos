@@ -51,6 +51,82 @@ func (s *Service) Get(ctx context.Context, id string) (*Persisted, error) {
 	return s.repo.Get(ctx, id)
 }
 
+// GetSessionResult bundles everything a client needs to rehydrate a debate
+// after losing its local state: the manifest (debaters + step list) and
+// reconstructed past turns derived from StepOutputs.
+type GetSessionResult struct {
+	Debate   *Persisted
+	DebaterA philosopher.Data
+	DebaterB philosopher.Data
+	Steps    []StepMeta
+	Turns    map[int]TurnResult
+}
+
+// GetSession loads a debate and reconstructs every completed turn from the
+// persisted step outputs. Per-turn token counts are not retained on Persisted,
+// so reconstructed turns carry zeroes for those fields; cumulative totals on
+// each turn reflect the latest debate state.
+func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult, error) {
+	p, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	a, okA := s.philMap[p.DebaterAName]
+	b, okB := s.philMap[p.DebaterBName]
+	if !okA || !okB {
+		return nil, fmt.Errorf("get session: unknown philosopher in debate %s", id)
+	}
+	metas := BuildStepMeta(a, b, p.NumRounds)
+	total := TotalSteps(p.NumRounds)
+
+	end := p.Current
+	if end > len(metas) {
+		end = len(metas)
+	}
+	humanPrefix := philosopher.Key(HumanDebaterName) + "_"
+	turns := make(map[int]TurnResult, end)
+	for i := range end {
+		meta := metas[i]
+		content, ok := p.StepOutputs[meta.Key]
+		if !ok {
+			continue
+		}
+		var structured any
+		if meta.Key == "critic_feedback" || meta.Key == "final_verdict" {
+			if raw := extractJSON(content); raw != "" {
+				var parsed any
+				if uerr := json.Unmarshal([]byte(raw), &parsed); uerr == nil {
+					structured = parsed
+				}
+			}
+		}
+		author := meta.Key
+		if strings.HasPrefix(meta.Key, humanPrefix) {
+			author = HumanDebaterName
+		}
+		turns[i] = TurnResult{
+			Step:              meta,
+			AgentName:         author,
+			Role:              RoleForStep(meta.Key, a, b),
+			Content:           content,
+			Structured:        structured,
+			StepIndex:         i,
+			TotalSteps:        total,
+			Done:              i+1 >= total,
+			TotalInputTokens:  p.TotalInputTokens,
+			TotalOutputTokens: p.TotalOutputTokens,
+		}
+	}
+
+	return &GetSessionResult{
+		Debate:   p,
+		DebaterA: a,
+		DebaterB: b,
+		Steps:    metas,
+		Turns:    turns,
+	}, nil
+}
+
 // ── CreateDebate ───────────────────────────────────────────────────────────
 
 // CreateDebateParams is the caller-supplied input; defaults are applied inside
