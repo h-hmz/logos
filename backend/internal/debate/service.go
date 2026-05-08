@@ -217,12 +217,11 @@ type TurnResult struct {
 // NextTurn runs the next pipeline step for the given debate. humanInput is the
 // user's typed argument; it is only consumed when the current step belongs to
 // the human player (IsHumanDebater). If humanInput is empty on a human step,
-// the call returns AwaitingHuman=true without advancing. If onToken is non-nil,
-// partial tokens are streamed through it for LLM steps.
+// the call returns AwaitingHuman=true without advancing.
 //
 // Returns ErrNotFound, ErrVersionConflict, or *ValidationError for callers
 // that need to distinguish cases.
-func (s *Service) NextTurn(ctx context.Context, debateID string, humanInput string, onToken func(string)) (*TurnResult, error) {
+func (s *Service) NextTurn(ctx context.Context, debateID string, humanInput string) (*TurnResult, error) {
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
 		return nil, err
@@ -281,7 +280,7 @@ func (s *Service) NextTurn(ctx context.Context, debateID string, humanInput stri
 	}
 	step := rt.Steps[rt.Current]
 
-	result, err := step.Agent.Run(ctx, rt.State, "continue", onToken)
+	result, err := step.Agent.Run(ctx, rt.State, "continue")
 	if err != nil {
 		return nil, fmt.Errorf("agent run: %w", err)
 	}

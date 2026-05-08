@@ -28,24 +28,6 @@ func writeServiceError(ctx context.Context, w http.ResponseWriter, err error) {
 	}
 }
 
-// serviceErrorMessage returns the user-facing message for a service error,
-// used when the transport has already committed to SSE and can't emit an HTTP
-// status code.
-func serviceErrorMessage(ctx context.Context, err error) string {
-	var ve *debate.ValidationError
-	switch {
-	case errors.Is(err, debate.ErrNotFound):
-		return "Debate not found"
-	case errors.Is(err, debate.ErrVersionConflict):
-		return "debate state changed concurrently; refresh and retry"
-	case errors.As(err, &ve):
-		return ve.Msg
-	default:
-		slog.ErrorContext(ctx, "service error (sse)", "error", err)
-		return "internal error"
-	}
-}
-
 // ── POST /debates ───────────────────────────────────────────────────────────
 
 type createDebateRequest struct {
@@ -187,30 +169,13 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	var req nextTurnRequest
 	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck
 
-	// Decide transport mode before invoking the service so we can wire an
-	// SSE token callback when the client negotiated streaming.
-	var sw *sseWriter
-	var sse bool
-	if wantsSSE(r) {
-		sw, sse = newSSEWriter(r.Context(), w)
-	}
-
-	var onToken func(string)
-	if sse {
-		onToken = sw.SendToken
-	}
-
-	res, err := s.svc.NextTurn(r.Context(), debateID, req.HumanInput, onToken)
+	res, err := s.svc.NextTurn(r.Context(), debateID, req.HumanInput)
 	if err != nil {
-		if sse {
-			sw.SendError(serviceErrorMessage(r.Context(), err))
-			return
-		}
 		writeServiceError(r.Context(), w, err)
 		return
 	}
 
-	out := turnResult{
+	writeJSON(w, http.StatusOK, turnResult{
 		Key:               res.Step.Key,
 		Label:             res.Step.Label,
 		Author:            res.AgentName,
@@ -225,12 +190,7 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 		TurnOutputTokens:  res.TurnOutputTokens,
 		TotalInputTokens:  res.TotalInputTokens,
 		TotalOutputTokens: res.TotalOutputTokens,
-	}
-	if sse {
-		sw.SendDone(out)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	})
 }
 
 // ── POST /debates/{debateID}/interject ──────────────────────────────────────

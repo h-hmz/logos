@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strings"
 
@@ -27,7 +28,6 @@ const DefaultLLMBaseURL = "https://openrouter.ai/api/v1"
 // Default TTS model in OpenRouter provider/model form. Resolves to
 // the same Gemini weights we used pre-migration (per ADR 0002 rev).
 const defaultTTSModel = "google/gemini-3.1-flash-tts-preview"
-const fallbackModel = "local-gibberish"
 
 // Load reads the .env file and environment variables, populating package-level state.
 func Load(envPath string) error {
@@ -46,7 +46,7 @@ func Load(envPath string) error {
 	}
 	defaultModel = os.Getenv("MODEL")
 	if defaultModel == "" {
-		defaultModel = fallbackModel
+		return errors.New("config: MODEL env var is required")
 	}
 
 	return nil

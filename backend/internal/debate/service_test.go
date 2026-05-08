@@ -91,7 +91,7 @@ func challengerDebate(t *testing.T, current int) (*Service, *MemoryRepo, string)
 
 func TestNextTurn_HumanStep_NoInput(t *testing.T) {
 	svc, repo, id := challengerDebate(t, 1) // step 1 = the_challenger_r1
-	res, err := svc.NextTurn(context.Background(), id, "", nil)
+	res, err := svc.NextTurn(context.Background(), id, "")
 	if err != nil {
 		t.Fatalf("NextTurn: %v", err)
 	}
@@ -110,11 +110,11 @@ func TestNextTurn_HumanStep_NoInput(t *testing.T) {
 
 func TestNextTurn_HumanStep_CurrentDoesNotAdvance(t *testing.T) {
 	svc, _, id := challengerDebate(t, 1)
-	if _, err := svc.NextTurn(context.Background(), id, "", nil); err != nil {
+	if _, err := svc.NextTurn(context.Background(), id, ""); err != nil {
 		t.Fatalf("NextTurn: %v", err)
 	}
 	// Second call with no input must still return AwaitingHuman — idempotent.
-	res2, err := svc.NextTurn(context.Background(), id, "", nil)
+	res2, err := svc.NextTurn(context.Background(), id, "")
 	if err != nil {
 		t.Fatalf("NextTurn (2nd): %v", err)
 	}
@@ -126,7 +126,7 @@ func TestNextTurn_HumanStep_CurrentDoesNotAdvance(t *testing.T) {
 func TestNextTurn_HumanStep_WithInput(t *testing.T) {
 	svc, repo, id := challengerDebate(t, 1)
 	const arg = "Knowledge requires justified true belief."
-	res, err := svc.NextTurn(context.Background(), id, arg, nil)
+	res, err := svc.NextTurn(context.Background(), id, arg)
 	if err != nil {
 		t.Fatalf("NextTurn: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestNextTurn_HumanStep_WithInput(t *testing.T) {
 
 func TestNextTurn_HumanStep_WhitespaceInput(t *testing.T) {
 	svc, _, id := challengerDebate(t, 1)
-	res, err := svc.NextTurn(context.Background(), id, "   \t\n  ", nil)
+	res, err := svc.NextTurn(context.Background(), id, "   \t\n  ")
 	if err != nil {
 		t.Fatalf("NextTurn: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestNextTurn_HumanStep_WhitespaceInput(t *testing.T) {
 func TestNextTurn_HumanStep_CriticResponse(t *testing.T) {
 	// Step 4 with numRounds=1 is the_challenger_critic_response — also a human step.
 	svc, _, id := challengerDebate(t, 4)
-	res, err := svc.NextTurn(context.Background(), id, "", nil)
+	res, err := svc.NextTurn(context.Background(), id, "")
 	if err != nil {
 		t.Fatalf("NextTurn: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestNextTurn_HumanStep_AsDebaterB(t *testing.T) {
 		t.Fatalf("repo.Create: %v", err)
 	}
 	svc := NewService(repo, philMap)
-	res, err := svc.NextTurn(context.Background(), "human-d2", "", nil)
+	res, err := svc.NextTurn(context.Background(), "human-d2", "")
 	if err != nil {
 		t.Fatalf("NextTurn: %v", err)
 	}

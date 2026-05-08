@@ -39,10 +39,10 @@ type TutorResult struct {
 	Suggestions []string
 }
 
-// TutorExplain streams a tutor response grounded in the selected turn and its
+// TutorExplain returns a tutor response grounded in the selected turn and its
 // immediate predecessor (excluding the moderator). No server-side state is
 // persisted; the chat history is resent by the caller on each follow-up.
-func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRequest, onToken func(string)) (TutorResult, error) {
+func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRequest) (TutorResult, error) {
 	selection := strings.TrimSpace(req.Selection)
 	if selection == "" {
 		return TutorResult{}, validationErr("selection is empty")
@@ -124,39 +124,7 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		History:      toTutorMessages(req.History),
 	})
 
-	// accumBuf collects all partial tokens for delimiter detection.
-	// filteredLen tracks how many bytes have been forwarded via onToken.
-	// Once the <!--suggestions--> delimiter is found, streaming stops so
-	// the suggestions block never reaches the client as visible text.
-	var accumBuf string
-	var filteredLen int
-	var delimFound bool
-
-	filteredOnToken := func(delta string) {
-		if onToken == nil || delimFound {
-			return
-		}
-		accumBuf += delta
-		if di := strings.Index(accumBuf, tutor.SuggOpen); di >= 0 {
-			delimFound = true
-			if di > filteredLen {
-				onToken(accumBuf[filteredLen:di])
-			}
-			return
-		}
-		// Hold back enough bytes to guard against the delimiter being
-		// split across chunk boundaries.
-		safeEnd := len(accumBuf) - len(tutor.SuggOpen) + 1
-		if safeEnd < 0 {
-			safeEnd = 0
-		}
-		if safeEnd > filteredLen {
-			onToken(accumBuf[filteredLen:safeEnd])
-			filteredLen = safeEnd
-		}
-	}
-
-	result, err := tutorAgent.Run(ctx, agent.State{}, userText, filteredOnToken)
+	result, err := tutorAgent.Run(ctx, agent.State{}, userText)
 	if err != nil {
 		return TutorResult{}, fmt.Errorf("tutor: %w", err)
 	}

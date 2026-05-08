@@ -26,6 +26,7 @@ func testServer(t *testing.T) (*Server, *debate.MemoryRepo, http.Handler) {
 		{Name: "Socrates", School: "Classical", Identity: "id-a", KeyThinkers: "k"},
 		{Name: "Kant", School: "German Idealism", Identity: "id-b", KeyThinkers: "k"},
 	}
+	t.Setenv("MODEL", "test-model")
 	if err := config.Load(""); err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
@@ -277,6 +278,7 @@ func testServerWithChallenger(t *testing.T) (*Server, *debate.MemoryRepo, http.H
 		{Name: debate.HumanDebaterName, School: "Human debater"},
 		{Name: "Socrates", School: "Classical", Identity: "id-a", KeyThinkers: "k"},
 	}
+	t.Setenv("MODEL", "test-model")
 	if err := config.Load(""); err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}

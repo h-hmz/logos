@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
 // Config configures a single LLM agent (one pipeline step).
@@ -42,39 +41,20 @@ type RunResult struct {
 }
 
 // Run resolves {key} placeholders in the instruction against state,
-// calls the model with (system, user) messages, streams partial tokens
-// through onToken (when non-nil), and writes state[OutputKey] = text
-// when OutputKey is non-empty.
-//
-// Tool calling is not implemented here. If the model returns tool
-// calls, Run errors out — they will be handled by a future
-// Agent.RunWithTools method (see ADR 0008 §3).
-func (a *Agent) Run(
-	ctx context.Context,
-	state State,
-	userMessage string,
-	onToken func(string),
-) (RunResult, error) {
+// calls the model with (system, user) messages, and writes
+// state[OutputKey] = text when OutputKey is non-empty.
+func (a *Agent) Run(ctx context.Context, state State, userMessage string) (RunResult, error) {
 	system := Substitute(a.cfg.Instruction, state)
 	req := Request{
-		Model: a.cfg.Model.Name(),
 		Messages: []Message{
 			{Role: RoleSystem, Content: system},
 			{Role: RoleUser, Content: userMessage},
 		},
 	}
 
-	text, toolCalls, usage, err := a.cfg.Model.Generate(ctx, req, func(ch Chunk) error {
-		if ch.Delta != "" && onToken != nil {
-			onToken(ch.Delta)
-		}
-		return nil
-	})
+	text, usage, err := a.cfg.Model.Generate(ctx, req)
 	if err != nil {
 		return RunResult{}, err
-	}
-	if len(toolCalls) > 0 {
-		return RunResult{}, fmt.Errorf("agent %q: model returned tool calls but Run does not support tools", a.cfg.Name)
 	}
 
 	if a.cfg.OutputKey != "" && state != nil {

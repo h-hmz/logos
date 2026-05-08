@@ -42,35 +42,15 @@ func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 		history[i] = debate.TutorMessage{Role: m.Role, Content: m.Content}
 	}
 
-	var sw *sseWriter
-	var sse bool
-	if wantsSSE(r) {
-		sw, sse = newSSEWriter(r.Context(), w)
-	}
-
-	var onToken func(string)
-	if sse {
-		onToken = sw.SendToken
-	}
-
 	result, err := s.svc.TutorExplain(r.Context(), debateID, debate.TutorRequest{
 		Selection: req.Selection,
 		TurnKey:   req.TurnKey,
 		History:   history,
-	}, onToken)
+	})
 	if err != nil {
-		if sse {
-			sw.SendError(serviceErrorMessage(r.Context(), err))
-			return
-		}
 		writeServiceError(r.Context(), w, err)
 		return
 	}
 
-	out := tutorResponse{Content: result.Content, Suggestions: result.Suggestions}
-	if sse {
-		sw.SendDone(out)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, tutorResponse{Content: result.Content, Suggestions: result.Suggestions})
 }

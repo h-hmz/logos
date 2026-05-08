@@ -39,39 +39,31 @@ func newOpenAICompatLLM(modelID string) (*openAICompatLLM, error) {
 
 func (m *openAICompatLLM) Name() string { return m.name }
 
-// Generate streams a chat completion. Retries up to twice on transient
+// Generate runs a chat completion. Retries up to twice on transient
 // failures (5xx + 429) with a 250ms delay; non-retryable errors return
 // immediately.
-func (m *openAICompatLLM) Generate(
-	ctx context.Context,
-	req Request,
-	onChunk func(Chunk) error,
-) (string, []ToolCall, Usage, error) {
+func (m *openAICompatLLM) Generate(ctx context.Context, req Request) (string, Usage, error) {
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		text, calls, usage, err := m.generateOnce(ctx, req, onChunk)
+		text, usage, err := m.generateOnce(ctx, req)
 		if err == nil {
-			return text, calls, usage, nil
+			return text, usage, nil
 		}
 		if !isRetryable(err) || attempt == maxAttempts {
-			return "", nil, Usage{}, err
+			return "", Usage{}, err
 		}
 		lastErr = err
 		select {
 		case <-ctx.Done():
-			return "", nil, Usage{}, ctx.Err()
+			return "", Usage{}, ctx.Err()
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	return "", nil, Usage{}, lastErr
+	return "", Usage{}, lastErr
 }
 
-func (m *openAICompatLLM) generateOnce(
-	ctx context.Context,
-	req Request,
-	onChunk func(Chunk) error,
-) (string, []ToolCall, Usage, error) {
+func (m *openAICompatLLM) generateOnce(ctx context.Context, req Request) (string, Usage, error) {
 	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages))
 	for _, mm := range req.Messages {
 		switch mm.Role {
@@ -79,55 +71,28 @@ func (m *openAICompatLLM) generateOnce(
 			msgs = append(msgs, openai.SystemMessage(mm.Content))
 		case RoleUser:
 			msgs = append(msgs, openai.UserMessage(mm.Content))
-		case RoleAssistant:
-			msgs = append(msgs, openai.AssistantMessage(mm.Content))
-		case RoleTool:
-			msgs = append(msgs, openai.ToolMessage(mm.Content, mm.ToolCallID))
 		default:
-			return "", nil, Usage{}, fmt.Errorf("agent: unknown role %q", mm.Role)
+			return "", Usage{}, fmt.Errorf("agent: unknown role %q", mm.Role)
 		}
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:    req.Model,
+		Model:    m.name,
 		Messages: msgs,
-		StreamOptions: openai.ChatCompletionStreamOptionsParam{
-			IncludeUsage: openai.Bool(true),
-		},
 	}
-	// Tools wiring is reserved for the RAG follow-up; today's pipeline
-	// never sets req.Tools, so this branch stays cold.
-	// (See ADR 0008 §3.)
 
-	stream := m.client.Chat.Completions.NewStreaming(ctx, params)
-	defer stream.Close()
-
-	var sb []byte
-	var usage Usage
-	for stream.Next() {
-		ev := stream.Current()
-		if len(ev.Choices) > 0 {
-			delta := ev.Choices[0].Delta.Content
-			if delta != "" {
-				sb = append(sb, delta...)
-				if onChunk != nil {
-					if cerr := onChunk(Chunk{Delta: delta}); cerr != nil {
-						return "", nil, Usage{}, cerr
-					}
-				}
-			}
-		}
-		if ev.Usage.PromptTokens != 0 || ev.Usage.CompletionTokens != 0 {
-			usage = Usage{
-				InputTokens:  int(ev.Usage.PromptTokens),
-				OutputTokens: int(ev.Usage.CompletionTokens),
-			}
-		}
+	completion, err := m.client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return "", Usage{}, fmt.Errorf("openai-compat: %w", err)
 	}
-	if err := stream.Err(); err != nil {
-		return "", nil, Usage{}, fmt.Errorf("openai-compat: stream: %w", err)
+	if len(completion.Choices) == 0 {
+		return "", Usage{}, errors.New("openai-compat: empty choices")
 	}
-	return string(sb), nil, usage, nil
+	usage := Usage{
+		InputTokens:  int(completion.Usage.PromptTokens),
+		OutputTokens: int(completion.Usage.CompletionTokens),
+	}
+	return completion.Choices[0].Message.Content, usage, nil
 }
 
 // isRetryable reports whether an openai-go error should be retried.

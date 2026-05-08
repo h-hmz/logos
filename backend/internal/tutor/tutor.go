@@ -183,6 +183,3 @@ func ParseSuggestions(content string) (string, []string) {
 	return clean, suggestions
 }
 
-// SuggOpen is the opening delimiter for the suggestions block, exported for
-// use by the streaming filter in the debate service.
-const SuggOpen = suggOpen

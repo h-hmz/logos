@@ -246,6 +246,12 @@ export async function streamTutor(
     const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
     throw new Error(err?.detail ?? 'Stream failed')
   }
+  // Backend currently responds with JSON; SSE will return when streaming
+  // is re-introduced. The parser below stays in place for that day.
+  if (!res.headers.get('content-type')?.includes('text/event-stream')) {
+    const parsed = await res.json() as { content?: string; suggestions?: string[] }
+    return { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [] }
+  }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
@@ -333,6 +339,11 @@ export async function streamTurn(
   if (!res.ok || !res.body) {
     const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
     throw new Error(err?.detail ?? 'Stream failed')
+  }
+  // Backend currently responds with JSON; SSE will return when streaming
+  // is re-introduced. The parser below stays in place for that day.
+  if (!res.headers.get('content-type')?.includes('text/event-stream')) {
+    return await res.json() as TurnResult
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()

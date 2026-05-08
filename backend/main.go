@@ -18,11 +18,6 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/server"
-
-	// Side-effect import: registers the local-gibberish mock LLM
-	// with the agent package so MODEL=local-gibberish works without
-	// network access. See ADR 0007 §4.
-	_ "github.com/h-hmz/logos/internal/gibberish"
 )
 
 func main() {
