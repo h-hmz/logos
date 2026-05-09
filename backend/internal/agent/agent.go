@@ -7,11 +7,12 @@ import (
 
 // Config configures a single LLM agent (one pipeline step).
 type Config struct {
-	Name           string
-	Model          LLM
-	Instruction    string      // may contain {key} placeholders resolved against State
-	OutputKey      string      // when non-empty, Run writes the result text to state[OutputKey]
-	ResponseFormat *JSONSchema // when non-nil, constrain model output to this JSON schema
+	Name                string
+	Model               LLM
+	Instruction         string      // may contain {key} placeholders resolved against State
+	OutputKey           string      // when non-empty, Run writes the result text to state[OutputKey]
+	ResponseFormat      *JSONSchema // when non-nil, constrain model output to this JSON schema
+	MaxCompletionTokens int         // when >0, hard cap on generated tokens (cost backstop)
 }
 
 // Agent is one bound (instruction, model, output-key) triple. Stateless
@@ -51,7 +52,8 @@ func (a *Agent) Run(ctx context.Context, state State, userMessage string) (RunRe
 			{Role: RoleSystem, Content: system},
 			{Role: RoleUser, Content: userMessage},
 		},
-		ResponseFormat: a.cfg.ResponseFormat,
+		ResponseFormat:      a.cfg.ResponseFormat,
+		MaxCompletionTokens: a.cfg.MaxCompletionTokens,
 	}
 
 	text, usage, err := a.cfg.Model.Generate(ctx, req)

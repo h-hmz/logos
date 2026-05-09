@@ -20,8 +20,9 @@ type Message struct {
 // Typical LLM fields would land here:
 // temperature, max_tokens, top_p, stop
 type Request struct {
-	Messages       []Message
-	ResponseFormat *JSONSchema // when non-nil, constrain output to this JSON schema
+	Messages            []Message
+	ResponseFormat      *JSONSchema // when non-nil, constrain output to this JSON schema
+	MaxCompletionTokens int         // when >0, hard cap on generated tokens (cost backstop)
 }
 
 // JSONSchema describes a structured-output constraint. When attached to a

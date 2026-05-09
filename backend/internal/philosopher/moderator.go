@@ -45,9 +45,10 @@ func MakeModerator(ctx context.Context, a, b Data, modelID string) (*agent.Agent
 	}
 
 	return agent.New(agent.Config{
-		Name:        "Moderator",
-		Model:       m,
-		Instruction: instruction,
-		OutputKey:   "moderator_intro",
+		Name:                "Moderator",
+		Model:               m,
+		Instruction:         instruction,
+		OutputKey:           "moderator_intro",
+		MaxCompletionTokens: 512,
 	})
 }

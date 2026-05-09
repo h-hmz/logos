@@ -89,11 +89,12 @@ func MakeCritic(ctx context.Context, a, b Data, numRounds int, modelID string, m
 	}
 
 	return agent.New(agent.Config{
-		Name:           "Critic",
-		Model:          m,
-		Instruction:    instruction,
-		OutputKey:      "critic_feedback",
-		ResponseFormat: criticSchema,
+		Name:                "Critic",
+		Model:               m,
+		Instruction:         instruction,
+		OutputKey:           "critic_feedback",
+		ResponseFormat:      criticSchema,
+		MaxCompletionTokens: max(maxWords*3, 8192),
 	})
 }
 

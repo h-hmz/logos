@@ -82,6 +82,9 @@ func (m *openAICompatLLM) generateOnce(ctx context.Context, req Request) (string
 		Model:    m.name,
 		Messages: msgs,
 	}
+	if req.MaxCompletionTokens > 0 {
+		params.MaxCompletionTokens = param.NewOpt(int64(req.MaxCompletionTokens))
+	}
 	if rf := req.ResponseFormat; rf != nil {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{

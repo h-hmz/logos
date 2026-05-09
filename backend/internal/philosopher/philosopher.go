@@ -194,10 +194,11 @@ func MakePhilosopher(ctx context.Context, opts MakePhilosopherOpts) (*agent.Agen
 	}
 
 	a, err := agent.New(agent.Config{
-		Name:        opts.AgentName,
-		Model:       m,
-		Instruction: instruction,
-		OutputKey:   opts.OutputKey,
+		Name:                opts.AgentName,
+		Model:               m,
+		Instruction:         instruction,
+		OutputKey:           opts.OutputKey,
+		MaxCompletionTokens: max(opts.MaxWords*3, 4096),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create agent %s: %w", opts.AgentName, err)

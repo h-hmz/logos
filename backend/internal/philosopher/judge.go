@@ -75,11 +75,12 @@ func MakeJudge(ctx context.Context, a, b Data, numRounds int, modelID string) (*
 	}
 
 	return agent.New(agent.Config{
-		Name:           "Judge",
-		Model:          m,
-		Instruction:    instruction,
-		OutputKey:      "final_verdict",
-		ResponseFormat: judgeSchema,
+		Name:                "Judge",
+		Model:               m,
+		Instruction:         instruction,
+		OutputKey:           "final_verdict",
+		ResponseFormat:      judgeSchema,
+		MaxCompletionTokens: 16384,
 	})
 }
 
