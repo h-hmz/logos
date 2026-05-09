@@ -8,24 +8,6 @@ import (
 	"github.com/h-hmz/logos/internal/philosopher"
 )
 
-func TestExtractJSON(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{`{"a":1}`, `{"a":1}`},
-		{"```json\n{\"a\":1}\n```", `{"a":1}`},
-		{`prose before {"x":"y"} end`, `{"x":"y"}`},
-		{`{"a":"has } brace","b":2}`, `{"a":"has } brace","b":2}`},
-		{`no json here`, ``},
-		{`{"a":1`, ``},
-	}
-	for _, c := range cases {
-		if got := extractJSON(c.in); got != c.want {
-			t.Fatalf("extractJSON(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 func TestRoleForStep(t *testing.T) {
 	a := philosopher.Data{Name: "Socrates"}
 	b := philosopher.Data{Name: "Kant"}

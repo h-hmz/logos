@@ -18,9 +18,18 @@ type Message struct {
 
 // Request is what `LLM.Generate` consumes.
 // Typical LLM fields would land here:
-// temperature, max_tokens, top_p, stop, response_format
+// temperature, max_tokens, top_p, stop
 type Request struct {
-	Messages []Message
+	Messages       []Message
+	ResponseFormat *JSONSchema // when non-nil, constrain output to this JSON schema
+}
+
+// JSONSchema describes a structured-output constraint. When attached to a
+// Request, the provider constrains output to the schema (OpenAI/OpenRouter:
+// response_format=json_schema, strict=true).
+type JSONSchema struct {
+	Name   string         // [a-zA-Z0-9_-]{1,64}
+	Schema map[string]any // the JSON Schema document
 }
 
 // Usage reports token accounting for one Generate call.

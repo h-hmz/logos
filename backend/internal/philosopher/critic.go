@@ -49,35 +49,17 @@ You do NOT take sides. Evaluate the *quality of reasoning* across the full debat
 ## Full Debate Transcript
 {{.Transcript}}
 
-## Output Format — STRICT
-Return ONLY a JSON object (no prose, no markdown fences, no preamble). Use this exact schema:
-
-{
-  "intro": "<one-sentence framing of the overall exchange>",
-  "debater_a": {
-    "name": {{printf "%q" .NameA}},
-    "strongest": "<their most compelling point and why>",
-    "weakness": "<the most significant flaw or gap>",
-    "fallacies": [
-      { "name": "<fallacy name from the taxonomy above, or 'unargued premise'>", "instance": "<short quoted or paraphrased instance>" }
-    ],
-    "challenge": "<one pointed question they must address>"
-  },
-  "debater_b": {
-    "name": {{printf "%q" .NameB}},
-    "strongest": "...",
-    "weakness": "...",
-    "fallacies": [ { "name": "...", "instance": "..." } ],
-    "challenge": "..."
-  },
-  "overall": "<one-paragraph assessment of the debate quality>"
-}
-
-Rules:
-- Empty fallacies list is allowed — use [].
-- Do NOT wrap the JSON in code fences.
-- Do NOT prepend or append any commentary.
-- Keep the total JSON under roughly {{.MaxWords}} words of content (excluding field names).
+## Output Guidance
+Output is constrained to a JSON schema by the API — structure is enforced.
+Field semantics:
+- intro: one-sentence framing of the overall exchange.
+- debater_a.name MUST equal {{printf "%q" .NameA}}; debater_b.name MUST equal {{printf "%q" .NameB}}.
+- strongest: their most compelling point and why.
+- weakness: the most significant flaw or gap.
+- fallacies: items drawn from the taxonomy above or labelled "unargued premise"; instance is a short quote or paraphrase. Empty list is fine — use [].
+- challenge: one pointed question they must address.
+- overall: one-paragraph assessment of debate quality.
+Keep total content under roughly {{.MaxWords}} words (excluding field names).
 `
 
 // MakeCritic creates the critic agent that reviews the full debate. The agent
@@ -107,9 +89,52 @@ func MakeCritic(ctx context.Context, a, b Data, numRounds int, modelID string, m
 	}
 
 	return agent.New(agent.Config{
-		Name:        "Critic",
-		Model:       m,
-		Instruction: instruction,
-		OutputKey:   "critic_feedback",
+		Name:           "Critic",
+		Model:          m,
+		Instruction:    instruction,
+		OutputKey:      "critic_feedback",
+		ResponseFormat: criticSchema,
 	})
+}
+
+// criticSchema is the strict JSON Schema enforced on the critic's output.
+// Strict mode requires every object to set additionalProperties:false and
+// list every property in required.
+var criticSchema = &agent.JSONSchema{
+	Name: "critic_feedback",
+	Schema: map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"intro", "debater_a", "debater_b", "overall"},
+		"properties": map[string]any{
+			"intro":     map[string]any{"type": "string"},
+			"debater_a": debaterCritiqueSchema,
+			"debater_b": debaterCritiqueSchema,
+			"overall":   map[string]any{"type": "string"},
+		},
+	},
+}
+
+var debaterCritiqueSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required":             []string{"name", "strongest", "weakness", "fallacies", "challenge"},
+	"properties": map[string]any{
+		"name":      map[string]any{"type": "string"},
+		"strongest": map[string]any{"type": "string"},
+		"weakness":  map[string]any{"type": "string"},
+		"fallacies": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"name", "instance"},
+				"properties": map[string]any{
+					"name":     map[string]any{"type": "string"},
+					"instance": map[string]any{"type": "string"},
+				},
+			},
+		},
+		"challenge": map[string]any{"type": "string"},
+	},
 }

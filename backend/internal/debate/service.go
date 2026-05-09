@@ -93,11 +93,9 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 		}
 		var structured any
 		if meta.Key == "critic_feedback" || meta.Key == "final_verdict" {
-			if raw := extractJSON(content); raw != "" {
-				var parsed any
-				if uerr := json.Unmarshal([]byte(raw), &parsed); uerr == nil {
-					structured = parsed
-				}
+			var parsed any
+			if uerr := json.Unmarshal([]byte(content), &parsed); uerr == nil {
+				structured = parsed
 			}
 		}
 		author := meta.Key
@@ -314,13 +312,11 @@ func (s *Service) NextTurn(ctx context.Context, debateID string, humanInput stri
 
 	var structured any
 	if step.Key == "critic_feedback" || step.Key == "final_verdict" {
-		if raw := extractJSON(content); raw != "" {
-			var parsed any
-			if uerr := json.Unmarshal([]byte(raw), &parsed); uerr == nil {
-				structured = parsed
-			} else {
-				slog.ErrorContext(ctx, "failed to parse JSON from step output", "step_key", step.Key, "error", uerr)
-			}
+		var parsed any
+		if uerr := json.Unmarshal([]byte(content), &parsed); uerr == nil {
+			structured = parsed
+		} else {
+			slog.ErrorContext(ctx, "failed to parse JSON from step output", "step_key", step.Key, "error", uerr)
 		}
 	}
 
@@ -432,53 +428,3 @@ func formatInterjection(text string) string {
 	)
 }
 
-// extractJSON strips common wrappers (```json … ``` fences, leading prose)
-// and returns the substring from the first '{' to the matching '}'. Returns
-// the empty string if no balanced object is found.
-func extractJSON(s string) string {
-	t := strings.TrimSpace(s)
-	if strings.HasPrefix(t, "```") {
-		if nl := strings.IndexByte(t, '\n'); nl >= 0 {
-			t = t[nl+1:]
-		}
-		if end := strings.LastIndex(t, "```"); end >= 0 {
-			t = t[:end]
-		}
-	}
-	start := strings.IndexByte(t, '{')
-	if start < 0 {
-		return ""
-	}
-	depth := 0
-	inStr := false
-	esc := false
-	for i := start; i < len(t); i++ {
-		c := t[i]
-		if inStr {
-			if esc {
-				esc = false
-				continue
-			}
-			if c == '\\' {
-				esc = true
-				continue
-			}
-			if c == '"' {
-				inStr = false
-			}
-			continue
-		}
-		switch c {
-		case '"':
-			inStr = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return t[start : i+1]
-			}
-		}
-	}
-	return ""
-}

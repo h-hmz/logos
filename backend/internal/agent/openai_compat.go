@@ -8,6 +8,8 @@ import (
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/param"
+	"github.com/openai/openai-go/shared"
 
 	"github.com/h-hmz/logos/internal/config"
 )
@@ -79,6 +81,17 @@ func (m *openAICompatLLM) generateOnce(ctx context.Context, req Request) (string
 	params := openai.ChatCompletionNewParams{
 		Model:    m.name,
 		Messages: msgs,
+	}
+	if rf := req.ResponseFormat; rf != nil {
+		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+					Name:   rf.Name,
+					Schema: rf.Schema,
+					Strict: param.NewOpt(true),
+				},
+			},
+		}
 	}
 
 	completion, err := m.client.Chat.Completions.New(ctx, params)
