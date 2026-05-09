@@ -188,14 +188,9 @@ func MakePhilosopher(ctx context.Context, opts MakePhilosopherOpts) (*agent.Agen
 		return nil, err
 	}
 
-	m, err := agent.Get(ctx, opts.ModelID)
-	if err != nil {
-		return nil, fmt.Errorf("get model %s: %w", opts.ModelID, err)
-	}
-
 	a, err := agent.New(agent.Config{
 		Name:                opts.AgentName,
-		Model:               m,
+		ModelID:             opts.ModelID,
 		Instruction:         instruction,
 		OutputKey:           opts.OutputKey,
 		MaxCompletionTokens: max(opts.MaxWords*3, 4096),

@@ -3,12 +3,13 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Config configures a single LLM agent (one pipeline step).
 type Config struct {
 	Name                string
-	Model               LLM
+	ModelID             string      // resolved against the OpenAI-compatible client (cached)
 	Instruction         string      // may contain {key} placeholders resolved against State
 	OutputKey           string      // when non-empty, Run writes the result text to state[OutputKey]
 	ResponseFormat      *JSONSchema // when non-nil, constrain model output to this JSON schema
@@ -17,15 +18,16 @@ type Config struct {
 
 // Agent is one bound (instruction, model, output-key) triple. Stateless
 // across runs; the per-request scratchpad lives in the State passed
-// to Run.
+// to Run. Model resolution happens lazily in Run.
 type Agent struct {
 	cfg Config
 }
 
-// New constructs an Agent. Returns an error if Model is nil.
+// New constructs an Agent. The model identified by cfg.ModelID is resolved
+// on first Run, not here.
 func New(cfg Config) (*Agent, error) {
-	if cfg.Model == nil {
-		return nil, errors.New("agent: nil Model")
+	if cfg.ModelID == "" {
+		return nil, errors.New("agent: empty ModelID")
 	}
 	return &Agent{cfg: cfg}, nil
 }
@@ -46,17 +48,22 @@ type RunResult struct {
 // calls the model with (system, user) messages, and writes
 // state[OutputKey] = text when OutputKey is non-empty.
 func (a *Agent) Run(ctx context.Context, state State, userMessage string) (RunResult, error) {
-	system := Substitute(a.cfg.Instruction, state)
-	req := Request{
-		Messages: []Message{
-			{Role: RoleSystem, Content: system},
-			{Role: RoleUser, Content: userMessage},
-		},
-		ResponseFormat:      a.cfg.ResponseFormat,
-		MaxCompletionTokens: a.cfg.MaxCompletionTokens,
+	m, err := getLLM(ctx, a.cfg.ModelID)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("agent: get model %s: %w", a.cfg.ModelID, err)
 	}
 
-	text, usage, err := a.cfg.Model.Generate(ctx, req)
+	system := Substitute(a.cfg.Instruction, state)
+	req := request{
+		messages: []message{
+			{role: roleSystem, content: system},
+			{role: roleUser, content: userMessage},
+		},
+		responseFormat:      a.cfg.ResponseFormat,
+		maxCompletionTokens: a.cfg.MaxCompletionTokens,
+	}
+
+	text, usage, err := m.generate(ctx, req)
 	if err != nil {
 		return RunResult{}, err
 	}

@@ -14,13 +14,13 @@ import (
 	"github.com/h-hmz/logos/internal/config"
 )
 
-// openAICompatLLM implements LLM against any OpenAI-compatible chat
+// openAICompatLLM implements llm against any OpenAI-compatible chat
 // completions endpoint. Base URL is configurable via LLM_BASE_URL
 // (defaults to OpenRouter — see ADR 0007 for the cost-cap rationale).
-// The same client is reused for every Generate call.
+// The same client is reused for every generate call.
 type openAICompatLLM struct {
 	client openai.Client
-	name   string
+	id     string
 }
 
 func newOpenAICompatLLM(modelID string) (*openAICompatLLM, error) {
@@ -36,15 +36,14 @@ func newOpenAICompatLLM(modelID string) (*openAICompatLLM, error) {
 		option.WithHeader("HTTP-Referer", "https://github.com/h-hmz/logos"),
 		option.WithHeader("X-Title", "Logos"),
 	)
-	return &openAICompatLLM{client: c, name: modelID}, nil
+	return &openAICompatLLM{client: c, id: modelID}, nil
 }
 
-func (m *openAICompatLLM) Name() string { return m.name }
+func (m *openAICompatLLM) name() string { return m.id }
 
-// Generate runs a chat completion. Retries up to twice on transient
-// failures (5xx + 429) with a 250ms delay; non-retryable errors return
-// immediately.
-func (m *openAICompatLLM) Generate(ctx context.Context, req Request) (string, Usage, error) {
+// generate runs a chat completion. Retries up to twice on transient failures
+// (5xx + 429) with a 250ms delay; non-retryable errors return immediately.
+func (m *openAICompatLLM) generate(ctx context.Context, req request) (string, Usage, error) {
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -65,27 +64,27 @@ func (m *openAICompatLLM) Generate(ctx context.Context, req Request) (string, Us
 	return "", Usage{}, lastErr
 }
 
-func (m *openAICompatLLM) generateOnce(ctx context.Context, req Request) (string, Usage, error) {
-	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages))
-	for _, mm := range req.Messages {
-		switch mm.Role {
-		case RoleSystem:
-			msgs = append(msgs, openai.SystemMessage(mm.Content))
-		case RoleUser:
-			msgs = append(msgs, openai.UserMessage(mm.Content))
+func (m *openAICompatLLM) generateOnce(ctx context.Context, req request) (string, Usage, error) {
+	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.messages))
+	for _, mm := range req.messages {
+		switch mm.role {
+		case roleSystem:
+			msgs = append(msgs, openai.SystemMessage(mm.content))
+		case roleUser:
+			msgs = append(msgs, openai.UserMessage(mm.content))
 		default:
-			return "", Usage{}, fmt.Errorf("agent: unknown role %q", mm.Role)
+			return "", Usage{}, fmt.Errorf("agent: unknown role %q", mm.role)
 		}
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:    m.name,
+		Model:    m.id,
 		Messages: msgs,
 	}
-	if req.MaxCompletionTokens > 0 {
-		params.MaxCompletionTokens = param.NewOpt(int64(req.MaxCompletionTokens))
+	if req.maxCompletionTokens > 0 {
+		params.MaxCompletionTokens = param.NewOpt(int64(req.maxCompletionTokens))
 	}
-	if rf := req.ResponseFormat; rf != nil {
+	if rf := req.responseFormat; rf != nil {
 		params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
 				JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{

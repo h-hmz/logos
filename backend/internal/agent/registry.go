@@ -5,18 +5,18 @@ import (
 	"sync"
 )
 
-var llmCache sync.Map // map[string]LLM
+var llmCache sync.Map // map[string]llm
 
-// Get returns a cached LLM for the given model ID, constructing one on
+// getLLM returns a cached llm for the given model ID, constructing one on
 // first call against the OpenAI-compatible client.
-func Get(_ context.Context, modelID string) (LLM, error) {
+func getLLM(_ context.Context, modelID string) (llm, error) {
 	if v, ok := llmCache.Load(modelID); ok {
-		return v.(LLM), nil
+		return v.(llm), nil
 	}
 	m, err := newOpenAICompatLLM(modelID)
 	if err != nil {
 		return nil, err
 	}
-	actual, _ := llmCache.LoadOrStore(modelID, LLM(m))
-	return actual.(LLM), nil
+	actual, _ := llmCache.LoadOrStore(modelID, llm(m))
+	return actual.(llm), nil
 }

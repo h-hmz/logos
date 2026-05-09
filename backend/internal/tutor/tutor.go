@@ -65,13 +65,9 @@ Each suggestion must be a short question (≤ 10 words) that follows naturally f
 // debate-specific grounding is passed through the user message (see
 // BuildUserMessage) because this agent is invoked without a debate session.
 func MakeTutor(ctx context.Context, modelID string) (*agent.Agent, error) {
-	m, err := agent.Get(ctx, modelID)
-	if err != nil {
-		return nil, fmt.Errorf("get model %s: %w", modelID, err)
-	}
 	return agent.New(agent.Config{
 		Name:        "Noctua",
-		Model:       m,
+		ModelID:     modelID,
 		Instruction: instruction,
 	})
 }

@@ -2,7 +2,6 @@ package philosopher
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/h-hmz/logos/internal/agent"
 )
@@ -39,14 +38,9 @@ func MakeModerator(ctx context.Context, a, b Data, modelID string) (*agent.Agent
 		return nil, err
 	}
 
-	m, err := agent.Get(ctx, modelID)
-	if err != nil {
-		return nil, fmt.Errorf("get model %s: %w", modelID, err)
-	}
-
 	return agent.New(agent.Config{
 		Name:                "Moderator",
-		Model:               m,
+		ModelID:             modelID,
 		Instruction:         instruction,
 		OutputKey:           "moderator_intro",
 		MaxCompletionTokens: 512,

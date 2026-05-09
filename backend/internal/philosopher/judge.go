@@ -69,14 +69,9 @@ func MakeJudge(ctx context.Context, a, b Data, numRounds int, modelID string) (*
 		return nil, err
 	}
 
-	m, err := agent.Get(ctx, modelID)
-	if err != nil {
-		return nil, fmt.Errorf("get model %s: %w", modelID, err)
-	}
-
 	return agent.New(agent.Config{
 		Name:                "Judge",
-		Model:               m,
+		ModelID:             modelID,
 		Instruction:         instruction,
 		OutputKey:           "final_verdict",
 		ResponseFormat:      judgeSchema,
