@@ -53,7 +53,10 @@ func (a *Agent) Run(ctx context.Context, state State, userMessage string) (RunRe
 		return RunResult{}, fmt.Errorf("agent: get model %s: %w", a.cfg.ModelID, err)
 	}
 
-	system := Substitute(a.cfg.Instruction, state)
+	system, err := substitute(a.cfg.Instruction, state)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("agent %s: %w", a.cfg.Name, err)
+	}
 	req := request{
 		messages: []message{
 			{role: roleSystem, content: system},

@@ -8,25 +8,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"text/template"
 
 	"github.com/h-hmz/logos/internal/agent"
 	"gopkg.in/yaml.v3"
 )
-
-// render parses tmpl and executes it against data, returning the rendered string.
-// Used to keep prompt templates readable (named fields beat positional %s).
-func render(name, tmpl string, data any) (string, error) {
-	t, err := template.New(name).Parse(tmpl)
-	if err != nil {
-		return "", fmt.Errorf("parse %s template: %w", name, err)
-	}
-	var buf strings.Builder
-	if err := t.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("execute %s template: %w", name, err)
-	}
-	return buf.String(), nil
-}
 
 // Data holds the fields loaded from a philosopher YAML file.
 type Data struct {
@@ -50,18 +35,6 @@ var keyRe = regexp.MustCompile(`[^a-z0-9]+`)
 // "John Stuart Mill" → "john_stuart_mill", "Al-Ghazali" → "al_ghazali"
 func Key(name string) string {
 	return strings.Trim(keyRe.ReplaceAllString(strings.ToLower(name), "_"), "_")
-}
-
-// debateRules returns the shared rules block injected into every philosopher prompt.
-func debateRules(maxWords int) string {
-	return fmt.Sprintf(`## Debate Rules
-- Ground your arguments in your philosophical tradition.
-- Reference key thinkers when relevant, but engage with the logic — don't just cite names.
-- Respond directly to your opponent's last point before advancing your own.
-- Acknowledge strong points from the other side while defending your position.
-- Avoid ad hominem attacks — focus on ideas.
-- Keep your response focused and under %d words.
-`, maxWords)
 }
 
 // LoadAllPhilosophers reads every .yaml file in dir and returns the parsed philosopher data.
@@ -118,7 +91,16 @@ const philosopherTemplate = `You are **{{.Name}}**, a philosopher representing *
 {{.Identity}}
 ## Key Thinkers
 {{.KeyThinkers}}
-{{.EpistemicBlock}}{{.DebateRules}}
+{{.EpistemicBlock}}
+
+## Debate Rules
+- Ground your arguments in your philosophical tradition.
+- Reference key thinkers when relevant, but engage with the logic — don't just cite names.
+- Respond directly to your opponent's last point before advancing your own.
+- Acknowledge strong points from the other side while defending your position.
+- Avoid ad hominem attacks — focus on ideas.
+- Keep your response focused and under {{.MaxWords}} words.
+
 ## Debate Topic
 {topic}
 
@@ -171,7 +153,7 @@ func MakePhilosopher(ctx context.Context, opts MakePhilosopherOpts) (*agent.Agen
 		Identity       string
 		KeyThinkers    string
 		EpistemicBlock string
-		DebateRules    string
+		MaxWords       int
 		Situation      string
 		ContextBlock   string
 	}{
@@ -180,7 +162,7 @@ func MakePhilosopher(ctx context.Context, opts MakePhilosopherOpts) (*agent.Agen
 		Identity:       d.Identity,
 		KeyThinkers:    d.KeyThinkers,
 		EpistemicBlock: epistemicBlock,
-		DebateRules:    debateRules(opts.MaxWords),
+		MaxWords:       opts.MaxWords,
 		Situation:      opts.Situation,
 		ContextBlock:   contextBlock,
 	})

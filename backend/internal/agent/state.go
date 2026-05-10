@@ -2,7 +2,10 @@
 // Google ADK. See ADR 0008.
 package agent
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+)
 
 // State is the per-request scratchpad that backs {key} substitution
 // and OutputKey writes for the debate pipeline. See ADR 0003.
@@ -15,11 +18,19 @@ type State map[string]string
 // pass through untouched.
 var placeholderRe = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 
-// Substitute replaces every {key} placeholder in tmpl with state[key].
-// Missing keys resolve to the empty string, matching ADK's pre-2026-04-30
-// semantics.
-func Substitute(tmpl string, state State) string {
-	return placeholderRe.ReplaceAllStringFunc(tmpl, func(match string) string {
-		return state[match[1:len(match)-1]]
+// substitute replaces every {key} placeholder in tmpl with state[key].
+func substitute(tmpl string, state State) (string, error) {
+	var missing []string
+	out := placeholderRe.ReplaceAllStringFunc(tmpl, func(match string) string {
+		key := match[1 : len(match)-1]
+		v, ok := state[key]
+		if !ok {
+			missing = append(missing, key)
+		}
+		return v
 	})
+	if len(missing) > 0 {
+		return "", fmt.Errorf("substitute: missing state keys: %v", missing)
+	}
+	return out, nil
 }

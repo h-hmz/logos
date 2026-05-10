@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSubstitute(t *testing.T) {
 	cases := []struct {
@@ -14,12 +17,6 @@ func TestSubstitute(t *testing.T) {
 			tmpl:  "Topic: {topic}",
 			state: State{"topic": "free will"},
 			want:  "Topic: free will",
-		},
-		{
-			name:  "missing key resolves to empty",
-			tmpl:  "before {missing} after",
-			state: State{},
-			want:  "before  after",
 		},
 		{
 			name:  "underscored identifier with digit",
@@ -44,11 +41,11 @@ func TestSubstitute(t *testing.T) {
 		{
 			name:  "brace followed by digit is not a placeholder",
 			tmpl:  "{0invalid} stays literal",
-			state: State{"0invalid": "x"},
+			state: State{},
 			want:  "{0invalid} stays literal",
 		},
 		{
-			name:  "pending_interjection empty string",
+			name:  "empty-string value substitutes (key present, value empty)",
 			tmpl:  "before\n{pending_interjection}\nafter",
 			state: State{"pending_interjection": ""},
 			want:  "before\n\nafter",
@@ -56,10 +53,33 @@ func TestSubstitute(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Substitute(tc.tmpl, tc.state)
+			got, err := substitute(tc.tmpl, tc.state)
+			if err != nil {
+				t.Fatalf("substitute(%q): unexpected error: %v", tc.tmpl, err)
+			}
 			if got != tc.want {
-				t.Errorf("Substitute(%q):\ngot:  %q\nwant: %q", tc.tmpl, got, tc.want)
+				t.Errorf("substitute(%q):\ngot:  %q\nwant: %q", tc.tmpl, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSubstituteMissingKeyErrors(t *testing.T) {
+	_, err := substitute("before {missing} after", State{})
+	if err == nil {
+		t.Fatal("substitute with missing key: expected error, got nil")
+	}
+}
+
+// Pin that all missing keys are reported in one error so a future
+// early-return refactor doesn't silently regress debuggability.
+func TestSubstituteMissingKeyErrorListsAll(t *testing.T) {
+	_, err := substitute("{a} {b} {c}", State{"b": "x"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "a") || !strings.Contains(msg, "c") {
+		t.Errorf("error should mention both missing keys, got: %v", err)
 	}
 }
