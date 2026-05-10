@@ -1,8 +1,8 @@
 # ADR 0003: Conversational context via a named-slot scratchpad, not a rolling message history
 
 Date: 2026-04-19
-Revised: 2026-04-30
-Status: Accepted (revised — substitution implementation moved to internal/agent)
+Revised: 2026-05-10
+Status: Accepted (revised — implementation details refreshed against current code)
 
 ## Context
 
@@ -56,8 +56,8 @@ One full turn cycle:
    expects to find in the per-request `agent.State` map.
    See [philosopher.go](../backend/internal/philosopher/philosopher.go).
 2. **The state map is seeded on every request.** `Hydrate` builds a
-   fresh `agent.State` (a `map[string]any`) containing three groups
-   of entries: the static `{topic}`, every prior entry of
+   fresh `agent.State` (a `map[string]string`) containing three
+   groups of entries: the static `{topic}`, every prior entry of
    `StepOutputs` flattened in as its own key, and the current
    `{pending_interjection}` (empty string if none). That is the
    agent's entire universe of context for the turn.
@@ -66,11 +66,12 @@ One full turn cycle:
    underlying LLM, `Agent.Run` walks the `Instruction` string,
    replaces each `{identifier}` with the string value at
    `state[identifier]`, and sends the resulting text as the system
-   message. Any placeholder whose key is missing resolves to the
-   empty string — which is why we always seed an empty
-   `pending_interjection`. Implementation:
+   message. Any placeholder whose key is missing causes
+   `substitute` to return an error listing every missing key — which
+   is why we always seed an empty `pending_interjection` even when no
+   user interjection is pending. Implementation:
    [internal/agent/state.go](../backend/internal/agent/state.go)
-   (`Substitute`).
+   (package-private `substitute`).
 4. **The output is written back under a declared key.** Every agent
    is constructed with an `OutputKey`. When `Agent.Run` finishes,
    it writes the generated text into the `State` map under that key
@@ -90,12 +91,15 @@ the ADR 0001 repository.
 Substitution is implemented in
 [internal/agent/state.go](../backend/internal/agent/state.go) as a
 regex-based `{identifier}` resolver against an `agent.State`
-(`map[string]any`). `OutputKey` write-back happens at the end of
+(`map[string]string`). It is package-private (`substitute`) — only
+`Agent.Run` calls it. `OutputKey` write-back happens at the end of
 `Agent.Run` in
-[internal/agent/agent.go](../backend/internal/agent/agent.go). Both
-behaviours match the pre-2026-04-30 ADK semantics; the migration
-preserved them by design (per
-[ADR 0008](0008-in-house-agent-layer-replacing-adk.md)).
+[internal/agent/agent.go](../backend/internal/agent/agent.go). The
+write-back behaviour matches the pre-2026-04-30 ADK semantics; the
+missing-key behaviour was tightened from "silent empty string" to
+"return an error" in the in-house move (per
+[ADR 0008](0008-in-house-agent-layer-replacing-adk.md)) so that an
+unseeded slot fails loudly instead of producing a malformed prompt.
 
 ## Consequences
 
@@ -141,10 +145,14 @@ preserved them by design (per
   hook for it — we'd need to add option 2 alongside, not extend
   this.
 - **The substitution regex is now ours to maintain.** Strict
-  `\{[a-zA-Z_]\w*\}` matching guards against literal JSON braces in
-  critic/judge instructions but won't catch shapes like
-  `{ identifier }` (with whitespace) — by design, since ADK didn't
-  either.
+  `\{[A-Za-z_][A-Za-z0-9_]*\}` matching: the opening `{` must be
+  immediately followed by an identifier character, so shapes like
+  `{ identifier }` (with whitespace) or `{0invalid}` pass through as
+  literal text. The strictness has no critical live consumer today —
+  critic and judge moved to API-enforced JSON Schema (see ADR 0008
+  revision), and no other prompt embeds literal `{ ... }` content —
+  but loosening it would silently retroactively eat any such text in
+  future prompts.
 
 ## Revision history
 
@@ -155,11 +163,20 @@ preserved them by design (per
   behavioural change to debaters, critic, or judge prompts; the
   named-slot scratchpad design (option 3) remains the chosen
   approach.
+- 2026-05-10 — implementation-detail refresh against current code.
+  No design change. Corrects: `State` is `map[string]string` (not
+  `map[string]any`); `substitute` is package-private (not exported
+  `Substitute`); missing keys now return an error instead of
+  resolving to the empty string. Also drops the "guards against JSON
+  braces in critic/judge" motivation for the strict regex — the
+  structured-outputs migration (commit 659a3bf, 2026-05-09) replaced
+  inline JSON examples in those prompts with API-enforced JSON
+  Schema, so no current prompt embeds literal `{ ... }` text.
 
 ## Implementation
 
 - [backend/internal/agent/state.go](../backend/internal/agent/state.go)
-  — `State` map type and the `Substitute` resolver.
+  — `State` map type and the package-private `substitute` resolver.
 - [backend/internal/agent/agent.go](../backend/internal/agent/agent.go)
   — `Agent.Run` performs substitution and the `OutputKey` write-back.
 - [backend/internal/debate/debate.go](../backend/internal/debate/debate.go)

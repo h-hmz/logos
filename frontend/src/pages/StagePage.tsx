@@ -150,12 +150,8 @@ export function StagePage({ onDebateCreated }: Props) {
       .finally(() => setLoadingRoster(false))
   }, [])
 
-  const challenger = useMemo(
-    () => philosophers.find((p) => p.name === 'The Challenger') ?? null,
-    [philosophers]
-  )
   const filtered = useMemo(
-    () => philosophers.filter((p) => p.name !== 'The Challenger' && (era === 'All' || p.era === era)),
+    () => philosophers.filter((p) => era === 'All' || p.era === era),
     [philosophers, era]
   )
 
@@ -393,21 +389,6 @@ export function StagePage({ onDebateCreated }: Props) {
               Awaiting the thinkers…
             </div>
           )}
-          {!loadingRoster && challenger && (() => {
-            const picked = (pickA?.name === challenger.name) || (pickB?.name === challenger.name)
-            return (
-              <button
-                type="button"
-                key={challenger.name}
-                className={`roster-card roster-card--you${picked ? ' picked' : ''}`}
-                onClick={() => handlePick(challenger)}
-              >
-                <Bust who={challenger} size="sm" showSchool={false} />
-                <div className="name">YOU</div>
-                <div className="school">Challenge a thinker directly</div>
-              </button>
-            )
-          })()}
           {filtered.map((p) => {
             const picked = (pickA && pickA.name === p.name) || (pickB && pickB.name === p.name)
             return (

@@ -1,6 +1,6 @@
 # Logos — Multi-Agent Philosophical Debate
 
-A structured debate system in Go. Two philosophers debate a topic head-to-head across configurable rounds. A critic intervenes with a logical analysis, each philosopher responds, and a judge delivers a structured verdict. Audience members can interject mid-match, and a "Challenger" slot lets a human take one of the seats.
+A structured debate system in Go. Two philosophers debate a topic head-to-head across configurable rounds. A critic intervenes with a logical analysis, each philosopher responds, and a judge delivers a structured verdict. Audience members can interject mid-match.
 
 LLM and TTS calls go through any OpenAI-compatible endpoint — OpenRouter by default for its prepaid hard spend cap (see [ADR 0007](adr/0007-llm-tts-via-openrouter-for-spend-caps.md)). The agent layer is in-house (see [ADR 0008](adr/0008-in-house-agent-layer-replacing-adk.md)) — no framework dependency.
 
@@ -75,8 +75,6 @@ Judge                     structured final verdict
 ```
 
 Total steps = `2N + 5` (1 moderator + 2N rounds + 1 critic + 2 critic responses + 1 judge).
-
-If either debater is `The Challenger` (the human player), their turns block on user-typed input via `POST /debates/{id}/next` carrying `{"human_input": "..."}`.
 
 ---
 
@@ -203,8 +201,6 @@ tts_voice: Rasalgethi
 tts_style: "Aphoristic, biting, performative — vary tempo sharply."
 ```
 
-`The Challenger` is a special catalog entry that marks human-controlled turns; do not duplicate it.
-
 ---
 
 ## API
@@ -252,8 +248,6 @@ Response:
 
 ### `POST /debates/{id}/next`
 Executes the next step in the pipeline. Supports both JSON and SSE streaming (`Accept: text/event-stream`).
-
-If the current step belongs to `The Challenger`, send `{"human_input": "..."}`. An empty body returns `awaiting_human: true` without advancing the pipeline.
 
 JSON response:
 ```json

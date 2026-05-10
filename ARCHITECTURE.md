@@ -6,7 +6,7 @@ A guide to understand the building blocks that make this codebase. For setup, en
 
 ## Bird's-eye view
 
-Logos is a turn-based philosophy debate engine. Two AI philosophers argue a topic across configurable rounds, a critic reviews their reasoning, each philosopher responds to the critic, and a judge issues a structured verdict. A user can occupy one of the seats ("The Challenger") or interject as audience.
+Logos is a turn-based philosophy debate engine. Two AI philosophers argue a topic across configurable rounds, a critic reviews their reasoning, each philosopher responds to the critic, and a judge issues a structured verdict. The user watches the bout and can interject as audience between turns.
 
 The whole backend is one HTTP service in Go. **Each request advances the debate by exactly one step.** There is no in-memory session — every request loads the full debate from storage, runs one step, and writes it back. That single property drives almost every other shape in the code.
 
@@ -67,7 +67,7 @@ The mental model fits in **four nouns** and **two verbs**.
 |---|---|---|---|
 | [`debate.Persisted`](backend/internal/debate/debate.go) | Firestore (or `MemoryRepo`) | Forever, until the debate is deleted | The dumb snapshot. JSON/Firestore-shaped. Topic, debater names, `StepOutputs`, `Interjections`, `Current`, `Version`. Knows nothing about agents or LLMs. |
 | [`debate.Runtime`](backend/internal/debate/debate.go) | One request | Built by `Hydrate`, discarded when the handler returns | The working copy. Embeds `*Persisted` and adds the unserializable bits: resolved philosopher data, the `[]Step` agent pipeline, the `agent.State` scratchpad. |
-| [`debate.Step`](backend/internal/debate/debate.go) | Inside `Runtime.Steps` | Same as Runtime | One stage of the pipeline. Either has a constructed `*agent.Agent` to run, or `IsHuman: true` (the user types the turn). The companion `StepMeta` is the same shape minus the agent — used wherever you need the *shape* of the pipeline cheaply, without paying to build agents. |
+| [`debate.Step`](backend/internal/debate/debate.go) | Inside `Runtime.Steps` | Same as Runtime | One stage of the pipeline. Holds the constructed `*agent.Agent` to run. The companion `StepMeta` is the same shape minus the agent — used wherever you need the *shape* of the pipeline cheaply, without paying to build agents. |
 | [`agent.State`](backend/internal/agent/state.go) | Inside `Runtime.State` | Same as Runtime | A `map[string]string` scratchpad keyed by step key. Reseeded on every hydrate. The communication channel between agents. |
 
 The split that matters: **`Persisted` is for storage, `Runtime` is for work**. `Hydrate` is the bridge. Anything you can recompute from `Persisted` does *not* belong on `Persisted`.
@@ -191,20 +191,16 @@ Handler → [`Service.NextTurn`](backend/internal/debate/service.go).
 
 1. **Load.** `repo.Get(debateID)` returns a `*Persisted`.
 2. **Bounds check.** If `Current >= TotalSteps(NumRounds)`, return a validation error.
-3. **Identify the next step cheaply.** Resolve debater data and call `BuildStepMeta(...)[Current]` to get the step key without constructing agents.
-4. **Branch on whether the step is human.**
-   - **Human step:** if `humanInput` is empty, return `awaiting_human: true` without advancing. Otherwise write `StepOutputs[key] = humanInput`, `Current++`, `repo.Update`. Done. **No agent is ever built for human steps.**
-   - **LLM step:** continue below.
-5. **Hydrate.** [`Hydrate(ctx, p, philMap)`](backend/internal/debate/debate.go) builds the full `Runtime`: rebuilds the entire pipeline via `BuildSteps`, seeds `State` with `topic`, every entry from `StepOutputs`, and any pending interjection.
-6. **Run the agent.** `step.Agent.Run(ctx, rt.State, "continue")`. Inside, this:
+3. **Hydrate.** [`Hydrate(ctx, p, philMap)`](backend/internal/debate/debate.go) builds the full `Runtime`: rebuilds the entire pipeline via `BuildSteps`, seeds `State` with `topic`, every entry from `StepOutputs`, and any pending interjection.
+4. **Run the agent.** `step.Agent.Run(ctx, rt.State, "continue")`. Inside, this:
    - Substitutes `{key}` placeholders against `State`.
    - Builds a 2-message request (system + a literal `"continue"` user message).
    - Calls `LLM.Generate`, which returns the full completion text and token usage.
    - Returns `RunResult{Text, Usage}`. Side effect: `state[OutputKey]` is updated.
-7. **Persist the turn.** Write `result.Text` into `p.StepOutputs[step.Key]`, mark any consumed interjection as `ConsumedByKey`, accumulate token totals, increment `Current`, `repo.Update`.
-8. **Build the response.** Map step key to a frontend-facing `Role` (`"a"`, `"b"`, `"moderator"`, `"critic"`, `"judge"`). For `critic_feedback` and `final_verdict`, attempt to extract a JSON object from the text and attach it as `Structured`.
+5. **Persist the turn.** Write `result.Text` into `p.StepOutputs[step.Key]`, mark any consumed interjection as `ConsumedByKey`, accumulate token totals, increment `Current`, `repo.Update`.
+6. **Build the response.** Map step key to a frontend-facing `Role` (`"a"`, `"b"`, `"moderator"`, `"critic"`, `"judge"`). For `critic_feedback` and `final_verdict`, attempt to extract a JSON object from the text and attach it as `Structured`.
 
-The `BuildSteps` rebuild happens on every LLM step. That sounds expensive but isn't: the `LLM` client is cached process-wide by [`agent.Get`](backend/internal/agent/registry.go), so per-request work is just struct allocation and string formatting on instruction templates.
+The `BuildSteps` rebuild happens on every step. That sounds expensive but isn't: the `LLM` client is cached process-wide by [`agent.Get`](backend/internal/agent/registry.go), so per-request work is just struct allocation and string formatting on instruction templates.
 
 ### `POST /debates/{id}/interject` — Stage an audience challenge
 

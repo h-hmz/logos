@@ -10,7 +10,7 @@ import {
 import { enrich } from '../philosopher-meta'
 import { roleForLabel, trimmedLabel } from '../step-role'
 import { AudienceCurtain, CriticCurtain, JudgeCurtain, ModeratorCurtain } from '../components/Curtains'
-import { HumanTurnComposer, InterjectionComposer } from '../components/Composers'
+import { InterjectionComposer } from '../components/Composers'
 import { LiveChrome } from '../components/LiveChrome'
 import { NextBar } from '../components/NextBar'
 import { NoctuaIcon } from '../components/NoctuaIcon'
@@ -69,7 +69,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   const [tutorPanelOpen, setTutorPanelOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const { idx, buffers, turnResults, awaitingHuman, totalIn, totalOut, advance, submitHumanTurn } =
+  const { idx, buffers, turnResults, totalIn, totalOut, advance } =
     useDebatePlayback(debate, initialTurns, onTurnCompleted, auto)
 
   useEffect(() => {
@@ -314,8 +314,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         <div ref={bottomRef} />
       </section>
 
-      {awaitingHuman && <HumanTurnComposer onSubmit={submitHumanTurn} />}
-
       {composerOpen && (
         <InterjectionComposer
           onSubmit={submitInterjection}
@@ -378,7 +376,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         auto={auto}
         setAuto={setAuto}
         onAdvance={advance}
-        awaitingHuman={awaitingHuman}
         streaming={!!buffers[idx]?.streaming && !buffers[idx]?.done}
         canInterject={
           idx > 0 &&

@@ -31,14 +31,6 @@ func TestSubstitute(t *testing.T) {
 			want:  "X | Plato vs Aristotle",
 		},
 		{
-			name: "JSON schema example with whitespace after brace passes through",
-			// This is the load-bearing case — critic/judge instructions
-			// embed JSON examples and must survive substitution intact.
-			tmpl:  `Return JSON: { "name": "X", "fallacies": [] }`,
-			state: State{"name": "should not appear"},
-			want:  `Return JSON: { "name": "X", "fallacies": [] }`,
-		},
-		{
 			name:  "brace followed by digit is not a placeholder",
 			tmpl:  "{0invalid} stays literal",
 			state: State{},

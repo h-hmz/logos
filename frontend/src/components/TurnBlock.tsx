@@ -80,8 +80,7 @@ export function TurnBlock({
             {audioText &&
               debateId &&
               stepKey &&
-              coordinator &&
-              who.name !== 'The Challenger' && (
+              coordinator && (
                 <PlayButton
                   debateId={debateId}
                   stepKey={stepKey}

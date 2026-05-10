@@ -10,7 +10,6 @@ interface NextBarProps {
   auto: boolean
   setAuto: (v: boolean) => void
   onAdvance: () => void
-  awaitingHuman: boolean
   streaming: boolean
   canInterject: boolean
   onInterject: () => void
@@ -24,7 +23,6 @@ export function NextBar({
   auto,
   setAuto,
   onAdvance,
-  awaitingHuman,
   streaming,
   canInterject,
   onInterject,
@@ -33,9 +31,6 @@ export function NextBar({
   const atEnd = idx >= total
   const step = debate.steps[Math.min(idx, total - 1)]
   const role = step ? roleForLabel(step.label, a.name, b.name) : null
-  const isHumanTurn =
-    (role === 'a' && a.name === 'The Challenger') ||
-    (role === 'b' && b.name === 'The Challenger')
   const labelText = !step
     ? 'The bout is over'
     : role === 'moderator'
@@ -44,19 +39,11 @@ export function NextBar({
         ? 'The critic speaks next'
         : role === 'judge'
           ? 'The judge renders a verdict'
-          : isHumanTurn
-            ? `Your turn — ${trimmedLabel(step.label, a.name, b.name)}`
-            : role === 'a'
-              ? `${a.name} — ${trimmedLabel(step.label, a.name, b.name)}`
-              : `${b.name} — ${trimmedLabel(step.label, a.name, b.name)}`
+          : role === 'a'
+            ? `${a.name} — ${trimmedLabel(step.label, a.name, b.name)}`
+            : `${b.name} — ${trimmedLabel(step.label, a.name, b.name)}`
 
-  const nextLabel = streaming
-    ? 'Streaming…'
-    : awaitingHuman
-      ? 'Write your argument ↓'
-      : isHumanTurn
-        ? 'Your turn →'
-        : 'Next →'
+  const nextLabel = streaming ? 'Streaming…' : 'Next →'
 
   return (
     <div className="next-bar">
@@ -89,7 +76,7 @@ export function NextBar({
             type="button"
             className="btn accent small"
             onClick={onAdvance}
-            disabled={atEnd || streaming || awaitingHuman}
+            disabled={atEnd || streaming}
           >
             {nextLabel}
           </button>

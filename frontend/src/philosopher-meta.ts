@@ -42,7 +42,6 @@ const META: Record<string, PhilosopherMeta> = {
   'Simone de Beauvoir': { era: 'Modern',       dates: '1908',    hatch: 'h-diag',  oneliner: 'One is not born, but becomes, a woman.' },
   'Frantz Fanon':       { era: 'Contemporary', dates: '1925',    hatch: 'h-diag',  oneliner: 'The colonised man liberates himself by any means necessary.' },
   'Friedrich Hayek':    { era: 'Contemporary', dates: '1899',    hatch: 'h-dots',  oneliner: 'The curious task of economics is to demonstrate how little we know of what we imagine we can design.' },
-  'The Challenger':     { era: 'Contemporary', dates: 'Present', hatch: 'h-cross', oneliner: 'The floor is yours.' },
 }
 
 function hashCode(s: string): number {

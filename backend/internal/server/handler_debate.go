@@ -150,26 +150,17 @@ type turnResult struct {
 	StepIndex         int    `json:"step_index"`
 	TotalSteps        int    `json:"total_steps"`
 	Done              bool   `json:"done"`
-	AwaitingHuman     bool   `json:"awaiting_human,omitempty"`
 	TurnInputTokens   int    `json:"turn_input_tokens"`
 	TurnOutputTokens  int    `json:"turn_output_tokens"`
 	TotalInputTokens  int    `json:"total_input_tokens"`
 	TotalOutputTokens int    `json:"total_output_tokens"`
 }
 
-type nextTurnRequest struct {
-	HumanInput string `json:"human_input,omitempty"`
-}
-
 func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
 	defer r.Body.Close()
 
-	// Parse optional body — empty body is valid for non-human steps.
-	var req nextTurnRequest
-	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck
-
-	res, err := s.svc.NextTurn(r.Context(), debateID, req.HumanInput)
+	res, err := s.svc.NextTurn(r.Context(), debateID)
 	if err != nil {
 		writeServiceError(r.Context(), w, err)
 		return
@@ -185,7 +176,6 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 		StepIndex:         res.StepIndex,
 		TotalSteps:        res.TotalSteps,
 		Done:              res.Done,
-		AwaitingHuman:     res.AwaitingHuman,
 		TurnInputTokens:   res.TurnInputTokens,
 		TurnOutputTokens:  res.TurnOutputTokens,
 		TotalInputTokens:  res.TotalInputTokens,

@@ -21,11 +21,9 @@ export interface DebatePlayback {
   idx: number
   buffers: Record<number, TurnBuffer>
   turnResults: Record<number, TurnResult>
-  awaitingHuman: boolean
   totalIn: number
   totalOut: number
   advance: () => Promise<void>
-  submitHumanTurn: (input: string) => Promise<void>
 }
 
 export function useDebatePlayback(
@@ -61,8 +59,6 @@ export function useDebatePlayback(
     return b
   })
   const [turnResults, setTurnResults] = useState<Record<number, TurnResult>>(initialTurns)
-  const [awaitingHuman, setAwaitingHuman] = useState(false)
-  const [autoAdvanceOnce, setAutoAdvanceOnce] = useState(false)
   const [totalIn, setTotalIn] = useState(() => {
     let max = 0
     for (const t of Object.values(initialTurns)) max = Math.max(max, t.total_input_tokens ?? 0)
@@ -100,14 +96,6 @@ export function useDebatePlayback(
           return { ...prev, [stepIndex]: { ...cur, text: cur.text + chunk } }
         })
       })
-      if (result.awaiting_human) {
-        setBuffers((prev) => ({
-          ...prev,
-          [stepIndex]: { text: '', done: false, tokens: 0, streaming: false },
-        }))
-        setAwaitingHuman(true)
-        return
-      }
       setBuffers((prev) => ({
         ...prev,
         [stepIndex]: {
@@ -140,43 +128,8 @@ export function useDebatePlayback(
     }
   }, [idx, debate.id, debate.total_steps, onTurnCompleted])
 
-  const submitHumanTurn = useCallback(
-    async (input: string) => {
-      if (inFlight.current) return
-      const stepIndex = idx
-      inFlight.current = true
-      setAwaitingHuman(false)
-      setBuffers((prev) => ({
-        ...prev,
-        [stepIndex]: { text: '', done: false, tokens: 0, streaming: true },
-      }))
-      try {
-        const result = await streamTurn(debate.id, () => {}, input)
-        setBuffers((prev) => ({
-          ...prev,
-          [stepIndex]: { text: result.content, done: true, tokens: 0, streaming: false },
-        }))
-        setTurnResults((prev) => ({ ...prev, [stepIndex]: result }))
-        onTurnCompleted(stepIndex, result)
-        setIdx(stepIndex + 1)
-        setAutoAdvanceOnce(true)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'submission failed'
-        setBuffers((prev) => ({
-          ...prev,
-          [stepIndex]: { text: '', done: false, tokens: 0, streaming: false, error: msg },
-        }))
-        setAwaitingHuman(true)
-      } finally {
-        inFlight.current = false
-      }
-    },
-    [idx, debate.id, onTurnCompleted],
-  )
-
   useEffect(() => {
     if (!auto) return
-    if (awaitingHuman) return
     if (idx === 0) return
     const prevStep = idx - 1
     const buf = buffers[prevStep]
@@ -188,13 +141,7 @@ export function useDebatePlayback(
       advance()
     }, AUTO_ADVANCE_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [idx, auto, awaitingHuman, buffers, advance, debate.total_steps])
+  }, [idx, auto, buffers, advance, debate.total_steps])
 
-  useEffect(() => {
-    if (!autoAdvanceOnce) return
-    setAutoAdvanceOnce(false)
-    advance()
-  }, [autoAdvanceOnce, advance])
-
-  return { idx, buffers, turnResults, awaitingHuman, totalIn, totalOut, advance, submitHumanTurn }
+  return { idx, buffers, turnResults, totalIn, totalOut, advance }
 }

@@ -13,9 +13,8 @@ type State map[string]string
 
 // placeholderRe matches {identifier} where identifier starts with a
 // letter or underscore. The opening brace must be immediately followed
-// by the identifier (no whitespace), so literal JSON braces in the
-// critic/judge instructions — which always have whitespace after `{` —
-// pass through untouched.
+// by an identifier character — anything else (whitespace, digit,
+// punctuation) leaves the brace as a literal.
 var placeholderRe = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
 
 // substitute replaces every {key} placeholder in tmpl with state[key].
