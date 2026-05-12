@@ -11,8 +11,6 @@ interface NextBarProps {
   setAuto: (v: boolean) => void
   onAdvance: () => void
   streaming: boolean
-  canInterject: boolean
-  onInterject: () => void
 }
 
 export function NextBar({
@@ -24,8 +22,6 @@ export function NextBar({
   setAuto,
   onAdvance,
   streaming,
-  canInterject,
-  onInterject,
 }: NextBarProps) {
   const total = debate.total_steps
   const atEnd = idx >= total
@@ -63,15 +59,6 @@ export function NextBar({
             />
             Auto-advance
           </label>
-          <button
-            type="button"
-            className="btn ghost small"
-            onClick={onInterject}
-            disabled={!canInterject}
-            title="Raise a question or counter-argument"
-          >
-            ⚡ Interject
-          </button>
           <button
             type="button"
             className="btn accent small"

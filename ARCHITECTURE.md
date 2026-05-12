@@ -6,7 +6,7 @@ A guide to understand the building blocks that make this codebase. For setup, en
 
 ## Bird's-eye view
 
-Logos is a turn-based philosophy debate engine. Two AI philosophers argue a topic across configurable rounds, a critic reviews their reasoning, each philosopher responds to the critic, and a judge issues a structured verdict. The user watches the bout and can interject as audience between turns.
+Logos is a turn-based philosophy debate engine. Two AI philosophers argue a topic across configurable rounds, a critic reviews their reasoning, each philosopher responds to the critic, and a judge issues a structured verdict.
 
 The whole backend is one HTTP service in Go. **Each request advances the debate by exactly one step.** There is no in-memory session — every request loads the full debate from storage, runs one step, and writes it back. That single property drives almost every other shape in the code.
 
@@ -65,7 +65,7 @@ The mental model fits in **four nouns** and **two verbs**.
 
 | Type | Lives in | Lifetime | Purpose |
 |---|---|---|---|
-| [`debate.Persisted`](backend/internal/debate/debate.go) | Firestore (or `MemoryRepo`) | Forever, until the debate is deleted | The dumb snapshot. JSON/Firestore-shaped. Topic, debater names, `StepOutputs`, `Interjections`, `Current`, `Version`. Knows nothing about agents or LLMs. |
+| [`debate.Persisted`](backend/internal/debate/debate.go) | Firestore (or `MemoryRepo`) | Forever, until the debate is deleted | The dumb snapshot. JSON/Firestore-shaped. Topic, debater names, `StepOutputs`, `Current`, `Version`. Knows nothing about agents or LLMs. |
 | [`debate.Runtime`](backend/internal/debate/debate.go) | One request | Built by `Hydrate`, discarded when the handler returns | The working copy. Embeds `*Persisted` and adds the unserializable bits: resolved philosopher data, the `[]Step` agent pipeline, the `agent.State` scratchpad. |
 | [`debate.Step`](backend/internal/debate/debate.go) | Inside `Runtime.Steps` | Same as Runtime | One stage of the pipeline. Holds the constructed `*agent.Agent` to run. The companion `StepMeta` is the same shape minus the agent — used wherever you need the *shape* of the pipeline cheaply, without paying to build agents. |
 | [`agent.State`](backend/internal/agent/state.go) | Inside `Runtime.State` | Same as Runtime | A `map[string]string` scratchpad keyed by step key. Reseeded on every hydrate. The communication channel between agents. |
@@ -81,7 +81,6 @@ Visually, the three layers and what flows between them:
 │  Topic, DebaterAName, DebaterBName, NumRounds, ModelID, MaxWords     │
 │  Current           int       (index of the next step to run)         │
 │  StepOutputs       map[stepKey] → text                               │
-│  Interjections     [ {Text, BeforeStepIndex, ConsumedByKey} ]        │
 │  Version           int64     (OCC counter, bumped on every Update)   │
 │  TotalInputTokens, TotalOutputTokens                                 │
 └──────────────────────────────────────────────────────────────────────┘
@@ -97,13 +96,12 @@ Visually, the three layers and what flows between them:
 └──────────────────────────────────────────────────────────────────────┘
          │   Hydrate seeds State                ▲
          │   from Topic + StepOutputs           │   Agent.Run reads & writes
-         ▼   + Interjections                    │
+         ▼                                      │
 ┌──────────────────────────────────────────────────────────────────────┐
 │  agent.State      map[string]string, the per-request scratchpad      │
 ├──────────────────────────────────────────────────────────────────────┤
 │  "topic"                       ← Persisted.Topic                     │
 │  "<step_key_for_each_done>"    ← Persisted.StepOutputs[<key>]        │
-│  "pending_interjection"        ← formatInterjection(<unconsumed>)    │
 │                                                                      │
 │  Read by:    Agent.Run via Substitute("...{key}...")                 │
 │  Written by: Agent.Run sets State[OutputKey] = result.Text           │
@@ -191,30 +189,16 @@ Handler → [`Service.NextTurn`](backend/internal/debate/service.go).
 
 1. **Load.** `repo.Get(debateID)` returns a `*Persisted`.
 2. **Bounds check.** If `Current >= TotalSteps(NumRounds)`, return a validation error.
-3. **Hydrate.** [`Hydrate(ctx, p, philMap)`](backend/internal/debate/debate.go) builds the full `Runtime`: rebuilds the entire pipeline via `BuildSteps`, seeds `State` with `topic`, every entry from `StepOutputs`, and any pending interjection.
+3. **Hydrate.** [`Hydrate(ctx, p, philMap)`](backend/internal/debate/debate.go) builds the full `Runtime`: rebuilds the entire pipeline via `BuildSteps`, seeds `State` with `topic` and every entry from `StepOutputs`.
 4. **Run the agent.** `step.Agent.Run(ctx, rt.State, "continue")`. Inside, this:
    - Substitutes `{key}` placeholders against `State`.
    - Builds a 2-message request (system + a literal `"continue"` user message).
    - Calls `LLM.Generate`, which returns the full completion text and token usage.
    - Returns `RunResult{Text, Usage}`. Side effect: `state[OutputKey]` is updated.
-5. **Persist the turn.** Write `result.Text` into `p.StepOutputs[step.Key]`, mark any consumed interjection as `ConsumedByKey`, accumulate token totals, increment `Current`, `repo.Update`.
+5. **Persist the turn.** Write `result.Text` into `p.StepOutputs[step.Key]`, accumulate token totals, increment `Current`, `repo.Update`.
 6. **Build the response.** Map step key to a frontend-facing `Role` (`"a"`, `"b"`, `"moderator"`, `"critic"`, `"judge"`). For `critic_feedback` and `final_verdict`, attempt to extract a JSON object from the text and attach it as `Structured`.
 
 The `BuildSteps` rebuild happens on every step. That sounds expensive but isn't: the `LLM` client is cached process-wide by [`agent.Get`](backend/internal/agent/registry.go), so per-request work is just struct allocation and string formatting on instruction templates.
-
-### `POST /debates/{id}/interject` — Stage an audience challenge
-
-Handler → [`Service.Interject`](backend/internal/debate/service.go).
-
-1. Validate text (non-empty, ≤800 chars).
-2. **Inside an OCC retry loop (up to 5 attempts):**
-   - `repo.Get(debateID)`.
-   - Validate that `Current` points at a round turn (not moderator/critic/judge), and that no interjection is already pending for the same gap.
-   - Append `Interjection{Text, BeforeStepIndex: p.Current}` to `p.Interjections`.
-   - `repo.Update(p)`. On `ErrVersionConflict`, retry; on other errors, fail.
-3. The interjection is now waiting. On the next `/next`, [`Hydrate`](backend/internal/debate/debate.go) finds the unconsumed entry whose `BeforeStepIndex == p.Current`, runs it through `formatInterjection` to wrap it in a markdown block, and seeds it into `state[philosopher.InterjectionStateKey]` (a.k.a. `"pending_interjection"`). The next philosopher's prompt template contains `{pending_interjection}` and picks it up. After the turn runs, `NextTurn` marks the interjection as consumed.
-
-Note that `Persisted.Interjections[]` is the single source of truth — the formatted text is derived at hydrate time, not stored.
 
 ### `POST /debates/{id}/tutor` — Side channel
 
@@ -234,7 +218,7 @@ The tutor is **not** a pipeline step. It does not advance `Current`, does not wr
 
 ### Optimistic concurrency control
 
-`Persisted.Version` is incremented on every successful `repo.Update`. The Firestore implementation reads the current version inside a transaction and rejects on drift. `Service.Interject` retries on conflict; `Service.NextTurn` does not (a stale `/next` is the user's problem to retry). Conflicts surface as `ErrVersionConflict` → HTTP 409. See [ADR 0004](adr/0004-concurrency-repo-occ.md).
+`Persisted.Version` is incremented on every successful `repo.Update`. The Firestore implementation reads the current version inside a transaction and rejects on drift. `Service.NextTurn` does not retry on conflict (a stale `/next` is the user's problem to retry). Conflicts surface as `ErrVersionConflict` → HTTP 409. See [ADR 0004](adr/0004-concurrency-repo-occ.md).
 
 ### LLM registry
 

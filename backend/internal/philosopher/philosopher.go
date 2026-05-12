@@ -69,21 +69,15 @@ func LoadAllPhilosophers(dir string) ([]Data, error) {
 
 // MakePhilosopherOpts holds the parameters for creating a philosopher agent.
 type MakePhilosopherOpts struct {
-	Data                Data
-	AgentName           string
-	OutputKey           string
-	Situation           string
-	OpponentArgKey      string // state key of opponent's last argument (empty if none)
-	CriticKey           string // state key of critic feedback (empty if none)
-	ModelID             string
-	MaxWords            int
-	IncludeInterjection bool // if true, prompt reads {pending_interjection} from session state
+	Data           Data
+	AgentName      string
+	OutputKey      string
+	Situation      string
+	OpponentArgKey string // state key of opponent's last argument (empty if none)
+	CriticKey      string // state key of critic feedback (empty if none)
+	ModelID        string
+	MaxWords       int
 }
-
-// InterjectionStateKey is the session-state key read by philosopher turns that
-// opted into IncludeInterjection. The server writes a pre-formatted block here
-// when the user interjects, then clears it after the next turn consumes it.
-const InterjectionStateKey = "pending_interjection"
 
 const philosopherTemplate = `You are **{{.Name}}**, a philosopher representing **{{.School}}**.
 
@@ -141,9 +135,6 @@ func MakePhilosopher(ctx context.Context, opts MakePhilosopherOpts) (*agent.Agen
 	}
 	if opts.CriticKey != "" {
 		contextParts = append(contextParts, fmt.Sprintf("## Critic Feedback\n{%s}", opts.CriticKey))
-	}
-	if opts.IncludeInterjection {
-		contextParts = append(contextParts, fmt.Sprintf("{%s}", InterjectionStateKey))
 	}
 	contextBlock := strings.Join(contextParts, "\n\n")
 

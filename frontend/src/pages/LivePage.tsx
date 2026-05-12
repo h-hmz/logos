@@ -1,16 +1,13 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  interject,
   type CriticFinding,
   type DebateSession,
-  type Interjection,
   type JudgeVerdict,
   type TurnResult,
 } from '../api'
 import { enrich } from '../philosopher-meta'
 import { roleForLabel, trimmedLabel } from '../step-role'
-import { AudienceCurtain, CriticCurtain, JudgeCurtain, ModeratorCurtain } from '../components/Curtains'
-import { InterjectionComposer } from '../components/Composers'
+import { CriticCurtain, JudgeCurtain, ModeratorCurtain } from '../components/Curtains'
 import { LiveChrome } from '../components/LiveChrome'
 import { NextBar } from '../components/NextBar'
 import { NoctuaIcon } from '../components/NoctuaIcon'
@@ -27,15 +24,6 @@ interface Props {
   onTurnCompleted: (stepIndex: number, turn: TurnResult) => void
 }
 
-const INTERJECTIONS_KEY = (id: string) => `logos_interjections_${id}`
-
-// An upcoming step accepts an interjection iff it's a philosopher round turn.
-// Round step keys look like "{name}_r{n}"; critic responses end in "_critic_response".
-const roundKeyRe = /_r\d+$/
-function stepAcceptsInterjection(stepKey: string): boolean {
-  return roundKeyRe.test(stepKey) && !stepKey.endsWith('_critic_response')
-}
-
 export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Props) {
   const coordinatorRef = useRef(makeAudioCoordinator())
   const a = useMemo(() => enrich(debate.debater_a), [debate.debater_a])
@@ -44,19 +32,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   const nameB = b.name
 
   const [auto, setAuto] = useState(false)
-  const [interjections, setInterjections] = useState<Record<number, Interjection>>(() => {
-    try {
-      const raw = localStorage.getItem(INTERJECTIONS_KEY(debate.id))
-      if (!raw) return {}
-      const parsed = JSON.parse(raw) as Interjection[]
-      const map: Record<number, Interjection> = {}
-      for (const it of parsed) map[it.before_step_index] = it
-      return map
-    } catch {
-      return {}
-    }
-  })
-  const [composerOpen, setComposerOpen] = useState(false)
   const [selPopover, setSelPopover] = useState<{
     x: number
     y: number
@@ -71,28 +46,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
 
   const { idx, buffers, turnResults, totalIn, totalOut, advance } =
     useDebatePlayback(debate, initialTurns, onTurnCompleted, auto)
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        INTERJECTIONS_KEY(debate.id),
-        JSON.stringify(Object.values(interjections)),
-      )
-    } catch (e) {
-      console.warn('[logos] Failed to persist interjections:', e)
-    }
-  }, [interjections, debate.id])
-
-  const submitInterjection = useCallback(
-    async (text: string) => {
-      const stepIndex = idx
-      const result = await interject(debate.id, text)
-      setInterjections((prev) => ({ ...prev, [stepIndex]: result }))
-      setAuto(false)
-      setComposerOpen(false)
-    },
-    [idx, debate.id],
-  )
 
   const activeStep = debate.steps[idx]
   const activeRole = activeStep ? roleForLabel(activeStep.label, nameA, nameB) : null
@@ -225,10 +178,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
           const buf = buffers[i]
           const role = roleForLabel(step.label, nameA, nameB)
           const key = `step-${i}`
-          const interjection = interjections[i]
-          const audience = interjection ? (
-            <AudienceCurtain key={`interj-${i}`} text={interjection.text} />
-          ) : null
           let body: JSX.Element
           if (role === 'moderator') {
             body = (
@@ -286,16 +235,10 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
           }
           return (
             <Fragment key={key}>
-              {audience}
               {body}
             </Fragment>
           )
         })}
-
-        {/* Pending interjection not yet followed by a step (upcoming step hasn't started). */}
-        {interjections[idx] && !buffers[idx] && (
-          <AudienceCurtain text={interjections[idx].text} />
-        )}
 
         {idx >= debate.total_steps && (
           <div
@@ -313,13 +256,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         )}
         <div ref={bottomRef} />
       </section>
-
-      {composerOpen && (
-        <InterjectionComposer
-          onSubmit={submitInterjection}
-          onCancel={() => setComposerOpen(false)}
-        />
-      )}
 
       {selPopover && (
         <button
@@ -377,15 +313,6 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         setAuto={setAuto}
         onAdvance={advance}
         streaming={!!buffers[idx]?.streaming && !buffers[idx]?.done}
-        canInterject={
-          idx > 0 &&
-          idx < debate.total_steps &&
-          !buffers[idx]?.streaming &&
-          !interjections[idx] &&
-          !composerOpen &&
-          stepAcceptsInterjection(debate.steps[idx]?.key ?? '')
-        }
-        onInterject={() => setComposerOpen(true)}
       />
     </main>
   )

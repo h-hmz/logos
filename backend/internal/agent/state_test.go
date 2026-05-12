@@ -38,8 +38,8 @@ func TestSubstitute(t *testing.T) {
 		},
 		{
 			name:  "empty-string value substitutes (key present, value empty)",
-			tmpl:  "before\n{pending_interjection}\nafter",
-			state: State{"pending_interjection": ""},
+			tmpl:  "before\n{optional_slot}\nafter",
+			state: State{"optional_slot": ""},
 			want:  "before\n\nafter",
 		},
 	}

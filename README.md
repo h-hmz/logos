@@ -1,6 +1,6 @@
 # Logos — Multi-Agent Philosophical Debate
 
-A structured debate system in Go. Two philosophers debate a topic head-to-head across configurable rounds. A critic intervenes with a logical analysis, each philosopher responds, and a judge delivers a structured verdict. Audience members can interject mid-match.
+A structured debate system in Go. Two philosophers debate a topic head-to-head across configurable rounds. A critic intervenes with a logical analysis, each philosopher responds, and a judge delivers a structured verdict.
 
 LLM and TTS calls go through any OpenAI-compatible endpoint — OpenRouter by default for its prepaid hard spend cap (see [ADR 0007](adr/0007-llm-tts-via-openrouter-for-spend-caps.md)). The agent layer is in-house (see [ADR 0008](adr/0008-in-house-agent-layer-replacing-adk.md)) — no framework dependency.
 
@@ -30,7 +30,7 @@ backend/
     │                judge.go            # MakeJudge() factory
     ├── tutor/       tutor.go            # tutor agent factory (used by /tutor handler)
     ├── debate/      debate.go           # Step, Persisted, Runtime, BuildSteps(), Hydrate()
-    │                service.go          # CreateDebate, NextTurn, Interject, TutorExplain
+    │                service.go          # CreateDebate, NextTurn, TutorExplain
     │                repository.go       # Repository interface + sentinel errors
     │                memory_repo.go      # in-process Repository
     │                firestore_repo.go   # Firestore-backed Repository
@@ -39,7 +39,7 @@ backend/
     │                voices.go           # voice/style resolution per step
     ├── gibberish/   gibberish.go        # local-gibberish mock LLM (no network)
     └── server/      routes.go           # Chi router + auth middleware + JSON helpers
-                     handler_debate.go   # /debates, /next, /interject
+                     handler_debate.go   # /debates, /next
                      handler_tutor.go    # /tutor
                      handler_tts.go      # /tts (audio streaming)
                      handler_philosophers.go
@@ -83,7 +83,7 @@ Total steps = `2N + 5` (1 moderator + 2N rounds + 1 critic + 2 critic responses 
 The runtime is **stateless across requests**. Each `/debates/{id}/next` call:
 
 1. Loads the `Persisted` snapshot from the repository (Firestore in prod, in-memory in dev / tests).
-2. Calls `debate.Hydrate` to rebuild a `Runtime`: resolves debater data from the catalog, constructs the pipeline agents for the current model, and seeds an [`agent.State`](backend/internal/agent/state.go) map with `topic`, all prior `StepOutputs`, and any `PendingInterjection`.
+2. Calls `debate.Hydrate` to rebuild a `Runtime`: resolves debater data from the catalog, constructs the pipeline agents for the current model, and seeds an [`agent.State`](backend/internal/agent/state.go) map with `topic` and all prior `StepOutputs`.
 3. Runs the next step's `Agent.Run` against that state. The agent resolves `{key}` placeholders in its instruction via `agent.Substitute`, calls the LLM, and writes its output back to `state[OutputKey]`.
 4. Persists the new step output and advances `Current` via an optimistic-locked `repo.Update`.
 
@@ -93,7 +93,6 @@ The runtime is **stateless across requests**. Each `/debates/{id}/next` call:
 | `{name_key}_r{n}` | philosopher turn (e.g. `karl_marx_r2`) | next philosopher, critic, judge |
 | `critic_feedback` | Critic | both critic-response turns, judge |
 | `{name_key}_critic_response` | philosopher critic-response turn | judge |
-| `pending_interjection` | `/interject` handler | next philosopher round turn |
 | `final_verdict` | Judge | (terminal) |
 
 A per-debate optimistic version on `Persisted.Version` serializes concurrent writes; conflicting updates surface as HTTP 409.
@@ -125,7 +124,6 @@ The factory also injects:
 - `{topic}` from session state
 - `{opponent_arg_key}` — the opponent's previous turn (if any)
 - `{critic_key}` — the critic's feedback (for post-critic turns)
-- `{pending_interjection}` — formatted audience challenge (round turns only)
 - A shared rules block with the configured word limit (`maxWords`)
 - An "Expressive Delivery" block describing inline `[bracketed]` TTS cues
 
@@ -273,15 +271,6 @@ JSON response:
 SSE response (when `Accept: text/event-stream`): streams `event: token` chunks during generation, then closes with `event: done` carrying the same JSON payload. Errors emerge as `event: error`.
 
 Token counts are tracked cumulatively on the debate record and returned on every response.
-
-### `POST /debates/{id}/interject`
-Stages an audience challenge to be delivered before the next debater turn. Only allowed before round turns (not before moderator, critic, critic-responses, or judge), and only one pending interjection per gap.
-
-```json
-{"text": "But what about technological unemployment?"}
-```
-
-The text is wrapped into a session-state block read by the next round turn via `{pending_interjection}`, then cleared on consumption.
 
 ### `POST /debates/{id}/tutor`
 Asks a tutor agent to explain a passage from a previous turn. Supports SSE streaming on the same `Accept` header rule.

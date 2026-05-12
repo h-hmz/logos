@@ -26,19 +26,10 @@ type StepMeta struct {
 	Label string
 }
 
-// Interjection is a user-authored challenge injected between two pipeline steps.
-// It does not advance Current; it is consumed by the step at BeforeStepIndex.
-type Interjection struct {
-	Text            string `json:"text"                      firestore:"text"`
-	BeforeStepIndex int    `json:"before_step_index"         firestore:"before_step_index"`
-	ConsumedByKey   string `json:"consumed_by_key,omitempty" firestore:"consumed_by_key,omitempty"`
-}
-
 // Persisted is the JSON-serializable state of a debate. It stores debater
 // names (not full philosopher.Data) so the catalog can evolve independently.
 // StepOutputs holds completed step content keyed by step key; used to seed a
-// fresh session on each subsequent request. The pending interjection (if any)
-// is derived at hydrate time from the unconsumed entry in Interjections[].
+// fresh session on each subsequent request.
 type Persisted struct {
 	ID                string            `json:"id"                          firestore:"id"`
 	Topic             string            `json:"topic"                       firestore:"topic"`
@@ -50,7 +41,6 @@ type Persisted struct {
 	Current           int               `json:"current"                     firestore:"current"`
 	TotalInputTokens  int               `json:"total_input_tokens"          firestore:"total_input_tokens"`
 	TotalOutputTokens int               `json:"total_output_tokens"         firestore:"total_output_tokens"`
-	Interjections     []Interjection    `json:"interjections,omitempty"     firestore:"interjections,omitempty"`
 	StepOutputs       map[string]string `json:"step_outputs,omitempty"      firestore:"step_outputs,omitempty"`
 	Version           int64             `json:"version"                     firestore:"version"`
 }
@@ -58,9 +48,6 @@ type Persisted struct {
 // Clone returns a deep copy safe to mutate without affecting the original.
 func (p *Persisted) Clone() *Persisted {
 	cp := *p
-	if p.Interjections != nil {
-		cp.Interjections = append([]Interjection(nil), p.Interjections...)
-	}
 	if p.StepOutputs != nil {
 		cp.StepOutputs = make(map[string]string, len(p.StepOutputs))
 		maps.Copy(cp.StepOutputs, p.StepOutputs)
@@ -114,7 +101,7 @@ func BuildStepMeta(a, b philosopher.Data, numRounds int) []StepMeta {
 
 // Hydrate rebuilds a Runtime from a Persisted snapshot: resolves debater data
 // via the catalog map, constructs the pipeline agents, and seeds a fresh
-// agent.State map with prior step outputs and any pending interjection.
+// agent.State map with prior step outputs.
 // The returned Runtime shares the input *Persisted — handler mutations flow
 // back through repo.Update.
 func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.Data) (*Runtime, error) {
@@ -131,7 +118,6 @@ func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.D
 
 	state := agent.State{"topic": p.Topic}
 	maps.Copy(state, p.StepOutputs)
-	state[philosopher.InterjectionStateKey] = formatInterjection(pendingInterjectionText(p))
 
 	return &Runtime{
 		Persisted: p,
@@ -140,18 +126,6 @@ func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.D
 		Steps:     steps,
 		State:     state,
 	}, nil
-}
-
-// pendingInterjectionText returns the raw text of the unconsumed Interjection
-// for the upcoming step, or "" if none. The single source of truth for
-// "is there an interjection pending right now" lives in p.Interjections[].
-func pendingInterjectionText(p *Persisted) string {
-	for _, it := range p.Interjections {
-		if it.BeforeStepIndex == p.Current && it.ConsumedByKey == "" {
-			return it.Text
-		}
-	}
-	return ""
 }
 
 var (
@@ -180,14 +154,13 @@ func BuildSteps(ctx context.Context, a, b philosopher.Data, numRounds int, model
 
 		aKey := fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r)
 		agentA, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-			Data:                a,
-			AgentName:           aKey,
-			OutputKey:           aKey,
-			Situation:           roundSituation(r),
-			OpponentArgKey:      bPrevKey,
-			ModelID:             modelID,
-			MaxWords:            maxWords,
-			IncludeInterjection: true,
+			Data:           a,
+			AgentName:      aKey,
+			OutputKey:      aKey,
+			Situation:      roundSituation(r),
+			OpponentArgKey: bPrevKey,
+			ModelID:        modelID,
+			MaxWords:       maxWords,
 		})
 		if err != nil {
 			return nil, err
@@ -196,14 +169,13 @@ func BuildSteps(ctx context.Context, a, b philosopher.Data, numRounds int, model
 
 		bKey := fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r)
 		agentB, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-			Data:                b,
-			AgentName:           bKey,
-			OutputKey:           bKey,
-			Situation:           fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
-			OpponentArgKey:      aKey,
-			ModelID:             modelID,
-			MaxWords:            maxWords,
-			IncludeInterjection: true,
+			Data:           b,
+			AgentName:      bKey,
+			OutputKey:      bKey,
+			Situation:      fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
+			OpponentArgKey: aKey,
+			ModelID:        modelID,
+			MaxWords:       maxWords,
 		})
 		if err != nil {
 			return nil, err

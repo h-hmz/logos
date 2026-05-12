@@ -22,7 +22,7 @@ Two problems with keeping the in-instance lock:
   one instance. With repo-level OCC in place, that serialization is
   unnecessary.
 
-We also need a concrete policy for `ErrVersionConflict` per endpoint.
+We also need a concrete policy for `ErrVersionConflict` on `/next`.
 
 ## Decision
 
@@ -31,18 +31,11 @@ carried by `repo.Update`'s version check — implemented identically in
 `MemoryRepo` (local dev, `sync.Mutex` around a map) and `FirestoreRepo`
 (transactional read-check-write).
 
-**Per-endpoint conflict policy:**
-
-- `/debates/{id}/next` — on `ErrVersionConflict`, return **409
-  Conflict**. The LLM generation that preceded the failed commit used
-  a stale view of the debate (e.g. missed a concurrent interjection);
-  silently retrying would burn tokens and may produce a turn
-  inconsistent with the new state. The client refetches and decides.
-- `/debates/{id}/interject` — on `ErrVersionConflict`, **retry up to
-  5 times** in-handler. The read-modify-write is pure CPU (validate
-  the gap, append an interjection, format pending text); redoing it
-  against fresh state is cheap and transparent to the client. Only
-  return 409 if every attempt conflicts.
+**Conflict policy on `/debates/{id}/next`:** on `ErrVersionConflict`,
+return **409 Conflict**. The LLM generation that preceded the failed
+commit used a stale view of the debate; silently retrying would burn
+tokens and may produce a turn inconsistent with the new state. The
+client refetches and decides.
 
 ## Consequences
 
@@ -73,7 +66,7 @@ carried by `repo.Update`'s version check — implemented identically in
 
 - [backend/internal/server/server.go](../backend/server/server.go) —
   removed `locksMu`, `locks`, `lockFor`; `nextTurn` returns 409 on
-  `ErrVersionConflict`; `interject` retries up to 5 times.
+  `ErrVersionConflict`.
 - Repository OCC unchanged — already shipped in ADR 0001
   ([debate.go](../backend/internal/debate/debate.go),
   [firestore_repo.go](../backend/internal/debate/firestore_repo.go)).

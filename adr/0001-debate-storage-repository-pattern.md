@@ -33,8 +33,8 @@ on every request from persisted domain state.
 
 - `Persisted` — JSON-serializable snapshot. Stores debater *names* (not
   full `philosopher.Data`), `NumRounds`, `ModelID`, `MaxWords`, `Current`,
-  token counters, `Interjections`, `StepOutputs map[string]string`,
-  `PendingInterjection`, and a `Version` for optimistic concurrency.
+  token counters, `StepOutputs map[string]string`, and a `Version` for
+  optimistic concurrency.
 - `Runtime` — per-request working copy: embeds `*Persisted` plus the
   non-serializable pieces (`Steps []Step`, `SessionService`, `SessionID`,
   resolved `philosopher.Data` for each debater).
@@ -65,8 +65,7 @@ Per request, handlers call `Hydrate` which:
 2. Calls `BuildSteps(...)` to construct pipeline agents (cheap —
    `modelcache` keeps the Gemini client warm within an instance).
 3. Creates a fresh `session.InMemoryService()` and calls `Create` with a
-   state map seeded from `topic`, every entry in `StepOutputs`, and
-   `PendingInterjection`.
+   state map seeded from `topic` and every entry in `StepOutputs`.
 
 The session lives for one request and is discarded afterward.
 
@@ -99,11 +98,10 @@ We chose **(b)**. Rationale:
 > **Superseded by [ADR 0004](0004-concurrency-repo-occ.md).** The
 > in-instance mutex described below has been removed; correctness now
 > relies solely on `Persisted.Version` checked by `repo.Update`, with
-> a per-endpoint conflict policy (409 for `/next`, bounded retry for
-> `/interject`).
+> a 409 conflict response on `/next`.
 
 Within an instance, a `sync.Map` of per-debate mutexes serializes
-concurrent `/next` and `/interject` calls for the same debate. Across
+concurrent `/next` calls for the same debate. Across
 instances, `Persisted.Version` is intended to carry optimistic
 concurrency control (implemented in `MemoryRepo`; Firestore impl will
 do the same via transaction).
@@ -114,10 +112,10 @@ only one user acts on a debate at a time), handlers can retry on
 
 ### 6. `BuildStepMeta` / `TotalSteps`
 
-`createDebate` and `/interject` need the pipeline's step keys and
-labels but **not** the agents. `BuildStepMeta(a, b, numRounds)` derives
-them with pure string formatting. This avoids allocating agents (and
-the associated instruction templates) when only metadata is needed.
+`createDebate` needs the pipeline's step keys and labels but **not**
+the agents. `BuildStepMeta(a, b, numRounds)` derives them with pure
+string formatting. This avoids allocating agents (and the associated
+instruction templates) when only metadata is needed.
 `TotalSteps(n) = 5 + 2n` is the closed-form count.
 
 ## Consequences
@@ -127,10 +125,6 @@ the associated instruction templates) when only metadata is needed.
 - Cloud-Run-safe: no in-memory state required across requests.
 - Storage is pluggable via one interface with two errors worth handling.
 - Per-request overhead on top of the LLM call is sub-millisecond.
-- Removing the long-lived `session.Service` simplifies state: the
-  previous "clear `pending_interjection` key after consumption via
-  `AppendEvent`" pattern collapses into a simple field assignment on
-  `Persisted`.
 - Tests no longer need to fabricate `Step` lists; they build
   `Persisted` records and let `BuildStepMeta` derive step keys.
 

@@ -53,7 +53,7 @@ is installed on a chi `Group` containing only the protected
 routes; public routes sit outside it:
 
 - Public: `/healthz`, `/readyz`, `/philosophers`.
-- Protected: `/debates`, `/debates/{id}/next`, `/debates/{id}/interject`,
+- Protected: `/debates`, `/debates/{id}/next`,
   `/debates/{id}/tts`, `/suggest-topic`.
 
 Health checks must never trigger auth work: probes and bots hammer

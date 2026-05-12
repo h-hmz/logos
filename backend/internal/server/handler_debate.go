@@ -183,30 +183,3 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ── POST /debates/{debateID}/interject ──────────────────────────────────────
-
-type interjectRequest struct {
-	Text string `json:"text"`
-}
-
-type interjectResponse struct {
-	Interjection debate.Interjection `json:"interjection"`
-}
-
-func (s *Server) interject(w http.ResponseWriter, r *http.Request) {
-	debateID := chi.URLParam(r, "debateID")
-
-	defer r.Body.Close()
-	var req interjectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-
-	it, err := s.svc.Interject(r.Context(), debateID, req.Text)
-	if err != nil {
-		writeServiceError(r.Context(), w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, interjectResponse{Interjection: it})
-}

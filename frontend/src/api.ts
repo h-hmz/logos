@@ -69,12 +69,6 @@ export interface TurnResult {
   total_output_tokens: number
 }
 
-export interface Interjection {
-  text: string
-  before_step_index: number
-  consumed_by_key?: string
-}
-
 export interface CreateDebateParams {
   topic: string
   debater_a: string
@@ -130,20 +124,6 @@ export async function createDebate(params: CreateDebateParams): Promise<DebateSe
     throw new Error(err.detail ?? 'Failed to create debate')
   }
   return res.json()
-}
-
-export async function interject(debateId: string, text: string): Promise<Interjection> {
-  const res = await fetch(`/debates/${debateId}/interject`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...await getAuthHeader() },
-    body: JSON.stringify({ text }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(err.detail ?? 'Failed to interject')
-  }
-  const data = await res.json()
-  return data.interjection as Interjection
 }
 
 // streamTTS calls the backend TTS endpoint and yields Float32 PCM chunks as

@@ -3,10 +3,8 @@ package debate
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -14,15 +12,6 @@ import (
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/philosopher"
 )
-
-const (
-	// InterjectionMaxLen bounds the length of a user-authored interjection.
-	InterjectionMaxLen = 800
-	// interjectRetryAttempts caps the OCC retry budget for Interject.
-	interjectRetryAttempts = 5
-)
-
-var roundStepKeyRe = regexp.MustCompile(`_r\d+$`)
 
 // ValidationError signals a bad caller request (malformed/conflicting input).
 // Handlers map it to HTTP 400.
@@ -239,15 +228,6 @@ func (s *Service) NextTurn(ctx context.Context, debateID string) (*TurnResult, e
 	stepIndex := p.Current
 	p.Current++
 
-	// Mark any pending interjection for this gap as consumed by this step.
-	for i := range p.Interjections {
-		it := &p.Interjections[i]
-		if it.BeforeStepIndex == stepIndex && it.ConsumedByKey == "" {
-			it.ConsumedByKey = step.Key
-			break
-		}
-	}
-
 	if err := s.repo.Update(ctx, p); err != nil {
 		return nil, err
 	}
@@ -280,63 +260,6 @@ func (s *Service) NextTurn(ctx context.Context, debateID string) (*TurnResult, e
 	}, nil
 }
 
-// ── Interject ─────────────────────────────────────────────────────────────
-
-// Interject stages a user-authored challenge to be delivered before the next
-// debater turn. Retries on version conflict (read-modify-write is cheap).
-func (s *Service) Interject(ctx context.Context, debateID, text string) (Interjection, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return Interjection{}, validationErr("interjection text is empty")
-	}
-	if len(text) > InterjectionMaxLen {
-		return Interjection{}, validationErr(fmt.Sprintf("interjection exceeds %d characters", InterjectionMaxLen))
-	}
-
-	for range interjectRetryAttempts {
-		p, err := s.repo.Get(ctx, debateID)
-		if err != nil {
-			return Interjection{}, err
-		}
-		a, okA := s.philMap[p.DebaterAName]
-		b, okB := s.philMap[p.DebaterBName]
-		if !okA || !okB {
-			return Interjection{}, fmt.Errorf("interject: unknown philosopher in debate")
-		}
-
-		stepsMeta := BuildStepMeta(a, b, p.NumRounds)
-		if p.Current >= len(stepsMeta) {
-			return Interjection{}, validationErr("Debate is already complete")
-		}
-		if p.Current == 0 {
-			return Interjection{}, validationErr("Cannot interject before the moderator has spoken")
-		}
-		next := stepsMeta[p.Current]
-		role := RoleForStep(next.Key, a, b)
-		if (role != "a" && role != "b") || !roundStepKeyRe.MatchString(next.Key) {
-			return Interjection{}, validationErr("Interjections are only allowed before a round turn")
-		}
-		for _, existing := range p.Interjections {
-			if existing.BeforeStepIndex == p.Current && existing.ConsumedByKey == "" {
-				return Interjection{}, validationErr("An interjection is already pending for this gap")
-			}
-		}
-
-		it := Interjection{
-			Text:            text,
-			BeforeStepIndex: p.Current,
-		}
-		p.Interjections = append(p.Interjections, it)
-
-		if err := s.repo.Update(ctx, p); err == nil {
-			return it, nil
-		} else if !errors.Is(err, ErrVersionConflict) {
-			return Interjection{}, err
-		}
-	}
-	return Interjection{}, ErrVersionConflict
-}
-
 // ── Shared domain helpers ──────────────────────────────────────────────────
 
 // RoleForStep maps a pipeline step key to the frontend-facing role label.
@@ -357,17 +280,4 @@ func RoleForStep(key string, a, b philosopher.Data) string {
 		return "b"
 	}
 	return "moderator"
-}
-
-// formatInterjection wraps user text into the session-state block the next
-// philosopher turn reads via {pending_interjection}. Empty text → empty string.
-func formatInterjection(text string) string {
-	t := strings.TrimSpace(text)
-	if t == "" {
-		return ""
-	}
-	return fmt.Sprintf(
-		"## Audience Challenge\nA member of the audience has raised the following point:\n\n> %s\n\nAddress this challenge directly and specifically before continuing your argument.",
-		strings.ReplaceAll(t, "\n", "\n> "),
-	)
 }

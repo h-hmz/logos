@@ -243,17 +243,3 @@ export function JudgeCurtain({
   )
 }
 
-export function AudienceCurtain({ text }: { text: string }) {
-  return (
-    <div className="curtain audience">
-      <div className="title-row">
-        <div className="role">The Audience</div>
-        <h2>A voice from the crowd.</h2>
-      </div>
-      <div className="body-text" style={{ fontStyle: 'italic' }}>
-        <InlineMd text={text} />
-      </div>
-      <div className="curtain-meta">◆ Interjection</div>
-    </div>
-  )
-}

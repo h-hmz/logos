@@ -8,9 +8,8 @@ Status: Accepted (revised — implementation details refreshed against current c
 
 Each turn in a Logos debate is a separate LLM call, and every call
 needs context from earlier turns: the moderator's topic, what the
-opponent just said, the critic's feedback, and (sometimes) a user
-interjection. There are three common ways to carry that context
-forward:
+opponent just said, and the critic's feedback. There are three
+common ways to carry that context forward:
 
 1. **Rolling message history.** Accumulate a `[user, assistant, ...]`
    array and replay it on every turn. Simple, but every agent sees
@@ -51,25 +50,24 @@ One full turn cycle:
 
 1. **Prompt is authored with named slots.** Every agent's
    `Instruction` is a plain Go-formatted string containing template
-   placeholders like `{topic}`, `{karl_marx_r1}`, `{critic_feedback}`,
-   `{pending_interjection}`. Each placeholder names a key the agent
-   expects to find in the per-request `agent.State` map.
+   placeholders like `{topic}`, `{karl_marx_r1}`, `{critic_feedback}`.
+   Each placeholder names a key the agent expects to find in the
+   per-request `agent.State` map.
    See [philosopher.go](../backend/internal/philosopher/philosopher.go).
 2. **The state map is seeded on every request.** `Hydrate` builds a
-   fresh `agent.State` (a `map[string]string`) containing three
-   groups of entries: the static `{topic}`, every prior entry of
-   `StepOutputs` flattened in as its own key, and the current
-   `{pending_interjection}` (empty string if none). That is the
-   agent's entire universe of context for the turn.
+   fresh `agent.State` (a `map[string]string`) containing the static
+   `{topic}` plus every prior entry of `StepOutputs` flattened in as
+   its own key. That is the agent's entire universe of context for
+   the turn.
    See [debate.go](../backend/internal/debate/debate.go).
 3. **`agent.Run` substitutes before dispatch.** Before calling the
    underlying LLM, `Agent.Run` walks the `Instruction` string,
    replaces each `{identifier}` with the string value at
    `state[identifier]`, and sends the resulting text as the system
    message. Any placeholder whose key is missing causes
-   `substitute` to return an error listing every missing key — which
-   is why we always seed an empty `pending_interjection` even when no
-   user interjection is pending. Implementation:
+   `substitute` to return an error listing every missing key, so
+   prompts can only reference slots the hydration step has seeded.
+   Implementation:
    [internal/agent/state.go](../backend/internal/agent/state.go)
    (package-private `substitute`).
 4. **The output is written back under a declared key.** Every agent
@@ -118,9 +116,9 @@ unseeded slot fails loudly instead of producing a malformed prompt.
   a session create — no vector DB, no embeddings, no eviction
   policy. This matches Cloud Run's scale-to-zero model: any instance
   can serve the next turn given only the persisted snapshot.
-- **The prompt is an allowlist, not a denylist.** A critic cannot
-  accidentally quote a user interjection it wasn't supposed to see,
-  because its `Instruction` simply never references that key.
+- **The prompt is an allowlist, not a denylist.** An agent cannot
+  accidentally pull in context it wasn't supposed to see, because
+  its `Instruction` simply never references that key.
 
 ### Negative
 
@@ -185,5 +183,4 @@ unseeded slot fails loudly instead of producing a malformed prompt.
 - [backend/internal/debate/service.go](../backend/internal/debate/service.go)
   — copies the post-turn output into `StepOutputs` and commits.
 - [backend/internal/philosopher/philosopher.go](../backend/internal/philosopher/philosopher.go)
-  — `Make` assembles the `{opponent}` / `{critic}` /
-  `{pending_interjection}` slot set per turn.
+  — `Make` assembles the `{opponent}` / `{critic}` slot set per turn.
