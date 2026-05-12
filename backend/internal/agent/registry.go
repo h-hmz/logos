@@ -17,6 +17,7 @@ func getLLM(_ context.Context, modelID string) (llm, error) {
 	if err != nil {
 		return nil, err
 	}
-	actual, _ := llmCache.LoadOrStore(modelID, llm(m))
+	wrapped := llm(&instrumentedLLM{inner: m})
+	actual, _ := llmCache.LoadOrStore(modelID, wrapped)
 	return actual.(llm), nil
 }

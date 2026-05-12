@@ -9,6 +9,7 @@ backend/agents/.adk/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/.yarn/
 
 # Go
 backend/logos.exe

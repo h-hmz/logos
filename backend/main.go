@@ -27,9 +27,10 @@ func main() {
 	}
 }
 
-// contextHandler injects the request_id carried on ctx into every record, so
-// callers can keep using the package-level slog.*Context helpers instead of
-// threading a scoped logger through every layer.
+// contextHandler injects per-request fields carried on ctx (request_id, uid,
+// trace_id, session_id) into every record so callers can keep using the
+// package-level slog.*Context helpers instead of threading a scoped logger
+// through every layer.
 type contextHandler struct{ slog.Handler }
 
 func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
@@ -38,6 +39,22 @@ func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
 	}
 	if uid := server.UIDFromContext(ctx); uid != "" {
 		r.AddAttrs(slog.String("uid", uid))
+	}
+	if tid := server.TraceIDFromContext(ctx); tid != "" {
+		r.AddAttrs(slog.String("trace_id", tid))
+		// Cloud Logging clickthrough requires the qualified form
+		// "projects/<PROJECT>/traces/<TRACE_ID>" under the magic key
+		// logging.googleapis.com/trace; the plain trace_id alone won't
+		// link from Logs Explorer to the Trace UI.
+		if proj := config.Project(); proj != "" {
+			r.AddAttrs(slog.String("logging.googleapis.com/trace", "projects/"+proj+"/traces/"+tid))
+			if sid := server.SpanIDFromContext(ctx); sid != "" {
+				r.AddAttrs(slog.String("logging.googleapis.com/spanId", sid))
+			}
+		}
+	}
+	if sid := server.SessionIDFromContext(ctx); sid != "" {
+		r.AddAttrs(slog.String("session_id", sid))
 	}
 	return h.Handler.Handle(ctx, r)
 }
@@ -50,8 +67,30 @@ func (h contextHandler) WithGroup(name string) slog.Handler {
 	return contextHandler{h.Handler.WithGroup(name)}
 }
 
+// gcpReplaceAttr rewrites slog's built-in keys to the special JSON fields Cloud
+// Logging recognizes: "level" → "severity" and "msg" → "message". slog renders
+// the warn level as "WARN", but the Cloud Logging LogSeverity enum spells it
+// "WARNING". Only top-level attrs are touched so grouped attrs (e.g. the
+// httpRequest group) pass through untouched.
+func gcpReplaceAttr(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) != 0 {
+		return a
+	}
+	switch a.Key {
+	case slog.LevelKey:
+		a.Key = "severity"
+		if lvl, ok := a.Value.Any().(slog.Level); ok && lvl == slog.LevelWarn {
+			a.Value = slog.StringValue("WARNING")
+		}
+	case slog.MessageKey:
+		a.Key = "message"
+	}
+	return a
+}
+
 func run(ctx context.Context, w io.Writer, _ []string) error {
-	slog.SetDefault(slog.New(contextHandler{slog.NewJSONHandler(w, nil)}))
+	opts := &slog.HandlerOptions{ReplaceAttr: gcpReplaceAttr}
+	slog.SetDefault(slog.New(contextHandler{slog.NewJSONHandler(w, opts)}))
 
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()

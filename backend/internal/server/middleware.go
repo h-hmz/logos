@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -20,6 +19,9 @@ type ctxKey int
 const (
 	ctxKeyRequestID ctxKey = iota
 	ctxKeyUID
+	ctxKeyTraceID
+	ctxKeySpanID
+	ctxKeySessionID
 )
 
 // UIDFromContext returns the authenticated UID attached to ctx, or "" if the
@@ -51,31 +53,22 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder wraps http.ResponseWriter to capture status and bytes written
-// for access logging. http.Flusher is preserved so SSE streaming still works.
+// statusRecorder wraps http.ResponseWriter to track whether the response has
+// been committed, so recoverMiddleware can skip writing a 500 over a response
+// the handler already started. http.Flusher is preserved so SSE still works.
 type statusRecorder struct {
 	http.ResponseWriter
-	status      int
-	bytes       int
 	wroteHeader bool
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
-	if !s.wroteHeader {
-		s.status = code
-		s.wroteHeader = true
-	}
+	s.wroteHeader = true
 	s.ResponseWriter.WriteHeader(code)
 }
 
 func (s *statusRecorder) Write(b []byte) (int, error) {
-	if !s.wroteHeader {
-		s.status = http.StatusOK
-		s.wroteHeader = true
-	}
-	n, err := s.ResponseWriter.Write(b)
-	s.bytes += n
-	return n, err
+	s.wroteHeader = true
+	return s.ResponseWriter.Write(b)
 }
 
 func (s *statusRecorder) Flush() {
@@ -84,44 +77,26 @@ func (s *statusRecorder) Flush() {
 	}
 }
 
-// accessLogMiddleware logs one line per request once the handler returns.
-func accessLogMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-
-		slog.LogAttrs(r.Context(), slog.LevelInfo, "http_request",
-			slog.String("method", r.Method),
-			slog.String("path", r.URL.Path),
-			slog.Int("status", rec.status),
-			slog.Int("bytes", rec.bytes),
-			slog.Duration("duration", time.Since(start)),
-			slog.String("remote", clientIP(r)),
-		)
-	})
-}
-
 // recoverMiddleware converts panics into 500 responses and logs the stack.
-// Placed inside accessLogMiddleware so the recovered status is still recorded.
 func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w}
 		defer func() {
-			if rec := recover(); rec != nil {
+			if rv := recover(); rv != nil {
 				slog.ErrorContext(r.Context(), "panic recovered",
-					"error", rec,
+					"error", rv,
 					"stack", string(debug.Stack()),
 					"method", r.Method,
 					"path", r.URL.Path,
 				)
-				// Avoid double-writing headers if the handler already committed.
-				if sr, ok := w.(*statusRecorder); ok && sr.wroteHeader {
+				// Avoid writing a 500 over a response the handler already committed.
+				if rec.wroteHeader {
 					return
 				}
-				writeError(w, http.StatusInternalServerError, "internal error")
+				writeError(rec, http.StatusInternalServerError, "internal error")
 			}
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(rec, r)
 	})
 }
 
@@ -151,18 +126,4 @@ func authMiddleware(v auth.Verifier) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// clientIP prefers X-Forwarded-For (first hop) when present, otherwise falls
-// back to RemoteAddr. Only trust this behind a load balancer you control.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		for i := 0; i < len(xff); i++ {
-			if xff[i] == ',' {
-				return xff[:i]
-			}
-		}
-		return xff
-	}
-	return r.RemoteAddr
 }

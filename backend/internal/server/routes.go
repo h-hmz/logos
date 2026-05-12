@@ -39,7 +39,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 
 	r := chi.NewRouter()
 	r.Use(requestIDMiddleware)
-	r.Use(accessLogMiddleware)
+	r.Use(traceContextMiddleware)
 	r.Use(recoverMiddleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"http://localhost:5173"},
@@ -57,10 +57,16 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 	r.Group(func(pr chi.Router) {
 		pr.Use(authMiddleware(verifier))
 		pr.Post("/debates", s.createDebate)
-		pr.Get("/debates/{debateID}", s.getDebate)
-		pr.Post("/debates/{debateID}/next", s.nextTurn)
-		pr.Post("/debates/{debateID}/tutor", s.tutorExplain)
-		pr.Post("/debates/{debateID}/tts", s.synthesizeStep)
+		// Per-debate routes share sessionIDMiddleware so the slog handler
+		// can stamp session_id on every log line. Chained per-route via
+		// With(...) instead of a Route() sub-tree to keep URL semantics
+		// (no trailing-slash sensitivity) identical to the previous flat
+		// registration.
+		dr := pr.With(sessionIDMiddleware)
+		dr.Get("/debates/{debateID}", s.getDebate)
+		dr.Post("/debates/{debateID}/next", s.nextTurn)
+		dr.Post("/debates/{debateID}/tutor", s.tutorExplain)
+		dr.Post("/debates/{debateID}/tts", s.synthesizeStep)
 	})
 
 	return r
