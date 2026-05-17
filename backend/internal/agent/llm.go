@@ -39,5 +39,5 @@ type Usage struct {
 // is openAICompatLLM (see openai_compat.go).
 type llm interface {
 	name() string
-	generate(ctx context.Context, req request) (text string, usage Usage, err error)
+	generate(ctx context.Context, req request, onToken func(string)) (string, Usage, error)
 }

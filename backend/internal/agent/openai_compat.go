@@ -43,11 +43,11 @@ func (m *openAICompatLLM) name() string { return m.id }
 
 // generate runs a chat completion. Retries up to twice on transient failures
 // (5xx + 429) with a 250ms delay; non-retryable errors return immediately.
-func (m *openAICompatLLM) generate(ctx context.Context, req request) (string, Usage, error) {
+func (m *openAICompatLLM) generate(ctx context.Context, req request, onToken func(string)) (string, Usage, error) {
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		text, usage, err := m.generateOnce(ctx, req)
+		text, usage, err := m.generateOnce(ctx, req, onToken)
 		if err == nil {
 			return text, usage, nil
 		}
@@ -64,7 +64,7 @@ func (m *openAICompatLLM) generate(ctx context.Context, req request) (string, Us
 	return "", Usage{}, lastErr
 }
 
-func (m *openAICompatLLM) generateOnce(ctx context.Context, req request) (string, Usage, error) {
+func (m *openAICompatLLM) generateOnce(ctx context.Context, req request, onToken func(string)) (string, Usage, error) {
 	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.messages))
 	for _, mm := range req.messages {
 		switch mm.role {
@@ -96,18 +96,36 @@ func (m *openAICompatLLM) generateOnce(ctx context.Context, req request) (string
 		}
 	}
 
-	completion, err := m.client.Chat.Completions.New(ctx, params)
-	if err != nil {
+	stream := m.client.Chat.Completions.NewStreaming(ctx, params)
+	defer stream.Close()
+
+	acc := openai.ChatCompletionAccumulator{}
+
+	for stream.Next() {
+		chunk := stream.Current()
+		acc.AddChunk(chunk)
+
+		if len(chunk.Choices) > 0 {
+			// Non-streaming callers will pass nil for onToken
+			if delta := chunk.Choices[0].Delta.Content; delta != "" && onToken != nil {
+				onToken(delta)
+			}
+		}
+	}
+
+	if err := stream.Err(); err != nil {
 		return "", Usage{}, fmt.Errorf("openai-compat: %w", err)
 	}
-	if len(completion.Choices) == 0 {
+
+	if len(acc.Choices) == 0 {
 		return "", Usage{}, errors.New("openai-compat: empty choices")
 	}
+
 	usage := Usage{
-		InputTokens:  int(completion.Usage.PromptTokens),
-		OutputTokens: int(completion.Usage.CompletionTokens),
+		InputTokens:  int(acc.Usage.PromptTokens),
+		OutputTokens: int(acc.Usage.CompletionTokens),
 	}
-	return completion.Choices[0].Message.Content, usage, nil
+	return acc.Choices[0].Message.Content, usage, nil
 }
 
 // isRetryable reports whether an openai-go error should be retried.

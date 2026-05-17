@@ -15,25 +15,33 @@ import (
 // instrumentedLLM wraps any llm implementation to emit llm_usage / llm_error
 // log events on every generate call. Sits outside the implementation's own
 // retry loop, so one event is emitted per agent turn regardless of how many
-// upstream attempts the implementation made — matching MONITORING_PLAN.md's
-// user-perceived-failure semantics rather than a per-attempt retry log.
-//
-// LLM streaming is not yet wired (Chat.Completions.New, not NewStreaming),
-// so ttft_ms is set equal to duration_ms; the schema stays forward-compatible
-// with a later streaming migration that supplies a real first-token timestamp.
+// upstream attempts the implementation made.
 type instrumentedLLM struct{ inner llm }
 
 func (i *instrumentedLLM) name() string { return i.inner.name() }
 
-func (i *instrumentedLLM) generate(ctx context.Context, req request) (string, Usage, error) {
+func (i *instrumentedLLM) generate(ctx context.Context, req request, onToken func(string)) (string, Usage, error) {
 	ensureInstruments()
 	startT := time.Now()
 	model := i.inner.name()
 	modelAttr := metric.WithAttributes(attribute.String("model", model))
 
-	text, usage, err := i.inner.generate(ctx, req)
+	var ttft time.Duration
+	wrappedOnToken := func(delta string) {
+		if ttft == 0 {
+			ttft = time.Since(startT)
+		}
+		if onToken != nil {
+			onToken(delta)
+		}
+	}
+
+	text, usage, err := i.inner.generate(ctx, req, wrappedOnToken)
 	dur := time.Since(startT)
 	durMs := dur.Milliseconds()
+	if ttft == 0 {
+		ttft = dur
+	}
 
 	if err != nil {
 		class := classifyLLMError(err)
@@ -58,7 +66,7 @@ func (i *instrumentedLLM) generate(ctx context.Context, req request) (string, Us
 		slog.Int("input_tokens", usage.InputTokens),
 		slog.Int("output_tokens", usage.OutputTokens),
 		slog.Int64("duration_ms", durMs),
-		slog.Int64("ttft_ms", durMs),
+		slog.Int64("ttft_ms", ttft.Milliseconds()),
 	)
 	if inputTokens != nil {
 		inputTokens.Add(ctx, int64(usage.InputTokens), modelAttr)
@@ -67,7 +75,7 @@ func (i *instrumentedLLM) generate(ctx context.Context, req request) (string, Us
 		outputTokens.Add(ctx, int64(usage.OutputTokens), modelAttr)
 	}
 	if ttftSeconds != nil {
-		ttftSeconds.Record(ctx, dur.Seconds(), modelAttr)
+		ttftSeconds.Record(ctx, ttft.Seconds(), modelAttr)
 	}
 	return text, usage, nil
 }

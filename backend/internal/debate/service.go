@@ -181,11 +181,15 @@ type TurnResult struct {
 	TotalOutputTokens int
 }
 
-// NextTurn runs the next pipeline step for the given debate.
+// NextTurn runs the next pipeline step for the given debate. onToken, when
+// non-nil, is invoked for each streamed text delta from the model — except for
+// steps whose agent emits structured JSON (critic, judge), where partial
+// chunks would expose unparseable JSON to the caller. Pass nil to disable
+// streaming entirely.
 //
 // Returns ErrNotFound, ErrVersionConflict, or *ValidationError for callers
 // that need to distinguish cases.
-func (s *Service) NextTurn(ctx context.Context, debateID string) (*TurnResult, error) {
+func (s *Service) NextTurn(ctx context.Context, debateID string, onToken func(string)) (*TurnResult, error) {
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
 		return nil, err
@@ -200,7 +204,11 @@ func (s *Service) NextTurn(ctx context.Context, debateID string) (*TurnResult, e
 	}
 	step := rt.Steps[rt.Current]
 
-	result, err := step.Agent.Run(ctx, rt.State, "continue")
+	cb := onToken
+	if step.Agent.HasResponseFormat() {
+		cb = nil
+	}
+	result, err := step.Agent.Run(ctx, rt.State, "continue", cb)
 	if err != nil {
 		return nil, fmt.Errorf("agent run: %w", err)
 	}

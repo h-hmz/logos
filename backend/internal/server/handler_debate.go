@@ -12,20 +12,30 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 )
 
-// writeServiceError maps domain errors to HTTP responses.
-func writeServiceError(ctx context.Context, w http.ResponseWriter, err error) {
+// mapServiceError maps a domain error to an HTTP status + user-facing message.
+// Internal errors return 500 with a generic message; callers should log the
+// underlying err separately.
+func mapServiceError(err error) (int, string) {
 	var ve *debate.ValidationError
 	switch {
 	case errors.Is(err, debate.ErrNotFound):
-		writeError(w, http.StatusNotFound, "Debate not found")
+		return http.StatusNotFound, "Debate not found"
 	case errors.Is(err, debate.ErrVersionConflict):
-		writeError(w, http.StatusConflict, "debate state changed concurrently; refresh and retry")
+		return http.StatusConflict, "debate state changed concurrently; refresh and retry"
 	case errors.As(err, &ve):
-		writeError(w, http.StatusBadRequest, ve.Msg)
+		return http.StatusBadRequest, ve.Msg
 	default:
-		slog.ErrorContext(ctx, "service error", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		return http.StatusInternalServerError, "internal error"
 	}
+}
+
+// writeServiceError maps domain errors to HTTP responses.
+func writeServiceError(ctx context.Context, w http.ResponseWriter, err error) {
+	status, msg := mapServiceError(err)
+	if status == http.StatusInternalServerError {
+		slog.ErrorContext(ctx, "service error", "error", err)
+	}
+	writeError(w, status, msg)
 }
 
 // ── POST /debates ───────────────────────────────────────────────────────────
@@ -158,13 +168,45 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
 	defer r.Body.Close()
 
-	res, err := s.svc.NextTurn(r.Context(), debateID)
+	if wantsSSE(r) {
+		s.nextTurnSSE(w, r, debateID)
+		return
+	}
+
+	res, err := s.svc.NextTurn(r.Context(), debateID, nil)
 	if err != nil {
 		writeServiceError(r.Context(), w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, turnResult{
+	writeJSON(w, http.StatusOK, toTurnResultPayload(res))
+}
+
+// nextTurnSSE runs the next turn and streams text deltas to the client as SSE
+// "token" events, terminating with a "done" event carrying the full payload
+// or an "error" event on failure. Once headers are committed (status 200),
+// failures cannot be reported via HTTP status — they ride the SSE error event.
+func (s *Server) nextTurnSSE(w http.ResponseWriter, r *http.Request, debateID string) {
+	sw, ok := newSSEWriter(r.Context(), w)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	res, err := s.svc.NextTurn(r.Context(), debateID, sw.SendToken)
+	if err != nil {
+		status, msg := mapServiceError(err)
+		if status == http.StatusInternalServerError {
+			slog.ErrorContext(r.Context(), "service error (sse)", "error", err)
+		}
+		sw.SendError(msg)
+		return
+	}
+	sw.SendDone(toTurnResultPayload(res))
+}
+
+func toTurnResultPayload(res *debate.TurnResult) turnResult {
+	return turnResult{
 		Key:               res.Step.Key,
 		Label:             res.Step.Label,
 		Author:            res.AgentName,
@@ -177,6 +219,6 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 		TurnOutputTokens:  res.TurnOutputTokens,
 		TotalInputTokens:  res.TotalInputTokens,
 		TotalOutputTokens: res.TotalOutputTokens,
-	})
+	}
 }
 

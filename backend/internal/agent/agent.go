@@ -38,6 +38,11 @@ func (a *Agent) Name() string { return a.cfg.Name }
 // OutputKey returns the state key the agent writes its output to.
 func (a *Agent) OutputKey() string { return a.cfg.OutputKey }
 
+// HasResponseFormat reports whether the agent is constrained to a JSON schema.
+// Callers use this to gate token-by-token forwarding: structured outputs are
+// delivered to the client as a single payload, not as partial JSON chunks.
+func (a *Agent) HasResponseFormat() bool { return a.cfg.ResponseFormat != nil }
+
 // RunResult bundles the outcome of one Run.
 type RunResult struct {
 	Text  string
@@ -47,7 +52,7 @@ type RunResult struct {
 // Run resolves {key} placeholders in the instruction against state,
 // calls the model with (system, user) messages, and writes
 // state[OutputKey] = text when OutputKey is non-empty.
-func (a *Agent) Run(ctx context.Context, state State, userMessage string) (RunResult, error) {
+func (a *Agent) Run(ctx context.Context, state State, userMessage string, onToken func(string)) (RunResult, error) {
 	m, err := getLLM(ctx, a.cfg.ModelID)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("agent: get model %s: %w", a.cfg.ModelID, err)
@@ -66,7 +71,7 @@ func (a *Agent) Run(ctx context.Context, state State, userMessage string) (RunRe
 		maxCompletionTokens: a.cfg.MaxCompletionTokens,
 	}
 
-	text, usage, err := m.generate(ctx, req)
+	text, usage, err := m.generate(ctx, req, onToken)
 	if err != nil {
 		return RunResult{}, err
 	}

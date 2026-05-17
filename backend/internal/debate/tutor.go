@@ -124,7 +124,7 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		History:      toTutorMessages(req.History),
 	})
 
-	result, err := tutorAgent.Run(ctx, agent.State{}, userText)
+	result, err := tutorAgent.Run(ctx, agent.State{}, userText, nil)
 	if err != nil {
 		return TutorResult{}, fmt.Errorf("tutor: %w", err)
 	}
