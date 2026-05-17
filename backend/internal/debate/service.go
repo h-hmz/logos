@@ -2,9 +2,7 @@ package debate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -76,19 +74,11 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 		if !ok {
 			continue
 		}
-		var structured any
-		if meta.Key == "critic_feedback" || meta.Key == "final_verdict" {
-			var parsed any
-			if uerr := json.Unmarshal([]byte(content), &parsed); uerr == nil {
-				structured = parsed
-			}
-		}
 		turns[i] = TurnResult{
 			Step:              meta,
 			AgentName:         meta.Key,
 			Role:              RoleForStep(meta.Key, a, b),
 			Content:           content,
-			Structured:        structured,
 			StepIndex:         i,
 			TotalSteps:        total,
 			Done:              i+1 >= total,
@@ -182,7 +172,6 @@ type TurnResult struct {
 	AgentName         string
 	Role              string
 	Content           string
-	Structured        any
 	StepIndex         int
 	TotalSteps        int
 	Done              bool
@@ -234,22 +223,11 @@ func (s *Service) NextTurn(ctx context.Context, debateID string) (*TurnResult, e
 
 	role := RoleForStep(step.Key, rt.DebaterA, rt.DebaterB)
 
-	var structured any
-	if step.Key == "critic_feedback" || step.Key == "final_verdict" {
-		var parsed any
-		if uerr := json.Unmarshal([]byte(content), &parsed); uerr == nil {
-			structured = parsed
-		} else {
-			slog.ErrorContext(ctx, "failed to parse JSON from step output", "step_key", step.Key, "error", uerr)
-		}
-	}
-
 	return &TurnResult{
 		Step:              StepMeta{Key: step.Key, Label: step.Label},
 		AgentName:         step.Agent.Name(),
 		Role:              role,
 		Content:           content,
-		Structured:        structured,
 		StepIndex:         stepIndex,
 		TotalSteps:        TotalSteps(p.NumRounds),
 		Done:              p.Current >= TotalSteps(p.NumRounds),

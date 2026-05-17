@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  parseStructured,
   type CriticFinding,
   type DebateSession,
   type JudgeVerdict,
@@ -196,7 +197,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 streaming={buf.streaming && !buf.done}
                 error={buf.error}
                 meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
-                finding={(buf.structured as CriticFinding | undefined) ?? null}
+                finding={buf.done ? parseStructured<CriticFinding>(buf.text) : null}
                 a={a}
                 b={b}
               />
@@ -208,7 +209,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 done={buf.done}
                 error={buf.error}
                 meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
-                verdict={(buf.structured as JudgeVerdict | undefined) ?? null}
+                verdict={buf.done ? parseStructured<JudgeVerdict>(buf.text) : null}
                 a={a}
                 b={b}
                 onSeeVerdict={() => navigate({ page: 'verdict', id: debate.id })}

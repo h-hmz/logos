@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { streamTurn, type CriticFinding, type DebateSession, type JudgeVerdict, type TurnResult } from '../api'
+import { streamTurn, type DebateSession, type TurnResult } from '../api'
 
 const STORAGE_KEY = (id: string) => `logos_step_${id}`
 const AUTO_ADVANCE_DELAY_MS = 1400
@@ -14,7 +14,6 @@ export interface TurnBuffer {
   tokens: number
   streaming: boolean
   error?: string
-  structured?: CriticFinding | JudgeVerdict | null
 }
 
 export interface DebatePlayback {
@@ -53,7 +52,6 @@ export function useDebatePlayback(
         done: true,
         tokens: t.turn_output_tokens ?? 0,
         streaming: false,
-        structured: t.structured ?? null,
       }
     }
     return b
@@ -103,7 +101,6 @@ export function useDebatePlayback(
           done: true,
           tokens: result.turn_output_tokens,
           streaming: false,
-          structured: result.structured ?? null,
         },
       }))
       setTurnResults((prev) => ({ ...prev, [stepIndex]: result }))

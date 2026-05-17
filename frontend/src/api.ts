@@ -39,6 +39,15 @@ export interface JudgeVerdict {
   open?: string[]
 }
 
+// Parse a JSON-output step's content into a typed object. Returns null if the
+// string isn't valid JSON yet (mid-stream) or doesn't match. The server stores
+// raw model output as a string; callers parse on demand for the steps whose
+// schema they know (critic_feedback → CriticFinding, final_verdict → JudgeVerdict).
+export function parseStructured<T>(content: string): T | null {
+  if (!content) return null
+  try { return JSON.parse(content) as T } catch { return null }
+}
+
 export interface StepInfo {
   key: string
   label: string
@@ -59,7 +68,6 @@ export interface TurnResult {
   author: string
   role?: TurnRole
   content: string
-  structured?: CriticFinding | JudgeVerdict | null
   step_index: number
   total_steps: number
   done: boolean

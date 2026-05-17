@@ -127,7 +127,6 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 			Author:            t.AgentName,
 			Role:              t.Role,
 			Content:           t.Content,
-			Structured:        t.Structured,
 			StepIndex:         t.StepIndex,
 			TotalSteps:        t.TotalSteps,
 			Done:              t.Done,
@@ -146,7 +145,6 @@ type turnResult struct {
 	Author            string `json:"author"`
 	Role              string `json:"role"`
 	Content           string `json:"content"`
-	Structured        any    `json:"structured,omitempty"`
 	StepIndex         int    `json:"step_index"`
 	TotalSteps        int    `json:"total_steps"`
 	Done              bool   `json:"done"`
@@ -172,7 +170,6 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 		Author:            res.AgentName,
 		Role:              res.Role,
 		Content:           res.Content,
-		Structured:        res.Structured,
 		StepIndex:         res.StepIndex,
 		TotalSteps:        res.TotalSteps,
 		Done:              res.Done,

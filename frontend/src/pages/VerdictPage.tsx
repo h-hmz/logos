@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bust } from '../components/Bust'
 import { InlineMd } from '../components/InlineMd'
-import type { DebateSession, JudgeVerdict, TurnResult } from '../api'
+import { parseStructured, type DebateSession, type JudgeVerdict, type TurnResult } from '../api'
 import { enrich } from '../philosopher-meta'
 import { roleForLabel } from '../step-role'
 import type { Route } from '../components/Masthead'
@@ -25,7 +25,7 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
     (s) => roleForLabel(s.label, a.name, b.name) === 'judge'
   )
   const judgeTurn = judgeIdx >= 0 ? turns[judgeIdx] : undefined
-  const verdict = (judgeTurn?.structured as JudgeVerdict | undefined) ?? null
+  const verdict = judgeTurn ? parseStructured<JudgeVerdict>(judgeTurn.content) : null
 
   const tally = useMemo(() => {
     let tokA = 0, tokB = 0, tokCritic = 0, tokJudge = 0, totalIn = 0, totalOut = 0
