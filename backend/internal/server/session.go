@@ -15,17 +15,6 @@ func SessionIDFromContext(ctx context.Context) string {
 	return v
 }
 
-// WithSessionID returns a child ctx carrying id as the session id. Exposed for
-// callers (e.g. background jobs) that need to attach a session id outside the
-// HTTP middleware path; HTTP handlers under /debates/{debateID}/* receive it
-// automatically via sessionIDMiddleware.
-func WithSessionID(ctx context.Context, id string) context.Context {
-	if id == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, ctxKeySessionID, id)
-}
-
 // sessionIDMiddleware reads chi's bound debateID URL param and stores it on
 // the request context so the slog handler can stamp session_id on every log
 // line emitted while serving the request. Mount it on the chi sub-router for
