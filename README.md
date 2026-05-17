@@ -344,6 +344,13 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 | `PORT` | `8000` (`8080` in the Docker image) | HTTP listen port. |
 | `DATA_DIR` | *(binary directory)* | Path to the directory containing `agents/`. |
 
+**Telemetry** (optional — OTel metrics push to any OTLP-compatible backend; Grafana Cloud free tier in our setup, see [`monitoring/README.md`](monitoring/README.md))
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset → SDK disabled)* | OTLP/HTTP base URL, e.g. `https://otlp-gateway-prod-eu-west-2.grafana.net/otlp`. When empty, the SDK is a no-op and the backend logs `telemetry disabled`. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | *(unset)* | Auth headers, e.g. `Authorization=Basic%20<base64>`. The `%20` (URL-encoded space) is mandatory — raw spaces break env-var parsing on Cloud Run. |
+
 ---
 
 ## Running

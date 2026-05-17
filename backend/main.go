@@ -18,6 +18,7 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/server"
+	"github.com/h-hmz/logos/internal/telemetry"
 )
 
 func main() {
@@ -113,6 +114,11 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
+	shutdownTelemetry, err := telemetry.Init(ctx)
+	if err != nil {
+		return fmt.Errorf("telemetry: %w", err)
+	}
+
 	philosophers, err := philosopher.LoadAllPhilosophers(philDir)
 	if err != nil {
 		return fmt.Errorf("philosophers: %w", err)
@@ -154,11 +160,19 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 	case <-ctx.Done():
 		slog.Info("Interrupt signal received, initiating graceful shutdown...")
 
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Requires Cloud Run terminationGracePeriodSeconds=60
+		// (default 10s is too tight for LLM calls).
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()
 
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("error during server shutdown: %w", err)
+			slog.Warn("http server shutdown error", "err", err)
+		}
+
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer flushCancel()
+		if err := shutdownTelemetry(flushCtx); err != nil {
+			slog.Warn("telemetry shutdown error", "err", err)
 		}
 	}
 

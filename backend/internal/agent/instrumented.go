@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/openai/openai-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // instrumentedLLM wraps any llm implementation to emit llm_usage / llm_error
@@ -24,19 +26,29 @@ type instrumentedLLM struct{ inner llm }
 func (i *instrumentedLLM) name() string { return i.inner.name() }
 
 func (i *instrumentedLLM) generate(ctx context.Context, req request) (string, Usage, error) {
+	ensureInstruments()
 	startT := time.Now()
 	model := i.inner.name()
+	modelAttr := metric.WithAttributes(attribute.String("model", model))
 
 	text, usage, err := i.inner.generate(ctx, req)
-	durMs := time.Since(startT).Milliseconds()
+	dur := time.Since(startT)
+	durMs := dur.Milliseconds()
 
 	if err != nil {
+		class := classifyLLMError(err)
 		slog.LogAttrs(ctx, slog.LevelWarn, "llm_error",
 			slog.String("event", "llm_error"),
 			slog.String("model", model),
 			slog.Int64("duration_ms", durMs),
-			slog.String("error_class", classifyLLMError(err)),
+			slog.String("error_class", class),
 		)
+		if llmErrors != nil {
+			llmErrors.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("model", model),
+				attribute.String("error_class", class),
+			))
+		}
 		return text, usage, err
 	}
 
@@ -48,6 +60,15 @@ func (i *instrumentedLLM) generate(ctx context.Context, req request) (string, Us
 		slog.Int64("duration_ms", durMs),
 		slog.Int64("ttft_ms", durMs),
 	)
+	if inputTokens != nil {
+		inputTokens.Add(ctx, int64(usage.InputTokens), modelAttr)
+	}
+	if outputTokens != nil {
+		outputTokens.Add(ctx, int64(usage.OutputTokens), modelAttr)
+	}
+	if ttftSeconds != nil {
+		ttftSeconds.Record(ctx, dur.Seconds(), modelAttr)
+	}
 	return text, usage, nil
 }
 
