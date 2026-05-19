@@ -50,7 +50,7 @@ func ensureInstruments() {
 		}
 
 		if llmErrors, err = meter.Int64Counter("llm.errors",
-			metric.WithDescription("LLM calls that failed, by model and classifyLLMError bucket."),
+			metric.WithDescription("LLM calls that failed, by model, role, and ClassifyLLMError bucket."),
 			metric.WithUnit("{error}"),
 		); err != nil {
 			slog.Warn("metric registration failed", "name", "llm.errors", "err", err)

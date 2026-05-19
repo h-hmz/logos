@@ -71,6 +71,8 @@ func (a *Agent) Run(ctx context.Context, state State, userMessage string, onToke
 		maxCompletionTokens: a.cfg.MaxCompletionTokens,
 	}
 
+	ctx = withAgentName(ctx, a.cfg.Name)
+
 	text, usage, err := m.generate(ctx, req, onToken)
 	if err != nil {
 		return RunResult{}, err
