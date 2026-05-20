@@ -28,11 +28,12 @@ type JSONSchema struct {
 	Schema map[string]any // the JSON Schema document
 }
 
-// Usage reports token accounting for one Run call. A zero Usage means the
+// Usage reports token and cost accounting for one Run call. A zero Usage means the
 // provider did not report usage.
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
+	CostUSD      float64
 }
 
 // llm is the provider-agnostic chat interface. The production implementation

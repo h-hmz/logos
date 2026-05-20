@@ -19,10 +19,13 @@ Metrics are emitted from [../backend/internal/agent/instrumented.go](../backend/
 
 | Name (OTel) | Prometheus name | Type | Attributes |
 |---|---|---|---|
-| `llm.input.tokens` | `llm_input_tokens_total` | Counter (`{token}`) | `model` |
-| `llm.output.tokens` | `llm_output_tokens_total` | Counter (`{token}`) | `model` |
-| `llm.ttft` | `llm_ttft_seconds_bucket` | Histogram (`s`) | `model` |
-| `llm.errors` | `llm_errors_total` | Counter (`{error}`) | `model`, `error_class` |
+| `llm.input.tokens` | `llm_input_tokens_total` | Counter (`{token}`) | `model`, `role` |
+| `llm.output.tokens` | `llm_output_tokens_total` | Counter (`{token}`) | `model`, `role` |
+| `llm.cost.usd` | `llm_cost_usd_total` | Counter (`{USD}`) | `model`, `role` |
+| `llm.ttft` | `llm_ttft_seconds_bucket` | Histogram (`s`) | `model`, `role` |
+| `llm.errors` | `llm_errors_total` | Counter (`{error}`) | `model`, `role`, `error_class` |
+
+`llm.cost.usd` is the provider-billed cost (OpenRouter `usage.cost`), summed straight from the LLM call — no price table. Cost panels read `rate`/`increase` over `llm_cost_usd_total`.
 
 OTel → Prometheus naming: dots become underscores, counters get `_total`, histograms expose `_bucket` / `_sum` / `_count`. SDK does this automatically.
 
@@ -63,28 +66,29 @@ Grafana Cloud → **Dashboards** → **New** → **Import**, paste `dashboards/l
 
 Authored in the **classic dashboard schema (V1)**. V2 ([GA Apr 2026](https://grafana.com/whats-new/2026-04-08-dynamic-dashboards-is-now-generally-available/)) is the runtime default in Grafana Cloud, but the UI import path doesn't accept V2 JSON directly yet — V2 ingestion currently lives in the grafana-operator/CRD path. V1 imports cleanly and Grafana auto-migrates it to V2 internally on first open.
 
-**Verify metric names after the first data lands.** Grafana Cloud's OTLP-to-Prometheus translator may add a namespace prefix or transform names slightly. Open **Explore** → Prometheus → metrics browser and search `llm_` to confirm what's actually stored. If you see e.g. `logos_llm_input_tokens_total` (with a service prefix), update the panel `expr` fields to match. The instrument names in [../backend/internal/agent/metrics.go](../backend/internal/agent/metrics.go) are `llm.input.tokens`, `llm.output.tokens`, `llm.ttft`, `llm.errors`; everything else is the translator's choice.
+**Verify metric names after the first data lands.** Grafana Cloud's OTLP-to-Prometheus translator may add a namespace prefix or transform names slightly. Open **Explore** → Prometheus → metrics browser and search `llm_` to confirm what's actually stored. If you see e.g. `logos_llm_input_tokens_total` (with a service prefix), update the panel `expr` fields to match. The instrument names in [../backend/internal/agent/metrics.go](../backend/internal/agent/metrics.go) are `llm.input.tokens`, `llm.output.tokens`, `llm.cost.usd`, `llm.ttft`, `llm.errors`; everything else is the translator's choice.
 
 ## Verifying it works
 
 1. **Cold smoke (no Grafana account):** local `go run` with `OTEL_EXPORTER_OTLP_ENDPOINT=""` should print `telemetry disabled` and run normally.
 2. **Local with debug collector:** run an OTel collector in Docker pointed at stdout, set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318`, trigger one debate turn, watch counter increments print.
 3. **Deployed:** open Grafana Cloud → **Explore** → Prometheus → run `llm_input_tokens_total`. First values appear ~30 s after the first LLM call (the SDK push interval).
-4. **Dashboard:** open *Logos LLM Tokens*. Four panels: input tokens, output tokens, errors, TTFT p50/p95.
+4. **Dashboard:** open *Logos LLM*. The Overview row shows TTFT, errors, and cost stats; the **LLM** and **Cost** rows expand to per-`(model, role)` detail.
 
-## "Top N users by tokens" (logs, not metrics)
+## "Top N users by tokens / cost" (logs, not metrics)
 
-Cardinality-explosion antipattern in Prometheus, perfect for Log Analytics. In Cloud Console → **Logging** → **Log Analytics**:
+Per-user attribution is a cardinality-explosion antipattern in Prometheus, perfect for Log Analytics. Cost lives on the `llm_usage` log line as `cost_usd` (provider-billed), so the same query yields spend per user. In Cloud Console → **Logging** → **Log Analytics**:
 
 ```sql
 SELECT
   json_payload.uid AS user,
-  SUM(CAST(json_payload.input_tokens AS INT64) + CAST(json_payload.output_tokens AS INT64)) AS total_tokens
+  SUM(CAST(json_payload.input_tokens AS INT64) + CAST(json_payload.output_tokens AS INT64)) AS total_tokens,
+  SUM(CAST(json_payload.cost_usd AS FLOAT64)) AS total_cost_usd
 FROM `logos-494817.global._Default._AllLogs`
 WHERE json_payload.event = 'llm_usage'
   AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)
 GROUP BY user
-ORDER BY total_tokens DESC
+ORDER BY total_cost_usd DESC
 LIMIT 5;
 ```
 

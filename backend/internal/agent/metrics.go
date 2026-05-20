@@ -15,6 +15,7 @@ var (
 	instrumentsOnce sync.Once
 	inputTokens     metric.Int64Counter
 	outputTokens    metric.Int64Counter
+	llmCost         metric.Float64Counter
 	ttftSeconds     metric.Float64Histogram
 	llmErrors       metric.Int64Counter
 )
@@ -36,6 +37,15 @@ func ensureInstruments() {
 			metric.WithUnit("{token}"),
 		); err != nil {
 			slog.Warn("metric registration failed", "name", "llm.output.tokens", "err", err)
+		}
+
+		// Provider-billed generation cost (OpenRouter `usage.cost`).
+		// A float counter because per-call costs are sub-cent.
+		if llmCost, err = meter.Float64Counter("llm.cost.usd",
+			metric.WithDescription("Generation cost in USD as billed by the provider, by model and role."),
+			metric.WithUnit("{USD}"),
+		); err != nil {
+			slog.Warn("metric registration failed", "name", "llm.cost.usd", "err", err)
 		}
 
 		// Explicit boundaries tuned for LLM TTFT: 50ms → ~60s. Default OTel

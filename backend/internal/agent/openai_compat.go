@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/openai/openai-go"
@@ -101,9 +102,25 @@ func (m *openAICompatLLM) generateOnce(ctx context.Context, req request, onToken
 
 	acc := openai.ChatCompletionAccumulator{}
 
+	// OpenRouter reports the generation cost (USD) on the `cost` field of the
+	// usage object in the final stream chunk. openai-go doesn't model this
+	// non-standard extension, so it lands in JSON.ExtraFields; the accumulator
+	// also drops it, so capture it from the chunk directly.
+	//
+	// NOTE: ExtraFields entries always report Valid()==false (openai-go only
+	// marks schema-modeled fields valid), so gate on Raw() instead — it holds
+	// the raw JSON number for unmodeled fields all the same.
+	var costUSD float64
+
 	for stream.Next() {
 		chunk := stream.Current()
 		acc.AddChunk(chunk)
+
+		if raw := chunk.Usage.JSON.ExtraFields["cost"].Raw(); raw != "" {
+			if v, err := strconv.ParseFloat(raw, 64); err == nil {
+				costUSD = v
+			}
+		}
 
 		if len(chunk.Choices) > 0 {
 			// Non-streaming callers will pass nil for onToken
@@ -124,6 +141,7 @@ func (m *openAICompatLLM) generateOnce(ctx context.Context, req request, onToken
 	usage := Usage{
 		InputTokens:  int(acc.Usage.PromptTokens),
 		OutputTokens: int(acc.Usage.CompletionTokens),
+		CostUSD:      costUSD,
 	}
 	return acc.Choices[0].Message.Content, usage, nil
 }

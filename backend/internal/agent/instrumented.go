@@ -110,6 +110,7 @@ func (i *instrumentedLLM) generate(ctx context.Context, req request, onToken fun
 		slog.String("role", role),
 		slog.Int("input_tokens", usage.InputTokens),
 		slog.Int("output_tokens", usage.OutputTokens),
+		slog.Float64("cost_usd", usage.CostUSD),
 		slog.Int64("duration_ms", durMs),
 		slog.Int64("ttft_ms", ttft.Milliseconds()),
 	)
@@ -118,6 +119,9 @@ func (i *instrumentedLLM) generate(ctx context.Context, req request, onToken fun
 	}
 	if outputTokens != nil {
 		outputTokens.Add(ctx, int64(usage.OutputTokens), attrs)
+	}
+	if llmCost != nil {
+		llmCost.Add(ctx, usage.CostUSD, attrs)
 	}
 	if ttftSeconds != nil {
 		ttftSeconds.Record(ctx, ttft.Seconds(), attrs)

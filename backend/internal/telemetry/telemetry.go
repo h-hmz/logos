@@ -26,7 +26,7 @@ import (
 // pushInterval is how often the SDK flushes accumulated counter/histogram
 // deltas to the OTLP endpoint. Short enough that dashboards feel live,
 // long enough to keep the egress volume trivial.
-const pushInterval = 30 * time.Second
+const pushInterval = 10 * time.Second
 
 // Init wires the global OTel MeterProvider. The returned shutdown func must be
 // called on process exit to flush any buffered metrics — main.go runs it
