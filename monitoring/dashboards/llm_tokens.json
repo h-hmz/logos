@@ -13,80 +13,89 @@
     { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
     { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
     { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
-    { "type": "panel", "id": "stat", "name": "Stat", "version": "" }
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" },
+    { "type": "panel", "id": "row", "name": "Row", "version": "" }
   ],
-  "title": "Logos LLM Tokens",
-  "description": "Token consumption and TTFT per LLM model. Counters are cumulative; queries use increase() so bursts read intuitively for low-volume traffic.",
+  "title": "Logos LLM",
+  "description": "LLM observability for Logos",
   "tags": ["logos", "llm", "otel"],
   "schemaVersion": 39,
   "editable": true,
   "time": { "from": "now-6h", "to": "now" },
   "refresh": "30s",
   "timepicker": {},
-  "templating": { "list": [] },
+  "templating": {
+    "list": []
+  },
   "annotations": { "list": [] },
   "panels": [
     {
-      "id": 10,
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "panels": []
+    },
+    {
+      "id": 104,
       "type": "stat",
-      "title": "Total input tokens (selected range)",
+      "title": "LLM TTFT p95",
+      "description": "p95 time-to-first-token across all LLM calls, last 5m. Amber at 2s, red at 10s.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 },
       "fieldConfig": {
-        "defaults": { "unit": "short", "color": { "mode": "thresholds" } },
+        "defaults": {
+          "unit": "s",
+          "decimals": 2,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        },
         "overrides": []
       },
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto",
         "colorMode": "value",
-        "graphMode": "none"
+        "graphMode": "area"
       },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(increase(llm_input_tokens_total[$__range]))",
-          "instant": true
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_ttft_seconds_bucket[5m])))"
         }
       ]
     },
     {
-      "id": 11,
+      "id": 109,
       "type": "stat",
-      "title": "Total output tokens (selected range)",
+      "title": "LLM errors / 5m",
+      "description": "Sum of llm_errors_total over the last 5 minutes across all models, roles, and error classes. Amber at 1, red at 10.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "color": { "mode": "thresholds" } },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "auto",
-        "colorMode": "value",
-        "graphMode": "none"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(increase(llm_output_tokens_total[$__range]))",
-          "instant": true
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "type": "stat",
-      "title": "Errors (selected range)",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 4 },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
           "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
         },
         "overrides": []
       },
@@ -100,134 +109,403 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum(increase(llm_errors_total[$__range]))",
-          "instant": true
+          "expr": "sum(increase(llm_errors_total[5m]))"
         }
       ]
     },
     {
-      "id": 13,
+      "id": 105,
       "type": "stat",
-      "title": "TTFT p95 (selected range)",
+      "title": "$/hour now",
+      "description": "LLM cost rate over the last 5m, from provider-billed cost (OpenRouter usage.cost).",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "gridPos": { "x": 12, "y": 1, "w": 6, "h": 4 },
       "fieldConfig": {
-        "defaults": { "unit": "s", "color": { "mode": "thresholds" } },
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
         "overrides": []
       },
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto",
         "colorMode": "value",
-        "graphMode": "none"
+        "graphMode": "area"
       },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(llm_ttft_seconds_bucket[$__range])))",
-          "instant": true
+          "expr": "sum(rate(llm_cost_usd_total[5m])) * 3600"
         }
       ]
     },
     {
-      "id": 1,
-      "type": "timeseries",
-      "title": "Input tokens per 5 min (per model)",
-      "description": "increase() over a 5-minute bucket. Each bar = total input tokens for requests in that bucket. Flat-zero between bars means no requests.",
+      "id": 106,
+      "type": "stat",
+      "title": "$ today (rolling 24h)",
+      "description": "USD billed for LLM calls in the trailing 24h.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 4 },
       "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 80 } },
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        },
         "overrides": []
       },
       "options": {
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
       },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (model) (increase(llm_input_tokens_total[5m]))",
-          "legendFormat": "{{model}}"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "type": "timeseries",
-      "title": "Output tokens per 5 min (per model)",
-      "description": "increase() over a 5-minute bucket. Each bar = total output tokens for requests in that bucket.",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 80 } },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (model) (increase(llm_output_tokens_total[5m]))",
-          "legendFormat": "{{model}}"
+          "expr": "sum(increase(llm_cost_usd_total[24h]))"
         }
       ]
     },
     {
       "id": 3,
-      "type": "timeseries",
-      "title": "Errors per 5 min (per error_class)",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 80 } },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
+      "type": "row",
+      "title": "LLM",
+      "collapsed": true,
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
+      "panels": [
         {
-          "refId": "A",
+          "id": 301,
+          "type": "timeseries",
+          "title": "TTFT p50 / p95 by (model, role)",
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "sum by (error_class) (increase(llm_errors_total[5m]))",
-          "legendFormat": "{{error_class}}"
+          "gridPos": { "x": 0, "y": 6, "w": 12, "h": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "s", "custom": { "drawStyle": "line", "spanNulls": false } },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "refId": "p50",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.5, sum by (le, model, role) (rate(llm_ttft_seconds_bucket[5m])))",
+              "legendFormat": "p50 {{role}} ({{model}})"
+            },
+            {
+              "refId": "p95",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "histogram_quantile(0.95, sum by (le, model, role) (rate(llm_ttft_seconds_bucket[5m])))",
+              "legendFormat": "p95 {{role}} ({{model}})"
+            }
+          ]
+        },
+        {
+          "id": 302,
+          "type": "timeseries",
+          "title": "Output / input ratio by model",
+          "description": "Verbosity signal — sudden rises mean models are talking more per prompt, watch for runaway gen.",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "x": 12, "y": 6, "w": 12, "h": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 2, "custom": { "drawStyle": "line", "spanNulls": false } },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (model) (rate(llm_output_tokens_total[5m])) / clamp_min(sum by (model) (rate(llm_input_tokens_total[5m])), 0.001)",
+              "legendFormat": "{{model}}"
+            }
+          ]
+        },
+        {
+          "id": 303,
+          "type": "timeseries",
+          "title": "Input tokens / 5m by role",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "x": 0, "y": 14, "w": 12, "h": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 80, "stacking": { "mode": "normal" } } },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (role) (increase(llm_input_tokens_total[5m]))",
+              "legendFormat": "{{role}}"
+            }
+          ]
+        },
+        {
+          "id": 304,
+          "type": "timeseries",
+          "title": "Output tokens / 5m by role",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "x": 12, "y": 14, "w": 12, "h": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 80, "stacking": { "mode": "normal" } } },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (role) (increase(llm_output_tokens_total[5m]))",
+              "legendFormat": "{{role}}"
+            }
+          ]
+        },
+        {
+          "id": 305,
+          "type": "timeseries",
+          "title": "LLM errors / 5m",
+          "description": "Broken out by error_class and (separately) by role to surface both 'why did it fail' and 'which stage failed'.",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "x": 0, "y": 22, "w": 24, "h": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 80 } },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "refId": "class",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (error_class) (increase(llm_errors_total[5m]))",
+              "legendFormat": "class:{{error_class}}"
+            },
+            {
+              "refId": "role",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (role) (increase(llm_errors_total[5m]))",
+              "legendFormat": "role:{{role}}"
+            }
+          ]
+        },
+        {
+          "id": 306,
+          "type": "table",
+          "title": "Per-(model, role) tokens + cost in selected range",
+          "description": "Tokens and provider-billed cost over $__range.",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "x": 0, "y": 30, "w": 24, "h": 8 },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "color": { "mode": "thresholds" } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "cost_usd" }, "properties": [{ "id": "unit", "value": "currencyUSD" }, { "id": "decimals", "value": 4 }] }
+            ]
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "transformations": [
+            { "id": "merge", "options": {} },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true, "service_name": true, "service_version": true },
+                "renameByName": { "Value #in": "input_tokens", "Value #out": "output_tokens", "Value #cost": "cost_usd" }
+              }
+            }
+          ],
+          "targets": [
+            {
+              "refId": "in",
+              "format": "table",
+              "instant": true,
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (model, role) (increase(llm_input_tokens_total[$__range]))"
+            },
+            {
+              "refId": "out",
+              "format": "table",
+              "instant": true,
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (model, role) (increase(llm_output_tokens_total[$__range]))"
+            },
+            {
+              "refId": "cost",
+              "format": "table",
+              "instant": true,
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (model, role) (increase(llm_cost_usd_total[$__range]))"
+            }
+          ]
         }
       ]
     },
     {
-      "id": 4,
-      "type": "timeseries",
-      "title": "TTFT seconds p50 / p95 per model",
-      "description": "histogram_quantile over a 5-minute rate window. Sparse during low traffic.",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
-      "fieldConfig": {
-        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineInterpolation": "linear", "spanNulls": false } },
-        "overrides": []
-      },
-      "options": {
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
+      "id": 5,
+      "type": "row",
+      "title": "Cost",
+      "collapsed": true,
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 1 },
+      "panels": [
         {
-          "refId": "p50",
+          "id": 501,
+          "type": "stat",
+          "title": "$/hour rate (last 5m)",
+          "description": "Provider-billed LLM cost rate over the last 5m (OpenRouter usage.cost).",
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.5, sum by (le, model) (rate(llm_ttft_seconds_bucket[5m])))",
-          "legendFormat": "p50 {{model}}"
+          "gridPos": { "x": 0, "y": 7, "w": 8, "h": 6 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "decimals": 3,
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.5 },
+                  { "color": "red", "value": 2 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "area"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(rate(llm_cost_usd_total[5m])) * 3600"
+            }
+          ]
         },
         {
-          "refId": "p95",
+          "id": 502,
+          "type": "stat",
+          "title": "$ spent in selected range",
+          "description": "Provider-billed LLM cost over $__range.",
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(llm_ttft_seconds_bucket[5m])))",
-          "legendFormat": "p95 {{model}}"
+          "gridPos": { "x": 8, "y": 7, "w": 8, "h": 6 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "decimals": 2,
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(increase(llm_cost_usd_total[$__range]))"
+            }
+          ]
+        },
+        {
+          "id": 504,
+          "type": "stat",
+          "title": "Lifetime $ (14d)",
+          "description": "Provider-billed LLM cost over the last 14d (Grafana Cloud free-tier retention).",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "x": 16, "y": 7, "w": 8, "h": 6 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "decimals": 2,
+              "color": { "mode": "thresholds" },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "colorMode": "value",
+            "graphMode": "none"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum(increase(llm_cost_usd_total[14d]))"
+            }
+          ]
+        },
+        {
+          "id": 505,
+          "type": "timeseries",
+          "title": "$/min by model (stacked)",
+          "description": "Provider-billed LLM cost per minute, stacked by model.",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "x": 0, "y": 13, "w": 24, "h": 8 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "custom": { "drawStyle": "line", "fillOpacity": 40, "stacking": { "mode": "normal" } }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+              "expr": "sum by (model) (rate(llm_cost_usd_total[5m])) * 60",
+              "legendFormat": "{{model}}"
+            }
+          ]
         }
       ]
     }
