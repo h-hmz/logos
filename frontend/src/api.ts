@@ -111,6 +111,13 @@ export interface CreateDebateParams {
 
 import { auth, firebaseEnabled } from './firebase'
 
+// Base URL for the backend API. Empty in local browser dev so requests stay
+// root-relative and flow through Vite's dev proxy (see vite.config.ts). Set
+// VITE_API_BASE to an absolute origin (e.g. the Cloud Run URL) for production
+// builds and native (Capacitor) shells, where no proxy exists. Trailing slash
+// stripped so `${API_BASE}/debates` never doubles up.
+const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
+
 async function getAuthHeader(): Promise<Record<string, string>> {
   if (firebaseEnabled && auth?.currentUser) {
     const token = await auth.currentUser.getIdToken()
@@ -121,7 +128,7 @@ async function getAuthHeader(): Promise<Record<string, string>> {
 }
 
 export async function fetchPhilosophers(): Promise<Philosopher[]> {
-  const res = await fetch('/philosophers')
+  const res = await fetch(`${API_BASE}/philosophers`)
   if (!res.ok) throw new Error('Failed to load philosophers')
   return res.json()
 }
@@ -132,7 +139,7 @@ export interface DebateSnapshot {
 }
 
 export async function getDebate(debateId: string): Promise<DebateSnapshot> {
-  const res = await fetch(`/debates/${debateId}`, {
+  const res = await fetch(`${API_BASE}/debates/${debateId}`, {
     headers: await getAuthHeader(),
   })
   if (!res.ok) {
@@ -144,7 +151,7 @@ export async function getDebate(debateId: string): Promise<DebateSnapshot> {
 }
 
 export async function createDebate(params: CreateDebateParams): Promise<DebateSession> {
-  const res = await fetch('/debates', {
+  const res = await fetch(`${API_BASE}/debates`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...await getAuthHeader() },
     body: JSON.stringify(params),
@@ -171,7 +178,7 @@ export async function streamTTS(
   stepKey: string,
   text: string,
 ): Promise<TTSStream> {
-  const res = await fetch(`/debates/${debateId}/tts`, {
+  const res = await fetch(`${API_BASE}/debates/${debateId}/tts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...await getAuthHeader() },
     body: JSON.stringify({ step_key: stepKey, text }),
@@ -242,7 +249,7 @@ export async function streamTutor(
   body: { selection: string; turn_key: string; history: TutorMessage[] },
   onToken: (text: string) => void,
 ): Promise<TutorResult> {
-  const res = await fetch(`/debates/${debateId}/tutor`, {
+  const res = await fetch(`${API_BASE}/debates/${debateId}/tutor`, {
     method: 'POST',
     headers: {
       Accept: 'text/event-stream',
@@ -315,7 +322,7 @@ export async function streamTutor(
 }
 
 export async function nextTurn(debateId: string): Promise<TurnResult> {
-  const res = await fetch(`/debates/${debateId}/next`, {
+  const res = await fetch(`${API_BASE}/debates/${debateId}/next`, {
     method: 'POST',
     headers: await getAuthHeader(),
   })
@@ -332,7 +339,7 @@ export async function streamTurn(
   debateId: string,
   onToken: (text: string) => void,
 ): Promise<TurnResult> {
-  const res = await fetch(`/debates/${debateId}/next`, {
+  const res = await fetch(`${API_BASE}/debates/${debateId}/next`, {
     method: 'POST',
     headers: {
       Accept: 'text/event-stream',
