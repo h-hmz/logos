@@ -343,6 +343,7 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 |---|---|---|
 | `PORT` | `8000` (`8080` in the Docker image) | HTTP listen port. |
 | `DATA_DIR` | *(binary directory)* | Path to the directory containing `agents/`. |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins permitted by CORS. Set to the deployed frontend origin(s), e.g. `https://logos-5dw.pages.dev,https://*.logos-5dw.pages.dev` (the wildcard covers Cloudflare Pages preview deployments). Empty falls back to the local Vite dev origin. |
 
 **Telemetry** (optional — OTel metrics push to any OTLP-compatible backend; Grafana Cloud free tier in our setup, see [`monitoring/README.md`](monitoring/README.md))
 

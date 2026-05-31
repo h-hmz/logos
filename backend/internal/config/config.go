@@ -10,13 +10,14 @@ import (
 )
 
 var (
-	defaultModel string
-	ttsEnabled   bool
-	ttsModel     string
+	defaultModel  string
+	ttsEnabled    bool
+	ttsModel      string
 	llmAPIKey     string
 	llmBaseURL    string
 	gcpProject    string // for Firebase auth + Firestore (not LLM/TTS)
 	authAllowlist string // comma-separated emails/domains permitted past auth
+	corsOrigins   string // comma-separated browser origins permitted by CORS
 )
 
 // DefaultLLMBaseURL is the default OpenAI-compatible endpoint when
@@ -41,6 +42,7 @@ func Load(envPath string) error {
 	}
 	gcpProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	authAllowlist = os.Getenv("AUTH_ALLOWLIST")
+	corsOrigins = os.Getenv("CORS_ALLOWED_ORIGINS")
 	ttsEnabled = strings.EqualFold(os.Getenv("TTS_ENABLED"), "TRUE")
 	ttsModel = os.Getenv("TTS_MODEL")
 	if ttsModel == "" {
@@ -76,3 +78,7 @@ func Project() string { return gcpProject }
 // emails and/or domains permitted past auth ("*" allows all). Empty denies
 // everyone (fail-closed). Parse it with auth.ParseAllowlist.
 func AuthAllowlist() string { return authAllowlist }
+
+// CORSAllowedOrigins returns the raw CORS_ALLOWED_ORIGINS spec: a comma-separated
+// list of browser origins permitted by CORS. Empty falls back to the local dev origin.
+func CORSAllowedOrigins() string { return corsOrigins }

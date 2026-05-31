@@ -150,7 +150,13 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 	default:
 		slog.Info("auth: allowlist configured")
 	}
-	router := server.New(philosophers, repo, verifier, allowlist)
+	corsOrigins := splitCSV(config.CORSAllowedOrigins())
+	if len(corsOrigins) == 0 {
+		slog.Warn("cors: no CORS_ALLOWED_ORIGINS set — only the local Vite dev origin is allowed")
+	} else {
+		slog.Info("cors: allowed origins configured", "origins", corsOrigins)
+	}
+	router := server.New(philosophers, repo, verifier, allowlist, corsOrigins)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -255,4 +261,15 @@ func buildRepo(ctx context.Context) (debate.Repository, error) {
 	default:
 		return nil, fmt.Errorf("unknown STORAGE_BACKEND=%q (want memory|firestore)", backend)
 	}
+}
+
+// splitCSV splits a comma-separated env value into trimmed, non-empty entries.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }

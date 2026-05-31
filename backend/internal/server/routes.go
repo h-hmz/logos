@@ -27,8 +27,10 @@ type Server struct {
 // New creates a chi router with all endpoints registered. The verifier
 // authenticates callers on protected routes and allow restricts them to
 // whitelisted emails/domains; pass auth.NewNoopVerifier() and an allow-all
-// allowlist (auth.ParseAllowlist("*")) for local dev/tests.
-func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier, allow auth.Allowlist) *chi.Mux {
+// allowlist (auth.ParseAllowlist("*")) for local dev/tests. corsOrigins is the
+// list of browser origins permitted by CORS; pass nil/empty to default to the
+// local Vite dev origin.
+func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier, allow auth.Allowlist, corsOrigins []string) *chi.Mux {
 	philMap := make(map[string]philosopher.Data, len(philosophers))
 	for _, p := range philosophers {
 		philMap[p.Name] = p
@@ -43,8 +45,13 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 	r.Use(requestIDMiddleware)
 	r.Use(traceContextMiddleware)
 	r.Use(recoverMiddleware)
+	// Default to the local Vite dev origin when no origins are configured so
+	// local dev and tests work without setting CORS_ALLOWED_ORIGINS.
+	if len(corsOrigins) == 0 {
+		corsOrigins = []string{"http://localhost:5173"}
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"http://localhost:5173"},
+		AllowedOrigins: corsOrigins,
 		AllowedMethods: []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Request-Id"},
 		ExposedHeaders: []string{"X-Request-Id"},
