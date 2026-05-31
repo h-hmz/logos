@@ -24,9 +24,11 @@ type Server struct {
 	svc          *debate.Service
 }
 
-// New creates a chi router with all endpoints registered. The verifier gates
-// protected routes; pass auth.NewNoopVerifier() for local dev/tests.
-func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier) *chi.Mux {
+// New creates a chi router with all endpoints registered. The verifier
+// authenticates callers on protected routes and allow restricts them to
+// whitelisted emails/domains; pass auth.NewNoopVerifier() and an allow-all
+// allowlist (auth.ParseAllowlist("*")) for local dev/tests.
+func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier, allow auth.Allowlist) *chi.Mux {
 	philMap := make(map[string]philosopher.Data, len(philosophers))
 	for _, p := range philosophers {
 		philMap[p.Name] = p
@@ -55,7 +57,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 
 	// Protected routes:
 	r.Group(func(pr chi.Router) {
-		pr.Use(authMiddleware(verifier))
+		pr.Use(authMiddleware(verifier, allow))
 		pr.Post("/debates", s.createDebate)
 		// Per-debate routes share sessionIDMiddleware so the slog handler
 		// can stamp session_id on every log line. Chained per-route via

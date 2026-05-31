@@ -2,16 +2,19 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/h-hmz/logos/internal/auth"
 )
 
-// authMiddleware gates protected routes behind a verified Firebase ID
-// token. Runs inside the public chi.Mux so requestIDMiddleware has already
-// tagged the context; log records for 401s still carry request_id.
-func authMiddleware(v auth.Verifier) func(http.Handler) http.Handler {
+// authMiddleware gates protected routes behind a verified Firebase ID token
+// and an email allowlist. A missing/invalid token is 401; a valid token whose
+// email is not on the allowlist is 403. Runs inside the public chi.Mux so
+// requestIDMiddleware has already tagged the context; log records still carry
+// request_id.
+func authMiddleware(v auth.Verifier, allow auth.Allowlist) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := r.Header.Get("Authorization")
@@ -25,12 +28,18 @@ func authMiddleware(v auth.Verifier) func(http.Handler) http.Handler {
 				writeError(w, http.StatusUnauthorized, "missing bearer token")
 				return
 			}
-			uid, err := v.Verify(r.Context(), token)
+			id, err := v.Verify(r.Context(), token)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
-			ctx := context.WithValue(r.Context(), ctxKeyUID, uid)
+			if !allow.Allows(id) {
+				slog.WarnContext(r.Context(), "auth: caller not in allowlist",
+					"uid", id.UID, "email", id.Email, "email_verified", id.EmailVerified)
+				writeError(w, http.StatusForbidden, "access denied")
+				return
+			}
+			ctx := context.WithValue(r.Context(), ctxKeyUID, id.UID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

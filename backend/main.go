@@ -133,7 +133,24 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	router := server.New(philosophers, repo, verifier)
+	allowlist := auth.ParseAllowlist(config.AuthAllowlist())
+	devNoAuth := strings.EqualFold(strings.TrimSpace(os.Getenv("AUTH_BACKEND")), "none")
+	switch {
+	case devNoAuth && allowlist.Empty():
+		// AUTH_BACKEND=none disables real auth for local dev — the noop verifier
+		// accepts any token. A fail-closed allowlist would just lock dev out for
+		// no security benefit, so allow all here. An explicit AUTH_ALLOWLIST
+		// still takes precedence.
+		allowlist = auth.ParseAllowlist("*")
+		slog.Warn("auth: allowlist bypassed (AUTH_BACKEND=none) — all callers allowed")
+	case allowlist.Open():
+		slog.Warn("auth: allowlist open (AUTH_ALLOWLIST=*) — every verified caller is allowed")
+	case allowlist.Empty():
+		slog.Warn("auth: allowlist empty — all callers will be denied; set AUTH_ALLOWLIST to emails/domains")
+	default:
+		slog.Info("auth: allowlist configured")
+	}
+	router := server.New(philosophers, repo, verifier, allowlist)
 
 	port := os.Getenv("PORT")
 	if port == "" {

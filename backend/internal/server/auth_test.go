@@ -15,26 +15,28 @@ import (
 // fakeVerifier records the last token it received and yields a canned result.
 // Used to assert middleware maps verifier outcomes to the right status codes.
 type fakeVerifier struct {
-	uid   string
+	id    auth.Identity
 	err   error
 	token string
 }
 
-func (f *fakeVerifier) Verify(_ context.Context, idToken string) (string, error) {
+func (f *fakeVerifier) Verify(_ context.Context, idToken string) (auth.Identity, error) {
 	f.token = idToken
-	return f.uid, f.err
+	return f.id, f.err
 }
 
 // authRouter builds a router backed by the given verifier and a minimal
 // server state. Handlers won't be reached in 401 tests, so the roster
-// just needs to be non-empty for handler_debate validation to survive.
+// just needs to be non-empty for handler_debate validation to survive. The
+// allowlist is open so authorization never masks the authentication outcome
+// under test.
 func authRouter(t *testing.T, v auth.Verifier) http.Handler {
 	t.Helper()
 	phils := []philosopher.Data{
 		{Name: "Socrates", School: "Classical"},
 		{Name: "Kant", School: "German Idealism"},
 	}
-	return New(phils, debate.NewMemoryRepo(), v)
+	return New(phils, debate.NewMemoryRepo(), v, auth.ParseAllowlist("*"))
 }
 
 func TestAuthMiddleware_MissingHeader(t *testing.T) {
@@ -97,10 +99,10 @@ func TestAuthMiddleware_PublicRoutesOpen(t *testing.T) {
 }
 
 func TestUIDFromContext_SetOnProtected(t *testing.T) {
-	fv := &fakeVerifier{uid: "user-xyz"}
+	fv := &fakeVerifier{id: auth.Identity{UID: "user-xyz", Email: "u@example.com", EmailVerified: true}}
 	// Swap in a handler that captures the UID from context after middleware runs.
 	var gotUID string
-	mw := authMiddleware(fv)
+	mw := authMiddleware(fv, auth.ParseAllowlist("example.com"))
 	inner := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		gotUID = UIDFromContext(r.Context())
 	})
@@ -110,5 +112,40 @@ func TestUIDFromContext_SetOnProtected(t *testing.T) {
 	mw(inner).ServeHTTP(rr, req)
 	if gotUID != "user-xyz" {
 		t.Fatalf("UIDFromContext = %q, want %q", gotUID, "user-xyz")
+	}
+}
+
+// TestAuthMiddleware_Allowlist asserts that a verified caller is admitted only
+// when their email matches the allowlist, and rejected with 403 otherwise.
+func TestAuthMiddleware_Allowlist(t *testing.T) {
+	cases := []struct {
+		name     string
+		spec     string
+		id       auth.Identity
+		wantCode int
+	}{
+		{"domain match", "example.com", auth.Identity{Email: "a@example.com", EmailVerified: true}, http.StatusOK},
+		{"email match", "a@example.com", auth.Identity{Email: "a@example.com", EmailVerified: true}, http.StatusOK},
+		{"case insensitive", "Example.COM", auth.Identity{Email: "A@Example.com", EmailVerified: true}, http.StatusOK},
+		{"wrong domain", "example.com", auth.Identity{Email: "a@evil.com", EmailVerified: true}, http.StatusForbidden},
+		{"unverified email", "example.com", auth.Identity{Email: "a@example.com", EmailVerified: false}, http.StatusForbidden},
+		{"empty allowlist denies", "", auth.Identity{Email: "a@example.com", EmailVerified: true}, http.StatusForbidden},
+		{"wildcard allows any", "*", auth.Identity{Email: "a@evil.com", EmailVerified: false}, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fv := &fakeVerifier{id: tc.id}
+			mw := authMiddleware(fv, auth.ParseAllowlist(tc.spec))
+			inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			req := httptest.NewRequest(http.MethodPost, "/debates", nil)
+			req.Header.Set("Authorization", "Bearer ok")
+			rr := httptest.NewRecorder()
+			mw(inner).ServeHTTP(rr, req)
+			if rr.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rr.Code, tc.wantCode)
+			}
+		})
 	}
 }

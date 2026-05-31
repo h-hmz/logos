@@ -13,9 +13,10 @@ var (
 	defaultModel string
 	ttsEnabled   bool
 	ttsModel     string
-	llmAPIKey    string
-	llmBaseURL   string
-	gcpProject   string // for Firebase auth + Firestore (not LLM/TTS)
+	llmAPIKey     string
+	llmBaseURL    string
+	gcpProject    string // for Firebase auth + Firestore (not LLM/TTS)
+	authAllowlist string // comma-separated emails/domains permitted past auth
 )
 
 // DefaultLLMBaseURL is the default OpenAI-compatible endpoint when
@@ -39,6 +40,7 @@ func Load(envPath string) error {
 		llmBaseURL = DefaultLLMBaseURL
 	}
 	gcpProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	authAllowlist = os.Getenv("AUTH_ALLOWLIST")
 	ttsEnabled = strings.EqualFold(os.Getenv("TTS_ENABLED"), "TRUE")
 	ttsModel = os.Getenv("TTS_MODEL")
 	if ttsModel == "" {
@@ -69,3 +71,8 @@ func LLMBaseURL() string { return llmBaseURL }
 // LLM and TTS no longer go through GCP; this is kept only for those
 // two services.
 func Project() string { return gcpProject }
+
+// AuthAllowlist returns the raw AUTH_ALLOWLIST spec: a comma-separated list of
+// emails and/or domains permitted past auth ("*" allows all). Empty denies
+// everyone (fail-closed). Parse it with auth.ParseAllowlist.
+func AuthAllowlist() string { return authAllowlist }
