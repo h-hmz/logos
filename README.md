@@ -332,7 +332,8 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 | Variable | Default | Purpose |
 |---|---|---|
 | `AUTH_BACKEND` | `firebase` | `firebase` validates Firebase ID tokens; `none` accepts any non-empty Bearer token (local dev only). |
-| `GOOGLE_CLOUD_PROJECT` | *(none)* | GCP project id. Required when `AUTH_BACKEND=firebase` or `STORAGE_BACKEND=firestore`. Uses Application Default Credentials (`gcloud auth application-default login`). |
+| `GOOGLE_CLOUD_PROJECT` | *(none)* | The GCP project this backend runs in. Used for `STORAGE_BACKEND=firestore` and Cloud Logging trace-clickthrough links. Required when `STORAGE_BACKEND=firestore`. Uses Application Default Credentials (`gcloud auth application-default login`). |
+| `FIREBASE_PROJECT` | *(none)* | The project that issues the Firebase ID tokens the auth verifier validates — i.e. the project your frontend signs in against. **Required** when `AUTH_BACKEND=firebase`. May equal `GOOGLE_CLOUD_PROJECT` (single project) or differ from it when Firebase Hosting/Auth live in a separate project (e.g. a free Spark-plan project) than the backend's Cloud Run + Firestore. |
 | `STORAGE_BACKEND` | `memory` | `memory` (in-process) or `firestore` (Cloud Run). |
 | `FIRESTORE_DATABASE` | `(default)` | Firestore database id. |
 | `FIRESTORE_COLLECTION` | `debates` | Firestore collection name. |

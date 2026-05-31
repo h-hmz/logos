@@ -213,15 +213,15 @@ func buildVerifier(ctx context.Context) (auth.Verifier, error) {
 		slog.Warn("auth: noop verifier (AUTH_BACKEND=none) — do not use in production")
 		return auth.NewNoopVerifier(), nil
 	case "", "firebase":
-		projectID := config.Project()
-		if projectID == "" {
-			return nil, fmt.Errorf("AUTH_BACKEND=firebase requires GOOGLE_CLOUD_PROJECT")
+		firebaseProjectID := config.FirebaseProject()
+		if firebaseProjectID == "" {
+			return nil, fmt.Errorf("AUTH_BACKEND=firebase requires FIREBASE_PROJECT")
 		}
-		v, err := auth.NewFirebaseVerifier(ctx, projectID)
+		v, err := auth.NewFirebaseVerifier(ctx, firebaseProjectID)
 		if err != nil {
 			return nil, err
 		}
-		slog.Info("auth: firebase", "project", projectID)
+		slog.Info("auth: firebase", "project", firebaseProjectID)
 		return v, nil
 	default:
 		return nil, fmt.Errorf("unknown AUTH_BACKEND=%q (want firebase|none)", backend)

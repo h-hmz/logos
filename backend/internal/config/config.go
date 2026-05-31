@@ -10,14 +10,15 @@ import (
 )
 
 var (
-	defaultModel  string
-	ttsEnabled    bool
-	ttsModel      string
-	llmAPIKey     string
-	llmBaseURL    string
-	gcpProject    string // for Firebase auth + Firestore (not LLM/TTS)
-	authAllowlist string // comma-separated emails/domains permitted past auth
-	corsOrigins   string // comma-separated browser origins permitted by CORS
+	defaultModel    string
+	ttsEnabled      bool
+	ttsModel        string
+	llmAPIKey       string
+	llmBaseURL      string
+	gcpProject      string // runtime GCP project: Firestore + Cloud Logging trace links
+	firebaseProject string // project that issues the Firebase ID tokens (auth verifier)
+	authAllowlist   string // comma-separated emails/domains permitted past auth
+	corsOrigins     string // comma-separated browser origins permitted by CORS
 )
 
 // DefaultLLMBaseURL is the default OpenAI-compatible endpoint when
@@ -41,6 +42,7 @@ func Load(envPath string) error {
 		llmBaseURL = DefaultLLMBaseURL
 	}
 	gcpProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	firebaseProject = os.Getenv("FIREBASE_PROJECT")
 	authAllowlist = os.Getenv("AUTH_ALLOWLIST")
 	corsOrigins = os.Getenv("CORS_ALLOWED_ORIGINS")
 	ttsEnabled = strings.EqualFold(os.Getenv("TTS_ENABLED"), "TRUE")
@@ -69,10 +71,15 @@ func LLMAPIKey() string { return llmAPIKey }
 // OpenAI-compatible endpoint.
 func LLMBaseURL() string { return llmBaseURL }
 
-// Project returns GOOGLE_CLOUD_PROJECT for Firebase auth + Firestore.
-// LLM and TTS no longer go through GCP; this is kept only for those
-// two services.
+// Project returns GOOGLE_CLOUD_PROJECT: the GCP project this backend runs in.
+// Used for Firestore storage and for Cloud Logging trace-clickthrough links.
 func Project() string { return gcpProject }
+
+// FirebaseProject returns the project that issues the Firebase ID tokens the
+// auth verifier validates (FIREBASE_PROJECT). This is the project the frontend
+// authenticates against, which can differ from the runtime Project() when
+// Hosting/Auth live in a separate (e.g. free-tier) GCP project.
+func FirebaseProject() string { return firebaseProject }
 
 // AuthAllowlist returns the raw AUTH_ALLOWLIST spec: a comma-separated list of
 // emails and/or domains permitted past auth ("*" allows all). Empty denies
