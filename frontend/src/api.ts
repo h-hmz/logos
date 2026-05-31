@@ -27,16 +27,38 @@ export interface CriticSide {
 }
 
 // JSON schema emitted by the judge agent.
+export interface ScorecardRow {
+  criterion?: string
+  score_a?: number
+  score_b?: number
+  note?: string
+}
+
 export interface JudgeVerdict {
-  summary_a?: { name?: string; thesis?: string }
-  summary_b?: { name?: string; thesis?: string }
-  clashes?: Array<{ title?: string; description?: string }>
-  shifts?: Array<{ who?: 'A' | 'B' | 'both' | 'neither'; description?: string }>
-  ranking?: { winner?: 'A' | 'B' | 'draw'; note?: string }
+  scorecard?: ScorecardRow[]
+  turning_point?: { quote?: string; who?: 'A' | 'B'; why?: string }
+  ranking?: { note?: string }
   synthesis?: string
-  confidence?: number
-  confidence_note?: string
   open?: string[]
+}
+
+// Sum the scorecard columns. The judge never names a winner; the client derives
+// it from these totals so the ruling is always consistent with the card.
+export function scorecardTotals(v: JudgeVerdict | null): { a: number; b: number } {
+  let a = 0, b = 0
+  for (const row of v?.scorecard ?? []) {
+    a += row.score_a ?? 0
+    b += row.score_b ?? 0
+  }
+  return { a, b }
+}
+
+// Winner derived from scorecard totals: 'A' | 'B' | 'draw', or null when there
+// is no scorecard yet.
+export function verdictWinner(v: JudgeVerdict | null): 'A' | 'B' | 'draw' | null {
+  if (!v?.scorecard?.length) return null
+  const { a, b } = scorecardTotals(v)
+  return a === b ? 'draw' : a > b ? 'A' : 'B'
 }
 
 // Parse a JSON-output step's content into a typed object. Returns null if the

@@ -1,4 +1,4 @@
-import { type CriticFinding, type JudgeVerdict } from '../api'
+import { scorecardTotals, verdictWinner, type CriticFinding, type JudgeVerdict } from '../api'
 import { type EnrichedPhilosopher } from '../philosopher-meta'
 import { InlineMd } from './InlineMd'
 
@@ -177,14 +177,10 @@ export function JudgeCurtain({
   b,
   onSeeVerdict,
 }: JudgeCurtainProps) {
+  const ruling = verdictWinner(verdict)
   const winner =
-    verdict?.ranking?.winner === 'A'
-      ? a.name
-      : verdict?.ranking?.winner === 'B'
-        ? b.name
-        : verdict?.ranking?.winner === 'draw'
-          ? 'Draw'
-          : null
+    ruling === 'A' ? a.name : ruling === 'B' ? b.name : ruling === 'draw' ? 'Draw' : null
+  const totals = scorecardTotals(verdict)
   return (
     <div className="curtain judge">
       <div className="title-row">
@@ -201,8 +197,8 @@ export function JudgeCurtain({
           {winner && (
             <div className="judge-winner">
               <span className="t-sc">Verdict</span> <b>{winner}</b>
-              {typeof verdict.confidence === 'number' && (
-                <span className="judge-confidence"> · confidence {verdict.confidence}/10</span>
+              {ruling !== null && (
+                <span className="judge-confidence"> · {totals.a}&ndash;{totals.b} on the card</span>
               )}
             </div>
           )}

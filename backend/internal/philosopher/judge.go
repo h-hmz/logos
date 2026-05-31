@@ -25,34 +25,36 @@ func fullTranscriptBlock(a, b Data, numRounds int) string {
 
 const judgeTemplate = `You are the **Debate Judge**. You have observed a {{.NumRounds}}-round head-to-head philosophical debate followed by a critic intervention and responses.
 
+Debater A is {{printf "%q" .NameA}}; debater B is {{printf "%q" .NameB}}.
+
 ## Topic: {topic}
 
 ## Full Debate Record
 {{.Transcript}}
 
+## Your Task
+You judge the debate *as a whole* — not each debater's reasoning in isolation (the Critic already did that). Say only what a reader of the transcript could not already see for themselves: do NOT re-summarize the positions they just read.
+
 ## Output Guidance
 Output is constrained to a JSON schema by the API — structure is enforced.
 Field semantics:
-- summary_a.name MUST equal {{printf "%q" .NameA}}; summary_b.name MUST equal {{printf "%q" .NameB}}.
-- thesis: 2-3 sentence distillation of the debater's central position.
-- clashes: 2-3 items. title is a short label (e.g. "Grounds of moral obligation"); description is 1-2 sentences on the disagreement and how they engaged.
-- shifts: 0-3 items; who is one of "A" | "B" | "both" | "neither"; description names the concession, strengthening, or evolution across rounds. Use [] if neither side moved.
-- ranking.winner is one of "A" | "B" | "draw"; note is 2-3 sentences on what tipped the scales.
+- scorecard: exactly 4 rows, one per criterion below, in this exact order and using these exact criterion names. For each row, score debater A (score_a) and debater B (score_b) from 1 (poor) to 5 (excellent) as integers, and write a one-sentence note justifying the gap between the two scores.
+    1. "Rigor" — soundness and validity of the reasoning; freedom from fallacy.
+    2. "Responsiveness" — did they engage the opponent's actual argument and answer the critic's challenge, rather than talk past it?
+    3. "Depth" — originality and philosophical insight beyond the obvious.
+    4. "Persuasion" — rhetorical force, clarity, and memorability of the case.
+  The winner is computed from the column totals by the client — do NOT declare a winner anywhere. Score honestly: a close card (e.g. 14-13) signals a near-tie; a lopsided card signals a decisive result.
+- turning_point: the single moment the debate turned. quote MUST be a verbatim excerpt copied word-for-word from the Full Debate Record above — never paraphrase or invent. who is "A" or "B", the speaker of that quote. why is 1-2 sentences on why that moment was decisive.
+- ranking.note: 2-3 sentences explaining what the scorecard totals add up to — what tipped the balance, or why it was a draw. Must be consistent with the scores you gave; never praise a side the totals contradict.
 - synthesis: a genuine philosophical position taking the strongest insights from both sides — NOT a diplomatic compromise.
-- confidence: integer 1-10 on the scale below; confidence_note is 1-2 sentences justifying the rating.
-- open: 2-3 unresolved questions raised by the debate.
-
-Confidence scale:
-- 1-3: Irreconcilable positions, no meaningful common ground.
-- 4-6: Partial convergence, significant tensions remain.
-- 7-9: One position clearly stronger with well-defended arguments.
-- 10: Near-decisive (rare in philosophy).
+- open: 2-3 unresolved questions the debate raised but did not settle.
 `
 
-// MakeJudge creates the judge agent that synthesizes the full debate into a
-// structured JSON verdict. The frontend renders each section of the JSON
-// independently (positions, clashes, shifts, ranking, synthesis, confidence,
-// open questions), so plain prose is no longer acceptable output.
+// MakeJudge creates the judge agent that evaluates the full debate as a whole
+// and emits a structured JSON verdict. The frontend renders each section of the
+// JSON independently (scorecard, turning point, ranking note, synthesis, open
+// questions) and derives the winner from the scorecard column totals, so plain
+// prose is no longer acceptable output.
 func MakeJudge(ctx context.Context, a, b Data, numRounds int, modelID string) (*agent.Agent, error) {
 	instruction, err := render("judge", judgeTemplate, struct {
 		NumRounds  int
@@ -88,58 +90,35 @@ var judgeSchema = &agent.JSONSchema{
 		"type":                 "object",
 		"additionalProperties": false,
 		"required": []string{
-			"summary_a", "summary_b", "clashes", "shifts",
-			"ranking", "synthesis", "confidence", "confidence_note", "open",
+			"scorecard", "turning_point", "ranking", "synthesis", "open",
 		},
 		"properties": map[string]any{
-			"summary_a": debaterSummarySchema,
-			"summary_b": debaterSummarySchema,
-			"clashes": map[string]any{
-				"type": "array",
-				"items": map[string]any{
-					"type":                 "object",
-					"additionalProperties": false,
-					"required":             []string{"title", "description"},
-					"properties": map[string]any{
-						"title":       map[string]any{"type": "string"},
-						"description": map[string]any{"type": "string"},
-					},
-				},
+			"scorecard": map[string]any{
+				"type":  "array",
+				"items": scorecardRowSchema,
 			},
-			"shifts": map[string]any{
-				"type": "array",
-				"items": map[string]any{
-					"type":                 "object",
-					"additionalProperties": false,
-					"required":             []string{"who", "description"},
-					"properties": map[string]any{
-						"who": map[string]any{
-							"type": "string",
-							"enum": []string{"A", "B", "both", "neither"},
-						},
-						"description": map[string]any{"type": "string"},
+			"turning_point": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"quote", "who", "why"},
+				"properties": map[string]any{
+					"quote": map[string]any{"type": "string"},
+					"who": map[string]any{
+						"type": "string",
+						"enum": []string{"A", "B"},
 					},
+					"why": map[string]any{"type": "string"},
 				},
 			},
 			"ranking": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
-				"required":             []string{"winner", "note"},
+				"required":             []string{"note"},
 				"properties": map[string]any{
-					"winner": map[string]any{
-						"type": "string",
-						"enum": []string{"A", "B", "draw"},
-					},
 					"note": map[string]any{"type": "string"},
 				},
 			},
 			"synthesis": map[string]any{"type": "string"},
-			"confidence": map[string]any{
-				"type":    "integer",
-				"minimum": 1,
-				"maximum": 10,
-			},
-			"confidence_note": map[string]any{"type": "string"},
 			"open": map[string]any{
 				"type":  "array",
 				"items": map[string]any{"type": "string"},
@@ -148,12 +127,16 @@ var judgeSchema = &agent.JSONSchema{
 	},
 }
 
-var debaterSummarySchema = map[string]any{
+// scorecardRowSchema is one criterion row: a 1-5 score for each debater plus a
+// one-line justification. The client sums score_a/score_b to derive the winner.
+var scorecardRowSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []string{"name", "thesis"},
+	"required":             []string{"criterion", "score_a", "score_b", "note"},
 	"properties": map[string]any{
-		"name":   map[string]any{"type": "string"},
-		"thesis": map[string]any{"type": "string"},
+		"criterion": map[string]any{"type": "string"},
+		"score_a":   map[string]any{"type": "integer", "minimum": 1, "maximum": 5},
+		"score_b":   map[string]any{"type": "integer", "minimum": 1, "maximum": 5},
+		"note":      map[string]any{"type": "string"},
 	},
 }

@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bust } from '../components/Bust'
 import { InlineMd } from '../components/InlineMd'
-import { parseStructured, type DebateSession, type JudgeVerdict, type TurnResult } from '../api'
+import {
+  parseStructured,
+  scorecardTotals,
+  verdictWinner,
+  type DebateSession,
+  type JudgeVerdict,
+  type TurnResult,
+} from '../api'
 import { enrich } from '../philosopher-meta'
 import { roleForLabel } from '../step-role'
 import type { Route } from '../components/Masthead'
@@ -48,15 +55,14 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
   const sections: SectionDef[] = useMemo(() => {
     if (!verdict) return []
     const out: SectionDef[] = []
-    if (verdict.summary_a || verdict.summary_b) out.push({ id: 'positions', label: 'I · Positions' })
-    if (verdict.clashes?.length) out.push({ id: 'clashes', label: 'II · Clashes' })
-    if (verdict.shifts?.length) out.push({ id: 'shifts', label: 'III · Shifts' })
-    if (verdict.ranking) out.push({ id: 'ranking', label: 'IV · Ranking' })
-    if (verdict.synthesis) out.push({ id: 'synthesis', label: 'V · Synthesis' })
-    if (typeof verdict.confidence === 'number') out.push({ id: 'confidence', label: 'VI · Confidence' })
-    if (verdict.open?.length) out.push({ id: 'open', label: 'VII · Open' })
+    if (verdict.turning_point?.quote) out.push({ id: 'turning', label: 'I · Turning point' })
+    if (verdict.scorecard?.length) out.push({ id: 'scorecard', label: 'II · Scorecard' })
+    if (verdict.synthesis) out.push({ id: 'synthesis', label: 'III · Synthesis' })
+    if (verdict.open?.length) out.push({ id: 'open', label: 'IV · Open' })
     return out
   }, [verdict])
+
+  const totals = useMemo(() => scorecardTotals(verdict), [verdict])
 
   const [active, setActive] = useState<string>('')
   useEffect(() => {
@@ -75,14 +81,9 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
     return () => window.removeEventListener('scroll', handler)
   }, [sections])
 
+  const winner = verdictWinner(verdict)
   const winnerName =
-    verdict?.ranking?.winner === 'A'
-      ? a.name
-      : verdict?.ranking?.winner === 'B'
-      ? b.name
-      : verdict?.ranking?.winner === 'draw'
-      ? 'A draw'
-      : null
+    winner === 'A' ? a.name : winner === 'B' ? b.name : winner === 'draw' ? 'A draw' : null
 
   return (
     <main>
@@ -165,85 +166,77 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
             </div>
           )}
 
-          {verdict && (verdict.summary_a || verdict.summary_b) && (
-            <div id="positions" className="section">
+          {verdict?.turning_point?.quote && (
+            <div id="turning" className="section">
               <div className="hair">I</div>
-              <h3>Positions</h3>
-              <div className="positions-grid">
-                {verdict.summary_a && (
-                  <PositionCard
-                    who={a.name}
-                    initials={a.initials}
-                    name={verdict.summary_a.name}
-                    thesis={verdict.summary_a.thesis}
-                  />
-                )}
-                {verdict.summary_b && (
-                  <PositionCard
-                    who={b.name}
-                    initials={b.initials}
-                    name={verdict.summary_b.name}
-                    thesis={verdict.summary_b.thesis}
-                  />
-                )}
-              </div>
+              <h3>Turning point</h3>
+              <blockquote className="turning-quote">
+                <InlineMd text={verdict.turning_point.quote} />
+                <cite className="turning-who">
+                  — {verdict.turning_point.who === 'B' ? b.name : a.name}
+                </cite>
+              </blockquote>
+              {verdict.turning_point.why && (
+                <p className="verdict-article" style={{ marginTop: 12 }}>
+                  <InlineMd text={verdict.turning_point.why} />
+                </p>
+              )}
             </div>
           )}
 
-          {verdict?.clashes && verdict.clashes.length > 0 && (
-            <div id="clashes" className="section">
+          {verdict?.scorecard && verdict.scorecard.length > 0 && (
+            <div id="scorecard" className="section">
               <div className="hair">II</div>
-              <h3>Clashes</h3>
-              <ol className="clash-list">
-                {verdict.clashes.map((c, i) => (
-                  <li key={i}>
-                    {c.title && <div className="clash-title"><InlineMd text={c.title} /></div>}
-                    {c.description && <div className="clash-desc"><InlineMd text={c.description} /></div>}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-
-          {verdict?.shifts && verdict.shifts.length > 0 && (
-            <div id="shifts" className="section">
-              <div className="hair">III</div>
-              <h3>Shifts</h3>
-              <ul className="shift-list">
-                {verdict.shifts.map((s, i) => (
-                  <li key={i}>
-                    <span className="shift-who">
-                      {s.who === 'A'
-                        ? a.name
-                        : s.who === 'B'
-                        ? b.name
-                        : s.who === 'both'
-                        ? 'Both'
-                        : 'Neither'}
-                    </span>
-                    {s.description && <span className="shift-desc"> — <InlineMd text={s.description} /></span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {verdict?.ranking && (
-            <div id="ranking" className="section">
-              <div className="hair">IV</div>
-              <h3>Ranking</h3>
-              <div className="ranking-line">
-                <span className="t-sc">Winner</span>
-                <span className="ranking-winner">
-                  {verdict.ranking.winner === 'A'
-                    ? a.name
-                    : verdict.ranking.winner === 'B'
-                    ? b.name
-                    : 'Draw'}
-                </span>
+              <h3>Scorecard</h3>
+              <div className="scorecard">
+                <div className="sc-legend">
+                  <span className="sc-tag a"><i />{a.name}</span>
+                  <span className="sc-tag b"><i />{b.name}</span>
+                </div>
+                {verdict.scorecard.map((row, i) => {
+                  const sa = row.score_a ?? 0
+                  const sb = row.score_b ?? 0
+                  return (
+                    <div className="sc-row" key={i}>
+                      <div className="sc-main">
+                        <div className="sc-crit">{row.criterion}</div>
+                        <div className="sc-bars">
+                          <div className={`sc-side a${sa >= sb ? ' lead' : ''}`}>
+                            <span className="sc-ini">{a.initials}</span>
+                            <span className="sc-track"><i style={{ width: `${sa * 20}%` }} /></span>
+                            <span className="sc-val">{sa}</span>
+                          </div>
+                          <div className={`sc-side b${sb >= sa ? ' lead' : ''}`}>
+                            <span className="sc-ini">{b.initials}</span>
+                            <span className="sc-track"><i style={{ width: `${sb * 20}%` }} /></span>
+                            <span className="sc-val">{sb}</span>
+                          </div>
+                        </div>
+                      </div>
+                      {row.note && <p className="sc-note"><InlineMd text={row.note} /></p>}
+                    </div>
+                  )
+                })}
+                <div className="sc-total">
+                  <div className={`sc-total-side a${totals.a > totals.b ? ' win' : ''}`}>
+                    <span className="sc-total-val">{totals.a}</span>
+                    <span className="sc-ini">{a.initials}</span>
+                  </div>
+                  <div className="sc-total-rule">
+                    {winnerName && (
+                      <span className="sc-ruling">
+                        {winner === 'draw' ? 'A draw' : `${winnerName} takes it`}
+                      </span>
+                    )}
+                  </div>
+                  <div className={`sc-total-side b${totals.b > totals.a ? ' win' : ''}`}>
+                    <span className="sc-ini">{b.initials}</span>
+                    <span className="sc-total-val">{totals.b}</span>
+                  </div>
+                </div>
               </div>
-              {verdict.ranking.note && (
-                <p className="verdict-article" style={{ marginTop: 10 }}>
+              {verdict.ranking?.note && (
+                <p className="verdict-article" style={{ marginTop: 18 }}>
                   <InlineMd text={verdict.ranking.note} />
                 </p>
               )}
@@ -252,39 +245,15 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
 
           {verdict?.synthesis && (
             <div id="synthesis" className="section">
-              <div className="hair">V</div>
+              <div className="hair">III</div>
               <h3>Synthesis</h3>
               <p className="verdict-article drop"><InlineMd text={verdict.synthesis} /></p>
             </div>
           )}
 
-          {verdict && typeof verdict.confidence === 'number' && (
-            <div id="confidence" className="section">
-              <div className="hair">VI</div>
-              <h3>Confidence</h3>
-              <div className="confidence-meter">
-                <div className="confidence-bar">
-                  <div
-                    className="confidence-fill"
-                    style={{ width: `${Math.max(0, Math.min(10, verdict.confidence)) * 10}%` }}
-                  />
-                </div>
-                <div className="confidence-num">
-                  {verdict.confidence}
-                  <span className="confidence-den">/10</span>
-                </div>
-              </div>
-              {verdict.confidence_note && (
-                <p style={{ marginTop: 10, fontStyle: 'italic', color: 'var(--ink-2)' }}>
-                  <InlineMd text={verdict.confidence_note} />
-                </p>
-              )}
-            </div>
-          )}
-
           {verdict?.open && verdict.open.length > 0 && (
             <div id="open" className="section">
-              <div className="hair">VII</div>
+              <div className="hair">IV</div>
               <h3>Open questions</h3>
               <ul className="open-list">
                 {verdict.open.map((q, i) => (
@@ -376,27 +345,5 @@ export function VerdictPage({ debate, turns, navigate }: Props) {
         </aside>
       </section>
     </main>
-  )
-}
-
-function PositionCard({
-  who,
-  initials,
-  name,
-  thesis,
-}: {
-  who: string
-  initials: string
-  name?: string
-  thesis?: string
-}) {
-  return (
-    <div className="position-card">
-      <div className="position-head">
-        <span className="t-sc">{initials}</span>
-        <span className="name">{name ?? who}</span>
-      </div>
-      {thesis && <p className="position-thesis"><InlineMd text={thesis} /></p>}
-    </div>
   )
 }
