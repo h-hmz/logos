@@ -60,11 +60,11 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 	// Public routes:
 	r.Get("/healthz", s.healthz)
 	r.Get("/readyz", s.healthz)
-	r.Get("/philosophers", s.listPhilosophers)
 
 	// Protected routes:
 	r.Group(func(pr chi.Router) {
 		pr.Use(authMiddleware(verifier, allow))
+		pr.Get("/philosophers", s.listPhilosophers)
 		pr.Post("/debates", s.createDebate)
 		// Per-debate routes share sessionIDMiddleware so the slog handler
 		// can stamp session_id on every log line. Chained per-route via

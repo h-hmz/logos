@@ -16,9 +16,8 @@
       (function () {
         try {
           var stored = localStorage.getItem('logos_theme');
-          var theme = stored === 'dark' || stored === 'light'
-            ? stored
-            : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          // Default to dark; only an explicit stored choice overrides it.
+          var theme = stored === 'dark' || stored === 'light' ? stored : 'dark';
           document.documentElement.setAttribute('data-theme', theme);
         } catch (e) { /* noop */ }
       })();

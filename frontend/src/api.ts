@@ -128,7 +128,9 @@ async function getAuthHeader(): Promise<Record<string, string>> {
 }
 
 export async function fetchPhilosophers(): Promise<Philosopher[]> {
-  const res = await fetch(`${API_BASE}/philosophers`)
+  const res = await fetch(`${API_BASE}/philosophers`, {
+    headers: await getAuthHeader(),
+  })
   if (!res.ok) throw new Error('Failed to load philosophers')
   return res.json()
 }

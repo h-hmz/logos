@@ -19,7 +19,9 @@ function initialTheme(): Theme {
     const stored = localStorage.getItem(THEME_STORAGE_KEY)
     if (stored === 'dark' || stored === 'light') return stored
   } catch { /* noop */ }
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  // Default to dark; an explicit user choice is persisted under THEME_STORAGE_KEY
+  // and takes precedence above.
+  return 'dark'
 }
 
 function parseHash(): Route {
