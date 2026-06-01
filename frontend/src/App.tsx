@@ -5,6 +5,7 @@ import { LivePage } from './pages/LivePage'
 import { VerdictPage } from './pages/VerdictPage'
 import { getDebate, type DebateSession, type TurnResult } from './api'
 import { AuthProvider, useAuth } from './AuthContext'
+import { QuotaProvider } from './QuotaContext'
 import { firebaseEnabled } from './firebase'
 
 const DEBATE_STORAGE_KEY = (id: string) => `logos_debate_${id}`
@@ -42,7 +43,9 @@ function hashFor(r: Route): string {
 export default function App() {
   return (
     <AuthProvider>
-      <AppInner />
+      <QuotaProvider>
+        <AppInner />
+      </QuotaProvider>
     </AuthProvider>
   )
 }

@@ -1,5 +1,6 @@
 import { useAuth } from '../AuthContext'
 import { firebaseEnabled } from '../firebase'
+import { QuotaPill } from './QuotaPill'
 
 export type Route =
   | { page: 'stage' }
@@ -58,6 +59,7 @@ export function Masthead({ route, debateId, navigate, theme, onToggleTheme }: Ma
         >
           Verdict
         </a>
+        <QuotaPill />
         <button
           type="button"
           className="theme-toggle"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { streamTutor, type TutorMessage } from '../api'
+import { ApiError, streamTutor, type TutorMessage } from '../api'
+import { useQuota } from '../QuotaContext'
 import { InlineMd } from './InlineMd'
 import { NoctuaIcon } from './NoctuaIcon'
 
@@ -39,6 +40,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
   // closing over stale state.
   const entriesRef = useRef<ChatEntry[]>([])
   useEffect(() => { entriesRef.current = entries }, [entries])
+  const { refresh: refreshQuota } = useQuota()
 
   const toHistory = (list: ChatEntry[]): TutorMessage[] =>
     list
@@ -87,8 +89,14 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
           }
           return copy
         })
+        // A tutor reply just spent from the budget; pull the new balance.
+        void refreshQuota()
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Tutor request failed'
+        let msg = e instanceof Error ? e.message : 'Tutor request failed'
+        if (e instanceof ApiError && e.status === 402) {
+          msg = 'Your purse is empty.'
+          void refreshQuota()
+        }
         setEntries((prev) => {
           const copy = prev.slice()
           const last = copy[copy.length - 1]
@@ -101,7 +109,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
         setBusy(false)
       }
     },
-    [busy, debateId, selection, turnKey],
+    [busy, debateId, selection, turnKey, refreshQuota],
   )
 
   // Focus the composer on open (mount or reopen) and preselect the default so

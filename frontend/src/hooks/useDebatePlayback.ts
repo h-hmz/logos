@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { streamTurn, type DebateSession, type TurnResult } from '../api'
+import { ApiError, streamTurn, type DebateSession, type TurnResult } from '../api'
+import { useQuota } from '../QuotaContext'
 
 const STORAGE_KEY = (id: string) => `logos_step_${id}`
 const AUTO_ADVANCE_DELAY_MS = 1400
@@ -69,6 +70,7 @@ export function useDebatePlayback(
   })
   const inFlight = useRef(false)
   const lastCompletedRef = useRef(-1)
+  const { refresh: refreshQuota } = useQuota()
 
   useEffect(() => {
     try {
@@ -108,8 +110,16 @@ export function useDebatePlayback(
       setTotalIn(result.total_input_tokens)
       setTotalOut(result.total_output_tokens)
       setIdx(stepIndex + 1)
+      // A turn just spent from the budget; pull the new balance.
+      void refreshQuota()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'stream failed'
+      // 402 means the budget is exhausted. Show a plain message naming the
+      // limit (the pill already knows it) and refresh so the balance reads $0.
+      let msg = e instanceof Error ? e.message : 'stream failed'
+      if (e instanceof ApiError && e.status === 402) {
+        msg = 'Your purse is empty.'
+        void refreshQuota()
+      }
       setBuffers((prev) => ({
         ...prev,
         [stepIndex]: {
@@ -123,7 +133,7 @@ export function useDebatePlayback(
     } finally {
       inFlight.current = false
     }
-  }, [idx, debate.id, debate.total_steps, onTurnCompleted])
+  }, [idx, debate.id, debate.total_steps, onTurnCompleted, refreshQuota])
 
   useEffect(() => {
     if (!auto) return

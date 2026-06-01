@@ -111,6 +111,20 @@ export interface CreateDebateParams {
 
 import { auth, firebaseEnabled } from './firebase'
 
+// ApiError carries the HTTP status alongside the message so callers can
+// distinguish, e.g., a 402 (quota exhausted) from a generic failure. The
+// message stays the server's `detail` so existing error displays are unchanged.
+export class ApiError extends Error {
+  status: number
+  detail: string
+  constructor(status: number, detail: string) {
+    super(detail)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
 // Base URL for the backend API. Empty in local browser dev so requests stay
 // root-relative and flow through Vite's dev proxy (see vite.config.ts). Set
 // VITE_API_BASE to an absolute origin (e.g. the Cloud Run URL) for production
@@ -125,6 +139,22 @@ async function getAuthHeader(): Promise<Record<string, string>> {
   }
   // Local dev fallback: noop verifier accepts any non-empty token.
   return { Authorization: 'Bearer local-dev-token' }
+}
+
+// Quota is the authenticated user's lifetime dollar budget. A negative
+// limit_usd/remaining_usd means unlimited (enforcement disabled); see ADR 0009.
+export interface Quota {
+  limit_usd: number
+  spent_usd: number
+  remaining_usd: number
+}
+
+export async function fetchQuota(): Promise<Quota> {
+  const res = await fetch(`${API_BASE}/me/quota`, {
+    headers: await getAuthHeader(),
+  })
+  if (!res.ok) throw new ApiError(res.status, 'Failed to load quota')
+  return res.json()
 }
 
 export async function fetchPhilosophers(): Promise<Philosopher[]> {
@@ -262,7 +292,7 @@ export async function streamTutor(
   })
   if (!res.ok || !res.body) {
     const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
-    throw new Error(err?.detail ?? 'Stream failed')
+    throw new ApiError(res.status, err?.detail ?? 'Stream failed')
   }
   // Backend currently responds with JSON; SSE will return when streaming
   // is re-introduced. The parser below stays in place for that day.
@@ -330,7 +360,7 @@ export async function nextTurn(debateId: string): Promise<TurnResult> {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(err.detail ?? 'Failed to advance debate')
+    throw new ApiError(res.status, err.detail ?? 'Failed to advance debate')
   }
   return res.json()
 }
@@ -350,7 +380,7 @@ export async function streamTurn(
   })
   if (!res.ok || !res.body) {
     const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
-    throw new Error(err?.detail ?? 'Stream failed')
+    throw new ApiError(res.status, err?.detail ?? 'Stream failed')
   }
   // Backend currently responds with JSON; SSE will return when streaming
   // is re-introduced. The parser below stays in place for that day.
