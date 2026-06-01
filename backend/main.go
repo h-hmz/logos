@@ -17,6 +17,7 @@ import (
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
+	"github.com/h-hmz/logos/internal/quota"
 	"github.com/h-hmz/logos/internal/server"
 	"github.com/h-hmz/logos/internal/telemetry"
 )
@@ -156,7 +157,11 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 	} else {
 		slog.Info("cors: allowed origins configured", "origins", corsOrigins)
 	}
-	router := server.New(philosophers, repo, verifier, allowlist, corsOrigins)
+	quotaDeps, err := buildQuota(ctx)
+	if err != nil {
+		return fmt.Errorf("quota: %w", err)
+	}
+	router := server.New(philosophers, repo, verifier, allowlist, corsOrigins, quotaDeps)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -261,6 +266,54 @@ func buildRepo(ctx context.Context) (debate.Repository, error) {
 	default:
 		return nil, fmt.Errorf("unknown STORAGE_BACKEND=%q (want memory|firestore)", backend)
 	}
+}
+
+// buildQuota constructs the per-user quota dependencies when QUOTA_ENABLED is
+// set, returning nil (quota disabled) otherwise. The spend store follows the
+// same STORAGE_BACKEND as debates: in-memory for dev, Firestore for Cloud Run
+// (collection overridable via QUOTA_COLLECTION, default "quotas"). See ADR 0009.
+func buildQuota(ctx context.Context) (*server.QuotaDeps, error) {
+	if !config.QuotaEnabled() {
+		slog.Warn("quota: disabled (set QUOTA_ENABLED=true to enforce per-user budgets)")
+		return nil, nil
+	}
+
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("STORAGE_BACKEND")))
+	var store quota.Store
+	switch backend {
+	case "", "memory":
+		store = quota.NewMemoryStore()
+		slog.Info("quota storage: in-memory")
+	case "firestore":
+		projectID := config.Project()
+		if projectID == "" {
+			return nil, fmt.Errorf("STORAGE_BACKEND=firestore requires GOOGLE_CLOUD_PROJECT")
+		}
+		database := os.Getenv("FIRESTORE_DATABASE")
+		collection := os.Getenv("QUOTA_COLLECTION")
+		if collection == "" {
+			collection = "quotas"
+		}
+		fs, err := quota.NewFirestoreStore(ctx, projectID, database, collection)
+		if err != nil {
+			return nil, err
+		}
+		dbLabel := database
+		if dbLabel == "" {
+			dbLabel = "(default)"
+		}
+		slog.Info("quota storage: firestore", "project", projectID, "database", dbLabel, "collection", collection)
+		store = fs
+	default:
+		return nil, fmt.Errorf("unknown STORAGE_BACKEND=%q (want memory|firestore)", backend)
+	}
+
+	slog.Info("quota: enabled", "limit_usd", config.QuotaLimitUSD())
+	return &server.QuotaDeps{
+		Store:           store,
+		DefaultLimitUSD: config.QuotaLimitUSD(),
+		InFlight:        quota.NewInFlight(),
+	}, nil
 }
 
 // splitCSV splits a comma-separated env value into trimmed, non-empty entries.

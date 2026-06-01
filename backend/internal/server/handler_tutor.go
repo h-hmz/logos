@@ -29,6 +29,7 @@ type tutorResponse struct {
 
 func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
+	uid := UIDFromContext(r.Context())
 
 	defer r.Body.Close()
 	var req tutorRequest
@@ -42,7 +43,7 @@ func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 		history[i] = debate.TutorMessage{Role: m.Role, Content: m.Content}
 	}
 
-	result, err := s.svc.TutorExplain(r.Context(), debateID, debate.TutorRequest{
+	result, err := s.svc.TutorExplain(r.Context(), uid, debateID, debate.TutorRequest{
 		Selection: req.Selection,
 		TurnKey:   req.TurnKey,
 		History:   history,

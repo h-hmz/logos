@@ -36,7 +36,7 @@ func authRouter(t *testing.T, v auth.Verifier) http.Handler {
 		{Name: "Socrates", School: "Classical"},
 		{Name: "Kant", School: "German Idealism"},
 	}
-	return New(phils, debate.NewMemoryRepo(), v, auth.ParseAllowlist("*"), nil)
+	return New(phils, debate.NewMemoryRepo(), v, auth.ParseAllowlist("*"), nil, nil)
 }
 
 func TestAuthMiddleware_MissingHeader(t *testing.T) {
@@ -88,7 +88,9 @@ func TestAuthMiddleware_RejectedByVerifier(t *testing.T) {
 
 func TestAuthMiddleware_PublicRoutesOpen(t *testing.T) {
 	h := authRouter(t, &fakeVerifier{err: errors.New("should not be called")})
-	for _, path := range []string{"/healthz", "/readyz", "/philosophers"} {
+	// Only the health probes are public; /philosophers moved under auth in
+	// commit 23ceeee, so it is covered by the protected-route checks instead.
+	for _, path := range []string{"/healthz", "/readyz"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)

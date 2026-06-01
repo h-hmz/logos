@@ -40,42 +40,69 @@ type TutorResult struct {
 }
 
 // TutorExplain returns a tutor response grounded in the selected turn and its
-// immediate predecessor (excluding the moderator). No server-side state is
-// persisted; the chat history is resent by the caller on each follow-up.
-func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRequest) (TutorResult, error) {
+// immediate predecessor (excluding the moderator). uid is the authenticated
+// caller, charged for the generation when quota is enabled. No server-side
+// state is persisted; the chat history is resent by the caller on each
+// follow-up.
+//
+// Returns ErrNotFound, *ValidationError, ErrOverBudget, or ErrGenerationInFlight
+// for callers that need to distinguish cases.
+func (s *Service) TutorExplain(ctx context.Context, uid, debateID string, req TutorRequest) (TutorResult, error) {
+	release, err := s.admitGeneration(ctx, uid)
+	if err != nil {
+		return TutorResult{}, err
+	}
+	defer release()
+
+	var res TutorResult
+	err = s.charge(ctx, uid, func() (float64, error) {
+		r, cost, runErr := s.runTutorExplain(ctx, debateID, req)
+		res = r
+		return cost, runErr
+	})
+	if err != nil {
+		return TutorResult{}, err
+	}
+	return res, nil
+}
+
+// runTutorExplain performs the tutor generation and returns the result plus its
+// provider-billed cost (Usage.CostUSD). Separated from quota bookkeeping so
+// admitGeneration/charge can wrap it uniformly with NextTurn.
+func (s *Service) runTutorExplain(ctx context.Context, debateID string, req TutorRequest) (TutorResult, float64, error) {
 	selection := strings.TrimSpace(req.Selection)
 	if selection == "" {
-		return TutorResult{}, validationErr("selection is empty")
+		return TutorResult{}, 0, validationErr("selection is empty")
 	}
 	if len(selection) > TutorSelectionMaxLen {
-		return TutorResult{}, validationErr(fmt.Sprintf("selection exceeds %d characters", TutorSelectionMaxLen))
+		return TutorResult{}, 0, validationErr(fmt.Sprintf("selection exceeds %d characters", TutorSelectionMaxLen))
 	}
 	if strings.TrimSpace(req.TurnKey) == "" {
-		return TutorResult{}, validationErr("turn_key is required")
+		return TutorResult{}, 0, validationErr("turn_key is required")
 	}
 	if req.TurnKey == "moderator_intro" {
-		return TutorResult{}, validationErr("tutor cannot be used on moderator turns")
+		return TutorResult{}, 0, validationErr("tutor cannot be used on moderator turns")
 	}
 	if len(req.History) > TutorHistoryMaxMessages {
-		return TutorResult{}, validationErr(fmt.Sprintf("chat history exceeds %d messages", TutorHistoryMaxMessages))
+		return TutorResult{}, 0, validationErr(fmt.Sprintf("chat history exceeds %d messages", TutorHistoryMaxMessages))
 	}
 	for _, m := range req.History {
 		if m.Role != "user" && m.Role != "tutor" {
-			return TutorResult{}, validationErr("history role must be 'user' or 'tutor'")
+			return TutorResult{}, 0, validationErr("history role must be 'user' or 'tutor'")
 		}
 		if len(m.Content) > TutorMessageMaxLen {
-			return TutorResult{}, validationErr(fmt.Sprintf("history message exceeds %d characters", TutorMessageMaxLen))
+			return TutorResult{}, 0, validationErr(fmt.Sprintf("history message exceeds %d characters", TutorMessageMaxLen))
 		}
 	}
 
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
-		return TutorResult{}, err
+		return TutorResult{}, 0, err
 	}
 	a, okA := s.philMap[p.DebaterAName]
 	b, okB := s.philMap[p.DebaterBName]
 	if !okA || !okB {
-		return TutorResult{}, fmt.Errorf("tutor: unknown philosopher in debate")
+		return TutorResult{}, 0, fmt.Errorf("tutor: unknown philosopher in debate")
 	}
 
 	steps := BuildStepMeta(a, b, p.NumRounds)
@@ -87,12 +114,12 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 		}
 	}
 	if idx < 0 {
-		return TutorResult{}, validationErr("unknown turn_key")
+		return TutorResult{}, 0, validationErr("unknown turn_key")
 	}
 
 	speakerTurn := strings.TrimSpace(p.StepOutputs[req.TurnKey])
 	if speakerTurn == "" {
-		return TutorResult{}, validationErr("turn has no content yet")
+		return TutorResult{}, 0, validationErr("turn has no content yet")
 	}
 
 	speaker := speakerNameForKey(req.TurnKey, a, b)
@@ -111,7 +138,7 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 
 	tutorAgent, err := tutor.MakeTutor(ctx, p.ModelID)
 	if err != nil {
-		return TutorResult{}, fmt.Errorf("make tutor: %w", err)
+		return TutorResult{}, 0, fmt.Errorf("make tutor: %w", err)
 	}
 
 	userText := tutor.BuildUserMessage(tutor.ExplainInput{
@@ -126,11 +153,11 @@ func (s *Service) TutorExplain(ctx context.Context, debateID string, req TutorRe
 
 	result, err := tutorAgent.Run(ctx, agent.State{}, userText, nil)
 	if err != nil {
-		return TutorResult{}, fmt.Errorf("tutor: %w", err)
+		return TutorResult{}, 0, fmt.Errorf("tutor: %w", err)
 	}
 
 	cleanContent, suggestions := tutor.ParseSuggestions(result.Text)
-	return TutorResult{Content: cleanContent, Suggestions: suggestions}, nil
+	return TutorResult{Content: cleanContent, Suggestions: suggestions}, result.Usage.CostUSD, nil
 }
 
 // speakerNameForKey maps a step key to the human-readable philosopher name

@@ -22,6 +22,10 @@ func mapServiceError(err error) (int, string) {
 		return http.StatusNotFound, "Debate not found"
 	case errors.Is(err, debate.ErrVersionConflict):
 		return http.StatusConflict, "debate state changed concurrently; refresh and retry"
+	case errors.Is(err, debate.ErrGenerationInFlight):
+		return http.StatusConflict, "a generation is already in progress; wait for it to finish"
+	case errors.Is(err, debate.ErrOverBudget):
+		return http.StatusPaymentRequired, "generation quota exhausted"
 	case errors.As(err, &ve):
 		return http.StatusBadRequest, ve.Msg
 	default:
@@ -166,14 +170,15 @@ type turnResult struct {
 
 func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	debateID := chi.URLParam(r, "debateID")
+	uid := UIDFromContext(r.Context())
 	defer r.Body.Close()
 
 	if wantsSSE(r) {
-		s.nextTurnSSE(w, r, debateID)
+		s.nextTurnSSE(w, r, uid, debateID)
 		return
 	}
 
-	res, err := s.svc.NextTurn(r.Context(), debateID, nil)
+	res, err := s.svc.NextTurn(r.Context(), uid, debateID, nil)
 	if err != nil {
 		writeServiceError(r.Context(), w, err)
 		return
@@ -184,20 +189,29 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 
 // nextTurnSSE runs the next turn and streams text deltas to the client as SSE
 // "token" events, terminating with a "done" event carrying the full payload
-// or an "error" event on failure. Once headers are committed (status 200),
-// failures cannot be reported via HTTP status — they ride the SSE error event.
-func (s *Server) nextTurnSSE(w http.ResponseWriter, r *http.Request, debateID string) {
+// or an "error" event on failure. The quota gate (lock + budget) runs before
+// any token is streamed, so its rejections (402/409) and other pre-stream
+// failures surface as real HTTP statuses. Once an event has been flushed
+// (status 200 committed), failures can only ride the SSE error event.
+func (s *Server) nextTurnSSE(w http.ResponseWriter, r *http.Request, uid, debateID string) {
 	sw, ok := newSSEWriter(r.Context(), w)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
 
-	res, err := s.svc.NextTurn(r.Context(), debateID, sw.SendToken)
+	res, err := s.svc.NextTurn(r.Context(), uid, debateID, sw.SendToken)
 	if err != nil {
 		status, msg := mapServiceError(err)
 		if status == http.StatusInternalServerError {
 			slog.ErrorContext(r.Context(), "service error (sse)", "error", err)
+		}
+		// If nothing has been streamed yet, the HTTP status is still open —
+		// return a real status (e.g. 402/409 from the quota gate) instead of
+		// burying the failure in an SSE error event the client must parse.
+		if !sw.committed() {
+			writeError(w, status, msg)
+			return
 		}
 		sw.SendError(msg)
 		return

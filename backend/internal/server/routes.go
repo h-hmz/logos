@@ -13,6 +13,7 @@ import (
 	"github.com/h-hmz/logos/internal/auth"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
+	"github.com/h-hmz/logos/internal/quota"
 )
 
 // Server holds the shared state for the HTTP handlers. Debate orchestration
@@ -24,21 +25,40 @@ type Server struct {
 	svc          *debate.Service
 }
 
+// QuotaDeps carries the per-user quota dependencies. Pass nil to New to disable
+// quota enforcement (the service runs unmetered and GET /me/quota reports an
+// unlimited budget). DefaultLimitUSD is the ceiling seeded onto a brand-new
+// account.
+type QuotaDeps struct {
+	Store           quota.Store
+	DefaultLimitUSD float64
+	InFlight        *quota.InFlight
+}
+
 // New creates a chi router with all endpoints registered. The verifier
 // authenticates callers on protected routes and allow restricts them to
 // whitelisted emails/domains; pass auth.NewNoopVerifier() and an allow-all
 // allowlist (auth.ParseAllowlist("*")) for local dev/tests. corsOrigins is the
 // list of browser origins permitted by CORS; pass nil/empty to default to the
-// local Vite dev origin.
-func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier, allow auth.Allowlist, corsOrigins []string) *chi.Mux {
+// local Vite dev origin. quotaDeps enables per-user quota enforcement; pass nil
+// to disable it.
+func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier, allow auth.Allowlist, corsOrigins []string, quotaDeps *QuotaDeps) *chi.Mux {
 	philMap := make(map[string]philosopher.Data, len(philosophers))
 	for _, p := range philosophers {
 		philMap[p.Name] = p
 	}
+	svc := debate.NewService(repo, philMap)
 	s := &Server{
 		philosophers: philosophers,
 		philMap:      philMap,
-		svc:          debate.NewService(repo, philMap),
+		svc:          svc,
+	}
+	if quotaDeps != nil {
+		svc.WithQuota(debate.QuotaConfig{
+			Store:           quotaDeps.Store,
+			DefaultLimitUSD: quotaDeps.DefaultLimitUSD,
+			InFlight:        quotaDeps.InFlight,
+		})
 	}
 
 	r := chi.NewRouter()
@@ -65,6 +85,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 	r.Group(func(pr chi.Router) {
 		pr.Use(authMiddleware(verifier, allow))
 		pr.Get("/philosophers", s.listPhilosophers)
+		pr.Get("/me/quota", s.getQuota)
 		pr.Post("/debates", s.createDebate)
 		// Per-debate routes share sessionIDMiddleware so the slog handler
 		// can stamp session_id on every log line. Chained per-route via

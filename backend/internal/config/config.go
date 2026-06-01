@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -19,7 +20,14 @@ var (
 	firebaseProject string // project that issues the Firebase ID tokens (auth verifier)
 	authAllowlist   string // comma-separated emails/domains permitted past auth
 	corsOrigins     string // comma-separated browser origins permitted by CORS
+
+	quotaEnabled  bool    // gate per-user generation quotas (ADR 0009)
+	quotaLimitUSD float64 // lifetime USD budget per user
 )
+
+// DefaultQuotaLimitUSD is the per-user lifetime budget when QUOTA_USD_LIMIT is
+// unset. See ADR 0009.
+const DefaultQuotaLimitUSD = 1.0
 
 // DefaultLLMBaseURL is the default OpenAI-compatible endpoint when
 // LLM_BASE_URL is unset. OpenRouter is the recommended provider
@@ -53,6 +61,16 @@ func Load(envPath string) error {
 	defaultModel = os.Getenv("MODEL")
 	if defaultModel == "" {
 		return errors.New("config: MODEL env var is required")
+	}
+
+	quotaEnabled = strings.EqualFold(os.Getenv("QUOTA_ENABLED"), "TRUE")
+	quotaLimitUSD = DefaultQuotaLimitUSD
+	if raw := strings.TrimSpace(os.Getenv("QUOTA_USD_LIMIT")); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil || v < 0 {
+			return errors.New("config: QUOTA_USD_LIMIT must be a non-negative number")
+		}
+		quotaLimitUSD = v
 	}
 
 	return nil
@@ -89,3 +107,11 @@ func AuthAllowlist() string { return authAllowlist }
 // CORSAllowedOrigins returns the raw CORS_ALLOWED_ORIGINS spec: a comma-separated
 // list of browser origins permitted by CORS. Empty falls back to the local dev origin.
 func CORSAllowedOrigins() string { return corsOrigins }
+
+// QuotaEnabled reports whether per-user generation quotas are enforced
+// (QUOTA_ENABLED=true). Defaults to false so local dev and tests run unmetered.
+func QuotaEnabled() bool { return quotaEnabled }
+
+// QuotaLimitUSD returns the per-user lifetime budget in USD (QUOTA_USD_LIMIT),
+// defaulting to DefaultQuotaLimitUSD.
+func QuotaLimitUSD() float64 { return quotaLimitUSD }

@@ -19,6 +19,7 @@ type sseWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
 	ctx     context.Context
+	wrote   bool // true once an event has been flushed (headers committed)
 }
 
 func newSSEWriter(ctx context.Context, w http.ResponseWriter) (*sseWriter, bool) {
@@ -43,7 +44,12 @@ func (s *sseWriter) sendEvent(event string, payload any) {
 	}
 	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data)
 	s.flusher.Flush()
+	s.wrote = true
 }
+
+// committed reports whether any SSE event has been written, after which the
+// HTTP status is fixed at 200 and errors can only ride an SSE "error" event.
+func (s *sseWriter) committed() bool { return s.wrote }
 
 // SendToken sends an SSE "token" event with a text chunk.
 func (s *sseWriter) SendToken(text string) {
