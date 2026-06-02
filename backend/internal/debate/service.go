@@ -177,7 +177,7 @@ func (s *Service) Get(ctx context.Context, id string) (*Persisted, error) {
 
 // GetSessionResult bundles everything a client needs to rehydrate a debate
 // after losing its local state: the manifest (debaters + step list) and
-// reconstructed past turns derived from StepOutputs.
+// reconstructed past turns derived from the persisted step records.
 type GetSessionResult struct {
 	Debate   *Persisted
 	DebaterA philosopher.Data
@@ -187,8 +187,8 @@ type GetSessionResult struct {
 }
 
 // GetSession loads a debate and reconstructs every completed turn from the
-// persisted step outputs. Per-turn token counts are not retained on Persisted,
-// so reconstructed turns carry zeroes for those fields; cumulative totals on
+// persisted step records. Per-turn token counts are not surfaced here, so
+// reconstructed turns carry zeroes for those fields; cumulative totals on
 // each turn reflect the latest debate state.
 func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult, error) {
 	p, err := s.repo.Get(ctx, id)
@@ -203,24 +203,24 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 	metas := BuildStepMeta(a, b, p.NumRounds)
 	total := TotalSteps(p.NumRounds)
 
-	end := min(p.Current, len(metas))
+	// Records are positional and 1:1 with metas (record i ↔ meta i); bound by
+	// len(StepRecords) too so a legacy doc with Current set but no records
+	// reconstructs to zero turns rather than panicking on an index.
+	end := min(p.Current, len(metas), len(p.StepRecords))
+	totalIn, totalOut := p.TotalInputTokens(), p.TotalOutputTokens()
 	turns := make(map[int]TurnResult, end)
 	for i := range end {
 		meta := metas[i]
-		content, ok := p.StepOutputs[meta.Key]
-		if !ok {
-			continue
-		}
 		turns[i] = TurnResult{
 			Step:              meta,
 			AgentName:         meta.Key,
 			Role:              RoleForStep(meta.Key, a, b),
-			Content:           content,
+			Content:           p.StepRecords[i].Content,
 			StepIndex:         i,
 			TotalSteps:        total,
 			Done:              i+1 >= total,
-			TotalInputTokens:  p.TotalInputTokens,
-			TotalOutputTokens: p.TotalOutputTokens,
+			TotalInputTokens:  totalIn,
+			TotalOutputTokens: totalOut,
 		}
 	}
 
@@ -288,7 +288,6 @@ func (s *Service) CreateDebate(ctx context.Context, in CreateDebateParams) (*Cre
 		NumRounds:    in.NumRounds,
 		ModelID:      config.DefaultModel(),
 		MaxWords:     in.MaxWords,
-		StepOutputs:  map[string]string{},
 	}
 	if err := s.repo.Create(ctx, p); err != nil {
 		return nil, fmt.Errorf("create debate: %w", err)
@@ -376,12 +375,13 @@ func (s *Service) runNextTurn(ctx context.Context, debateID string, onToken func
 	turnInput := result.Usage.InputTokens
 	turnOutput := result.Usage.OutputTokens
 
-	if p.StepOutputs == nil {
-		p.StepOutputs = map[string]string{}
-	}
-	p.StepOutputs[step.Key] = content
-	p.TotalInputTokens += turnInput
-	p.TotalOutputTokens += turnOutput
+	p.StepRecords = append(p.StepRecords, StepRecord{
+		Key:          step.Key,
+		Content:      content,
+		InputTokens:  turnInput,
+		OutputTokens: turnOutput,
+		CostUSD:      result.Usage.CostUSD,
+	})
 	stepIndex := p.Current
 	p.Current++
 
@@ -401,8 +401,8 @@ func (s *Service) runNextTurn(ctx context.Context, debateID string, onToken func
 		Done:              p.Current >= TotalSteps(p.NumRounds),
 		TurnInputTokens:   turnInput,
 		TurnOutputTokens:  turnOutput,
-		TotalInputTokens:  p.TotalInputTokens,
-		TotalOutputTokens: p.TotalOutputTokens,
+		TotalInputTokens:  p.TotalInputTokens(),
+		TotalOutputTokens: p.TotalOutputTokens(),
 	}, result.Usage.CostUSD, nil
 }
 

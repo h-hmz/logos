@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 
 	"github.com/h-hmz/logos/internal/agent"
 	"github.com/h-hmz/logos/internal/philosopher"
@@ -26,33 +25,82 @@ type StepMeta struct {
 	Label string
 }
 
+// StepRecord is the persisted record of one completed pipeline step: its
+// content plus the provider-billed token counts and cost for the generation
+// that produced it. Records are appended in pipeline order, so element i
+// corresponds to BuildStepMeta()[i] and len(StepRecords) == Current.
+type StepRecord struct {
+	Key          string  `json:"key"           firestore:"key"`
+	Content      string  `json:"content"       firestore:"content"`
+	InputTokens  int     `json:"input_tokens"  firestore:"input_tokens"`
+	OutputTokens int     `json:"output_tokens" firestore:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"      firestore:"cost_usd"`
+}
+
 // Persisted is the JSON-serializable state of a debate. It stores debater
 // names (not full philosopher.Data) so the catalog can evolve independently.
-// StepOutputs holds completed step content keyed by step key; used to seed a
-// fresh session on each subsequent request.
+// StepRecords holds the completed steps (content + per-step tokens and cost),
+// used both to seed a fresh session on each subsequent request and to derive
+// the running token/cost totals.
 type Persisted struct {
-	ID                string            `json:"id"                          firestore:"id"`
-	Topic             string            `json:"topic"                       firestore:"topic"`
-	DebaterAName      string            `json:"debater_a"                   firestore:"debater_a"`
-	DebaterBName      string            `json:"debater_b"                   firestore:"debater_b"`
-	NumRounds         int               `json:"num_rounds"                  firestore:"num_rounds"`
-	ModelID           string            `json:"model_id"                    firestore:"model_id"`
-	MaxWords          int               `json:"max_words"                   firestore:"max_words"`
-	Current           int               `json:"current"                     firestore:"current"`
-	TotalInputTokens  int               `json:"total_input_tokens"          firestore:"total_input_tokens"`
-	TotalOutputTokens int               `json:"total_output_tokens"         firestore:"total_output_tokens"`
-	StepOutputs       map[string]string `json:"step_outputs,omitempty"      firestore:"step_outputs,omitempty"`
-	Version           int64             `json:"version"                     firestore:"version"`
+	ID           string       `json:"id"                     firestore:"id"`
+	Topic        string       `json:"topic"                  firestore:"topic"`
+	DebaterAName string       `json:"debater_a"              firestore:"debater_a"`
+	DebaterBName string       `json:"debater_b"              firestore:"debater_b"`
+	NumRounds    int          `json:"num_rounds"             firestore:"num_rounds"`
+	ModelID      string       `json:"model_id"               firestore:"model_id"`
+	MaxWords     int          `json:"max_words"              firestore:"max_words"`
+	Current      int          `json:"current"                firestore:"current"`
+	StepRecords  []StepRecord `json:"step_records,omitempty" firestore:"step_records,omitempty"`
+	Version      int64        `json:"version"                firestore:"version"`
 }
 
 // Clone returns a deep copy safe to mutate without affecting the original.
 func (p *Persisted) Clone() *Persisted {
 	cp := *p
-	if p.StepOutputs != nil {
-		cp.StepOutputs = make(map[string]string, len(p.StepOutputs))
-		maps.Copy(cp.StepOutputs, p.StepOutputs)
+	if p.StepRecords != nil {
+		cp.StepRecords = make([]StepRecord, len(p.StepRecords))
+		copy(cp.StepRecords, p.StepRecords)
 	}
 	return &cp
+}
+
+// TotalInputTokens sums the input tokens across all completed steps.
+func (p *Persisted) TotalInputTokens() int {
+	var n int
+	for i := range p.StepRecords {
+		n += p.StepRecords[i].InputTokens
+	}
+	return n
+}
+
+// TotalOutputTokens sums the output tokens across all completed steps.
+func (p *Persisted) TotalOutputTokens() int {
+	var n int
+	for i := range p.StepRecords {
+		n += p.StepRecords[i].OutputTokens
+	}
+	return n
+}
+
+// TotalCostUSD sums the provider-billed cost across all completed steps.
+func (p *Persisted) TotalCostUSD() float64 {
+	var c float64
+	for i := range p.StepRecords {
+		c += p.StepRecords[i].CostUSD
+	}
+	return c
+}
+
+// StepContent returns the stored content for a step key, if that step has
+// completed. The bool reports whether a record for the key exists.
+func (p *Persisted) StepContent(key string) (string, bool) {
+	for i := range p.StepRecords {
+		if p.StepRecords[i].Key == key {
+			return p.StepRecords[i].Content, true
+		}
+	}
+	return "", false
 }
 
 // Runtime is the per-request working copy of a debate: persisted fields plus
@@ -117,7 +165,9 @@ func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.D
 	}
 
 	state := agent.State{"topic": p.Topic}
-	maps.Copy(state, p.StepOutputs)
+	for i := range p.StepRecords {
+		state[p.StepRecords[i].Key] = p.StepRecords[i].Content
+	}
 
 	return &Runtime{
 		Persisted: p,

@@ -117,7 +117,8 @@ func (s *Service) runTutorExplain(ctx context.Context, debateID string, req Tuto
 		return TutorResult{}, 0, validationErr("unknown turn_key")
 	}
 
-	speakerTurn := strings.TrimSpace(p.StepOutputs[req.TurnKey])
+	speakerContent, _ := p.StepContent(req.TurnKey)
+	speakerTurn := strings.TrimSpace(speakerContent)
 	if speakerTurn == "" {
 		return TutorResult{}, 0, validationErr("turn has no content yet")
 	}
@@ -129,7 +130,8 @@ func (s *Service) runTutorExplain(ctx context.Context, debateID string, req Tuto
 		if steps[j].Key == "moderator_intro" {
 			continue
 		}
-		if out := strings.TrimSpace(p.StepOutputs[steps[j].Key]); out != "" {
+		stepContent, _ := p.StepContent(steps[j].Key)
+		if out := strings.TrimSpace(stepContent); out != "" {
 			opponentTurn = out
 			opponent = speakerNameForKey(steps[j].Key, a, b)
 			break
