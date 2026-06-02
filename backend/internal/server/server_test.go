@@ -151,6 +151,60 @@ func TestNextTurn_AlreadyComplete(t *testing.T) {
 	}
 }
 
+// TestCreateDebate_StampsOwner verifies the authenticated caller is recorded as
+// the debate's owner. The noop verifier yields UID "dev-local".
+func TestCreateDebate_StampsOwner(t *testing.T) {
+	_, repo, h := testServer(t)
+	body, _ := json.Marshal(map[string]any{
+		"topic":     "free will",
+		"debater_a": "Socrates",
+		"debater_b": "Kant",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/debates", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — body: %s", rr.Code, rr.Body.String())
+	}
+	var resp createDebateResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	p, err := repo.Get(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("repo.Get: %v", err)
+	}
+	if p.OwnerUID != "dev-local" {
+		t.Fatalf("OwnerUID = %q, want %q", p.OwnerUID, "dev-local")
+	}
+}
+
+// TestNextTurn_NonOwnerForbidden verifies a caller who does not own a debate is
+// refused with 403 when advancing it (reads stay open; only /next is gated).
+func TestNextTurn_NonOwnerForbidden(t *testing.T) {
+	s, repo, h := testServer(t)
+	p := &debate.Persisted{
+		ID:           "d1",
+		OwnerUID:     "someone-else",
+		DebaterAName: s.philosophers[0].Name,
+		DebaterBName: s.philosophers[1].Name,
+		NumRounds:    1,
+		ModelID:      "test-model",
+		MaxWords:     100,
+	}
+	if err := repo.Create(context.Background(), p); err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+	// Through the router the noop verifier yields UID "dev-local", not the owner.
+	req := httptest.NewRequest(http.MethodPost, "/debates/d1/next", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestRequestBodyClosed verifies the fix for issue #1: handlers must close
 // r.Body after reading. Regression guard.
 func TestRequestBodyClosed(t *testing.T) {

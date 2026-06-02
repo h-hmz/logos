@@ -24,6 +24,8 @@ func mapServiceError(err error) (int, string) {
 		return http.StatusConflict, "debate state changed concurrently; refresh and retry"
 	case errors.Is(err, debate.ErrGenerationInFlight):
 		return http.StatusConflict, "a generation is already in progress; wait for it to finish"
+	case errors.Is(err, debate.ErrForbidden):
+		return http.StatusForbidden, "only the debate's owner can advance it"
 	case errors.Is(err, debate.ErrOverBudget):
 		return http.StatusPaymentRequired, "generation quota exhausted"
 	case errors.As(err, &ve):
@@ -72,6 +74,7 @@ type createDebateResponse struct {
 }
 
 func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
+	uid := UIDFromContext(r.Context())
 	defer r.Body.Close()
 	var req createDebateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -79,7 +82,7 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.svc.CreateDebate(r.Context(), debate.CreateDebateParams{
+	res, err := s.svc.CreateDebate(r.Context(), uid, debate.CreateDebateParams{
 		Topic:     req.Topic,
 		DebaterA:  req.DebaterA,
 		DebaterB:  req.DebaterB,

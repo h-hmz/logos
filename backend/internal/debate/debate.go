@@ -41,9 +41,12 @@ type StepRecord struct {
 // names (not full philosopher.Data) so the catalog can evolve independently.
 // StepRecords holds the completed steps (content + per-step tokens and cost),
 // used both to seed a fresh session on each subsequent request and to derive
-// the running token/cost totals.
+// the running token/cost totals. OwnerUID records the caller who created the
+// debate; reads stay open (the unguessable ID is the capability), but only the
+// owner may advance it (see NextTurn).
 type Persisted struct {
 	ID           string       `json:"id"                     firestore:"id"`
+	OwnerUID     string       `json:"owner_uid"              firestore:"owner_uid"`
 	Topic        string       `json:"topic"                  firestore:"topic"`
 	DebaterAName string       `json:"debater_a"              firestore:"debater_a"`
 	DebaterBName string       `json:"debater_b"              firestore:"debater_b"`
@@ -182,6 +185,9 @@ var (
 	ErrNotFound        = errors.New("debate not found")
 	ErrAlreadyExists   = errors.New("debate already exists")
 	ErrVersionConflict = errors.New("debate version conflict")
+	// ErrForbidden signals the caller is not the debate's owner and so may not
+	// mutate it. Reads are unrestricted, so this only guards the advance path.
+	ErrForbidden = errors.New("debate access denied")
 )
 
 // BuildSteps constructs the full debate pipeline.

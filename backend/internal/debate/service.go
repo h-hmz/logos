@@ -256,8 +256,8 @@ type CreateDebateResult struct {
 }
 
 // CreateDebate validates the request, applies defaults, and persists a new
-// debate record.
-func (s *Service) CreateDebate(ctx context.Context, in CreateDebateParams) (*CreateDebateResult, error) {
+// debate record owned by uid (the authenticated caller).
+func (s *Service) CreateDebate(ctx context.Context, uid string, in CreateDebateParams) (*CreateDebateResult, error) {
 	if in.NumRounds == 0 {
 		in.NumRounds = 2
 	}
@@ -282,6 +282,7 @@ func (s *Service) CreateDebate(ctx context.Context, in CreateDebateParams) (*Cre
 
 	p := &Persisted{
 		ID:           uuid.NewString(),
+		OwnerUID:     uid,
 		Topic:        in.Topic,
 		DebaterAName: a.Name,
 		DebaterBName: b.Name,
@@ -324,8 +325,13 @@ type TurnResult struct {
 // partial chunks would expose unparseable JSON to the caller. Pass nil to
 // disable streaming entirely.
 //
-// Returns ErrNotFound, ErrVersionConflict, *ValidationError, ErrOverBudget, or
-// ErrGenerationInFlight for callers that need to distinguish cases.
+// Only the debate's owner may advance it: a non-owner caller is refused with
+// ErrForbidden (checked after the quota gate, so an over-budget caller still
+// sees ErrOverBudget first).
+//
+// Returns ErrNotFound, ErrForbidden, ErrVersionConflict, *ValidationError,
+// ErrOverBudget, or ErrGenerationInFlight for callers that need to distinguish
+// cases.
 func (s *Service) NextTurn(ctx context.Context, uid, debateID string, onToken func(string)) (*TurnResult, error) {
 	release, err := s.admitGeneration(ctx, uid)
 	if err != nil {
@@ -335,7 +341,7 @@ func (s *Service) NextTurn(ctx context.Context, uid, debateID string, onToken fu
 
 	var res *TurnResult
 	err = s.charge(ctx, uid, func() (float64, error) {
-		r, cost, runErr := s.runNextTurn(ctx, debateID, onToken)
+		r, cost, runErr := s.runNextTurn(ctx, uid, debateID, onToken)
 		res = r
 		return cost, runErr
 	})
@@ -348,10 +354,13 @@ func (s *Service) NextTurn(ctx context.Context, uid, debateID string, onToken fu
 // runNextTurn executes one pipeline step and returns the result plus the
 // generation's provider-billed cost (Usage.CostUSD). Separated from quota
 // bookkeeping so admitGeneration/charge can wrap it uniformly with TutorExplain.
-func (s *Service) runNextTurn(ctx context.Context, debateID string, onToken func(string)) (*TurnResult, float64, error) {
+func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken func(string)) (*TurnResult, float64, error) {
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
 		return nil, 0, err
+	}
+	if p.OwnerUID != uid {
+		return nil, 0, ErrForbidden
 	}
 	if p.Current >= TotalSteps(p.NumRounds) {
 		return nil, 0, validationErr("Debate is already complete")
