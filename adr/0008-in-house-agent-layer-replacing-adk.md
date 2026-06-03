@@ -165,8 +165,8 @@ OpenAI's `stream_options.include_usage=true`.
   fast; the genai SDK has had several minor breaks. We carry our
   own thin layer instead.
 - **Tool calling is now a small additive PR**, not a framework swap.
-- **Readable end-to-end debugging.** A turn flow is `Hydrate → Run →
-  Substitute → openai-go → SSE` with no hidden runner machinery.
+- **Readable end-to-end debugging.** A turn flow is `Hydrate → build step →
+  Run → Substitute → openai-go → SSE` with no hidden runner machinery.
 
 ### Negative
 
@@ -177,7 +177,7 @@ OpenAI's `stream_options.include_usage=true`.
   loop ourselves (~80 LOC).
 - **No multi-agent orchestration support.** If the product grows in
   that direction, we revisit Eino. Acceptable given the explicit
-  step orchestration of `BuildSteps`.
+  step orchestration of `pipeline` (the per-step agent builder).
 - **No ADK observability hooks** (events, traces, evaluation
   harness). Replaced by `slog` instrumentation we already use.
 

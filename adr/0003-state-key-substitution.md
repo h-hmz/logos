@@ -170,6 +170,11 @@ unseeded slot fails loudly instead of producing a malformed prompt.
   structured-outputs migration (commit 659a3bf, 2026-05-09) replaced
   inline JSON examples in those prompts with API-enforced JSON
   Schema, so no current prompt embeds literal `{ ... }` text.
+- 2026-06-02 — `BuildSteps` (which constructed every step's agent up
+  front) replaced by `pipeline`, which builds each step's agent and its
+  `OutputKey` wiring lazily; a turn constructs only the one agent it
+  runs. The named-slot scratchpad design is unchanged — each step still
+  reads `{key}` placeholders and writes back via its `OutputKey`.
 
 ## Implementation
 
@@ -179,7 +184,7 @@ unseeded slot fails loudly instead of producing a malformed prompt.
   — `Agent.Run` performs substitution and the `OutputKey` write-back.
 - [backend/internal/debate/debate.go](../backend/internal/debate/debate.go)
   — `Persisted.StepOutputs`, `Hydrate` (state seeding), and
-  `BuildSteps` (per-agent `OutputKey` wiring).
+  `pipeline` (per-agent `OutputKey` wiring, built lazily per step).
 - [backend/internal/debate/service.go](../backend/internal/debate/service.go)
   — copies the post-turn output into `StepOutputs` and commits.
 - [backend/internal/philosopher/philosopher.go](../backend/internal/philosopher/philosopher.go)

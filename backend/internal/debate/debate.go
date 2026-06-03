@@ -11,15 +11,17 @@ import (
 	"github.com/h-hmz/logos/internal/philosopher"
 )
 
-// Step represents a single step in the debate pipeline (live, non-serializable).
-type Step struct {
+// step is one node of the debate pipeline: its identity (Key, Label) plus a
+// lazy builder so callers that only need metadata never construct an agent.
+// The builder is invoked for exactly the one step a turn runs (see runNextTurn).
+type step struct {
 	Key   string
 	Label string
-	Agent *agent.Agent
+	build func(ctx context.Context) (*agent.Agent, error)
 }
 
-// StepMeta is the lightweight form of Step — no agent, safe to derive cheaply
-// from persisted state for handler responses and validation.
+// StepMeta is the lightweight form of a pipeline step — no agent, safe to
+// derive cheaply from persisted state for handler responses and validation.
 type StepMeta struct {
 	Key   string
 	Label string
@@ -28,7 +30,8 @@ type StepMeta struct {
 // StepRecord is the persisted record of one completed pipeline step: its
 // content plus the provider-billed token counts and cost for the generation
 // that produced it. Records are appended in pipeline order, so element i
-// corresponds to BuildStepMeta()[i] and len(StepRecords) == Current.
+// corresponds to BuildStepMeta()[i], and len(StepRecords) is the number of
+// completed steps — i.e. the index of the next step to run (see Current).
 type StepRecord struct {
 	Key          string  `json:"key"           firestore:"key"`
 	Content      string  `json:"content"       firestore:"content"`
@@ -40,10 +43,11 @@ type StepRecord struct {
 // Persisted is the JSON-serializable state of a debate. It stores debater
 // names (not full philosopher.Data) so the catalog can evolve independently.
 // StepRecords holds the completed steps (content + per-step tokens and cost),
-// used both to seed a fresh session on each subsequent request and to derive
-// the running token/cost totals. OwnerUID records the caller who created the
-// debate; reads stay open (the unguessable ID is the capability), but only the
-// owner may advance it (see NextTurn).
+// used to seed a fresh session on each subsequent request, to derive the
+// running token/cost totals, and as the sole source of progress: the count of
+// completed steps is len(StepRecords) (see Current). OwnerUID records the
+// caller who created the debate; reads stay open (the unguessable ID is the
+// capability), but only the owner may advance it (see NextTurn).
 type Persisted struct {
 	ID           string       `json:"id"                     firestore:"id"`
 	OwnerUID     string       `json:"owner_uid"              firestore:"owner_uid"`
@@ -53,10 +57,14 @@ type Persisted struct {
 	NumRounds    int          `json:"num_rounds"             firestore:"num_rounds"`
 	ModelID      string       `json:"model_id"               firestore:"model_id"`
 	MaxWords     int          `json:"max_words"              firestore:"max_words"`
-	Current      int          `json:"current"                firestore:"current"`
 	StepRecords  []StepRecord `json:"step_records,omitempty" firestore:"step_records,omitempty"`
 	Version      int64        `json:"version"                firestore:"version"`
 }
+
+// Current is the index of the next pipeline step to run, equal to the number of
+// completed steps. It is derived from StepRecords rather than stored, so the two
+// can never drift: every completed step appends exactly one record.
+func (p *Persisted) Current() int { return len(p.StepRecords) }
 
 // Clone returns a deep copy safe to mutate without affecting the original.
 func (p *Persisted) Clone() *Persisted {
@@ -107,14 +115,14 @@ func (p *Persisted) StepContent(key string) (string, bool) {
 }
 
 // Runtime is the per-request working copy of a debate: persisted fields plus
-// the non-serializable pieces (agents, live state map) rebuilt by Hydrate.
-// State carries the per-request scratchpad agents read via {key}
-// substitution and write to via OutputKey (see ADR 0003).
+// the non-serializable pieces (resolved debater data and the live state map)
+// rebuilt by Hydrate. State carries the per-request scratchpad agents read via
+// {key} substitution and write to via OutputKey (see ADR 0003). The agent for
+// the step being run is built on demand from pipeline, not stored here.
 type Runtime struct {
 	*Persisted
 	DebaterA philosopher.Data
 	DebaterB philosopher.Data
-	Steps    []Step
 	State    agent.State
 }
 
@@ -122,49 +130,28 @@ type Runtime struct {
 // 1 moderator + 2*N round turns + 1 critic + 2 critic responses + 1 judge.
 func TotalSteps(numRounds int) int { return 5 + 2*numRounds }
 
-// BuildStepMeta returns the full (key, label) list without constructing
-// agents. Cheap — pure string formatting; safe to call on any request.
+// BuildStepMeta returns the full (key, label) list without constructing agents.
+// Cheap — it enumerates the pipeline but never invokes a step's build closure,
+// so the modelID/maxWords those closures would use are irrelevant here.
 func BuildStepMeta(a, b philosopher.Data, numRounds int) []StepMeta {
-	out := make([]StepMeta, 0, TotalSteps(numRounds))
-	out = append(out, StepMeta{Key: "moderator_intro", Label: "Introduction"})
-	for r := 1; r <= numRounds; r++ {
-		out = append(out, StepMeta{
-			Key:   fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r),
-			Label: fmt.Sprintf("%s — Round %d", a.Name, r),
-		})
-		out = append(out, StepMeta{
-			Key:   fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r),
-			Label: fmt.Sprintf("%s — Round %d", b.Name, r),
-		})
+	steps := pipeline(a, b, numRounds, "", 0)
+	out := make([]StepMeta, len(steps))
+	for i := range steps {
+		out[i] = StepMeta{Key: steps[i].Key, Label: steps[i].Label}
 	}
-	out = append(out, StepMeta{Key: "critic_feedback", Label: "Critic Analysis"})
-	out = append(out, StepMeta{
-		Key:   fmt.Sprintf("%s_critic_response", philosopher.Key(a.Name)),
-		Label: fmt.Sprintf("%s — Response to Critic", a.Name),
-	})
-	out = append(out, StepMeta{
-		Key:   fmt.Sprintf("%s_critic_response", philosopher.Key(b.Name)),
-		Label: fmt.Sprintf("%s — Response to Critic", b.Name),
-	})
-	out = append(out, StepMeta{Key: "final_verdict", Label: "Judge's Verdict"})
 	return out
 }
 
 // Hydrate rebuilds a Runtime from a Persisted snapshot: resolves debater data
-// via the catalog map, constructs the pipeline agents, and seeds a fresh
-// agent.State map with prior step outputs.
-// The returned Runtime shares the input *Persisted — handler mutations flow
-// back through repo.Update.
-func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.Data) (*Runtime, error) {
+// via the catalog map and seeds a fresh agent.State map with prior step
+// outputs. It builds no agents — the caller constructs only the one step it
+// runs (see pipeline). The returned Runtime shares the input *Persisted, so
+// handler mutations flow back through repo.Update.
+func Hydrate(p *Persisted, philMap map[string]philosopher.Data) (*Runtime, error) {
 	a, okA := philMap[p.DebaterAName]
 	b, okB := philMap[p.DebaterBName]
 	if !okA || !okB {
 		return nil, fmt.Errorf("hydrate: unknown philosopher (a=%q ok=%v, b=%q ok=%v)", p.DebaterAName, okA, p.DebaterBName, okB)
-	}
-
-	steps, err := BuildSteps(ctx, a, b, p.NumRounds, p.ModelID, p.MaxWords)
-	if err != nil {
-		return nil, fmt.Errorf("hydrate: build steps: %w", err)
 	}
 
 	state := agent.State{"topic": p.Topic}
@@ -176,7 +163,6 @@ func Hydrate(ctx context.Context, p *Persisted, philMap map[string]philosopher.D
 		Persisted: p,
 		DebaterA:  a,
 		DebaterB:  b,
-		Steps:     steps,
 		State:     state,
 	}, nil
 }
@@ -190,101 +176,93 @@ var (
 	ErrForbidden = errors.New("debate access denied")
 )
 
-// BuildSteps constructs the full debate pipeline.
-func BuildSteps(ctx context.Context, a, b philosopher.Data, numRounds int, modelID string, maxWords int) ([]Step, error) {
-	var steps []Step
+// pipeline is the single source of truth for the debate's step order. It
+// enumerates every step cheaply — no agents are constructed; each step's build
+// closure builds its agent only when invoked, so a turn builds exactly one.
+// Step i here corresponds 1:1 with StepRecords[i] and BuildStepMeta()[i].
+func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int) []step {
+	var steps []step
+	add := func(key, label string, build func(context.Context) (*agent.Agent, error)) {
+		steps = append(steps, step{Key: key, Label: label, build: build})
+	}
 
 	// Moderator
-	modAgent, err := philosopher.MakeModerator(ctx, a, b, modelID)
-	if err != nil {
-		return nil, err
-	}
-	steps = append(steps, Step{Key: "moderator_intro", Label: "Introduction", Agent: modAgent})
+	add("moderator_intro", "Introduction", func(ctx context.Context) (*agent.Agent, error) {
+		return philosopher.MakeModerator(ctx, a, b, modelID)
+	})
 
-	// Debate rounds
+	// Debate rounds. A speaks first each round (so opens on round 1); B always
+	// responds within the same round — hence the asymmetric situation strings
+	// and opponent keys.
 	for r := 1; r <= numRounds; r++ {
 		var bPrevKey string
 		if r > 1 {
 			bPrevKey = fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r-1)
 		}
-
 		aKey := fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r)
-		agentA, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-			Data:           a,
-			AgentName:      aKey,
-			OutputKey:      aKey,
-			Situation:      roundSituation(r),
-			OpponentArgKey: bPrevKey,
-			ModelID:        modelID,
-			MaxWords:       maxWords,
-		})
-		if err != nil {
-			return nil, err
-		}
-		steps = append(steps, Step{Key: aKey, Label: fmt.Sprintf("%s — Round %d", a.Name, r), Agent: agentA})
-
 		bKey := fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r)
-		agentB, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-			Data:           b,
-			AgentName:      bKey,
-			OutputKey:      bKey,
-			Situation:      fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
-			OpponentArgKey: aKey,
-			ModelID:        modelID,
-			MaxWords:       maxWords,
+
+		add(aKey, fmt.Sprintf("%s — Round %d", a.Name, r), func(ctx context.Context) (*agent.Agent, error) {
+			return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
+				Data:           a,
+				AgentName:      aKey,
+				OutputKey:      aKey,
+				Situation:      roundSituation(r),
+				OpponentArgKey: bPrevKey,
+				ModelID:        modelID,
+				MaxWords:       maxWords,
+			})
 		})
-		if err != nil {
-			return nil, err
-		}
-		steps = append(steps, Step{Key: bKey, Label: fmt.Sprintf("%s — Round %d", b.Name, r), Agent: agentB})
+		add(bKey, fmt.Sprintf("%s — Round %d", b.Name, r), func(ctx context.Context) (*agent.Agent, error) {
+			return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
+				Data:           b,
+				AgentName:      bKey,
+				OutputKey:      bKey,
+				Situation:      fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
+				OpponentArgKey: aKey,
+				ModelID:        modelID,
+				MaxWords:       maxWords,
+			})
+		})
 	}
 
 	// Critic
-	criticAgent, err := philosopher.MakeCritic(ctx, a, b, numRounds, modelID, maxWords*2)
-	if err != nil {
-		return nil, err
-	}
-	steps = append(steps, Step{Key: "critic_feedback", Label: "Critic Analysis", Agent: criticAgent})
+	add("critic_feedback", "Critic Analysis", func(ctx context.Context) (*agent.Agent, error) {
+		return philosopher.MakeCritic(ctx, a, b, numRounds, modelID, maxWords*2)
+	})
 
 	// Philosopher responses to critic
 	aCritKey := fmt.Sprintf("%s_critic_response", philosopher.Key(a.Name))
-	aCrit, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-		Data:      a,
-		AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(a.Name)),
-		OutputKey: aCritKey,
-		Situation: "response to the critic — address their challenges and refine your position",
-		CriticKey: "critic_feedback",
-		ModelID:   modelID,
-		MaxWords:  maxWords,
+	add(aCritKey, fmt.Sprintf("%s — Response to Critic", a.Name), func(ctx context.Context) (*agent.Agent, error) {
+		return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
+			Data:      a,
+			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(a.Name)),
+			OutputKey: aCritKey,
+			Situation: "response to the critic — address their challenges and refine your position",
+			CriticKey: "critic_feedback",
+			ModelID:   modelID,
+			MaxWords:  maxWords,
+		})
 	})
-	if err != nil {
-		return nil, err
-	}
-	steps = append(steps, Step{Key: aCritKey, Label: fmt.Sprintf("%s — Response to Critic", a.Name), Agent: aCrit})
-
 	bCritKey := fmt.Sprintf("%s_critic_response", philosopher.Key(b.Name))
-	bCrit, err := philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-		Data:      b,
-		AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(b.Name)),
-		OutputKey: bCritKey,
-		Situation: "response to the critic — address their challenges and refine your position",
-		CriticKey: "critic_feedback",
-		ModelID:   modelID,
-		MaxWords:  maxWords,
+	add(bCritKey, fmt.Sprintf("%s — Response to Critic", b.Name), func(ctx context.Context) (*agent.Agent, error) {
+		return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
+			Data:      b,
+			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(b.Name)),
+			OutputKey: bCritKey,
+			Situation: "response to the critic — address their challenges and refine your position",
+			CriticKey: "critic_feedback",
+			ModelID:   modelID,
+			MaxWords:  maxWords,
+		})
 	})
-	if err != nil {
-		return nil, err
-	}
-	steps = append(steps, Step{Key: bCritKey, Label: fmt.Sprintf("%s — Response to Critic", b.Name), Agent: bCrit})
 
 	// Judge
-	judgeAgent, err := philosopher.MakeJudge(ctx, a, b, numRounds, modelID)
-	if err != nil {
-		return nil, err
-	}
-	steps = append(steps, Step{Key: "final_verdict", Label: "Judge's Verdict", Agent: judgeAgent})
+	add("final_verdict", "Judge's Verdict", func(ctx context.Context) (*agent.Agent, error) {
+		return philosopher.MakeJudge(ctx, a, b, numRounds, modelID)
+	})
 
-	return steps, nil
+	return steps
 }
 
 func roundSituation(r int) string {

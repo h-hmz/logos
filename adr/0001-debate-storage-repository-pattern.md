@@ -43,6 +43,13 @@ Storing names rather than full philosopher data keeps the document small
 and decouples the persisted record from the philosopher catalog; prompt
 edits to a philosopher automatically apply to in-flight debates.
 
+> **Update (2026-06-02, pipeline refactor).** `Persisted.Current` is no
+> longer a stored field: progress is derived as `len(StepRecords)` via a
+> `Current()` method, so the counter can never drift from the records.
+> (`StepOutputs map[string]string` is likewise now `StepRecords []StepRecord`,
+> carrying per-step tokens/cost alongside content.) `Runtime` no longer holds
+> `Steps`; the agent for the step being run is built on demand — see §3.
+
 ### 2. `Repository` interface
 
 ```go
@@ -68,6 +75,14 @@ Per request, handlers call `Hydrate` which:
    state map seeded from `topic` and every entry in `StepOutputs`.
 
 The session lives for one request and is discarded afterward.
+
+> **Update (2026-06-02, pipeline refactor).** `Hydrate(p, philMap)` (no
+> longer takes `ctx`) now only resolves debaters and seeds the state map — it
+> builds **no** agents. The single agent for the step being run is constructed
+> lazily in `runNextTurn` via `pipeline(...)[Current()].build(ctx)`, replacing
+> the old `BuildSteps` (which constructed the whole pipeline each call). Step 3
+> above (the ADK `session.InMemoryService`) is obsolete per
+> [ADR 0008](0008-in-house-agent-layer-replacing-adk.md).
 
 ### 4. Why not persist ADK sessions themselves?
 
@@ -130,8 +145,10 @@ instruction templates) when only metadata is needed.
 
 ### Negative
 
-- Handlers re-run `BuildSteps` on each `/next`, re-allocating agent
-  objects. Cost is small (no LLM calls) but non-zero.
+- ~~Handlers re-run `BuildSteps` on each `/next`, re-allocating agent
+  objects. Cost is small (no LLM calls) but non-zero.~~ **Resolved
+  (2026-06-02):** `BuildSteps` is gone; each `/next` builds only the one
+  agent it runs via the lazy `pipeline`, not the whole step list.
 - Full ADK event history is lost — only finalized step text survives.
   Intermediate events (token-level streaming, tool calls if we add
   them) will need a separate persistence path if ever required.

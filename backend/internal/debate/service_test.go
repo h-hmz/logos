@@ -40,7 +40,9 @@ func TestNextTurn_OwnershipGate(t *testing.T) {
 	svc := NewService(repo, phils)
 	ctx := context.Background()
 
-	seed := func(id, owner string, current int) {
+	// completed sets how many pipeline steps have run; progress is derived from
+	// StepRecords length (p.Current()), so we seed that many placeholder records.
+	seed := func(id, owner string, completed int) {
 		t.Helper()
 		err := repo.Create(ctx, &Persisted{
 			ID:           id,
@@ -50,7 +52,7 @@ func TestNextTurn_OwnershipGate(t *testing.T) {
 			NumRounds:    1,
 			ModelID:      "test-model",
 			MaxWords:     100,
-			Current:      current,
+			StepRecords:  make([]StepRecord, completed),
 		})
 		if err != nil {
 			t.Fatalf("seed %s: %v", id, err)

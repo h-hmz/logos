@@ -203,10 +203,10 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 	metas := BuildStepMeta(a, b, p.NumRounds)
 	total := TotalSteps(p.NumRounds)
 
-	// Records are positional and 1:1 with metas (record i ↔ meta i); bound by
-	// len(StepRecords) too so a legacy doc with Current set but no records
-	// reconstructs to zero turns rather than panicking on an index.
-	end := min(p.Current, len(metas), len(p.StepRecords))
+	// Records are positional and 1:1 with metas (record i ↔ meta i). len(metas)
+	// bounds the loop so a doc with more records than the current round count
+	// implies reconstructs only the steps that have metadata, never panicking.
+	end := min(len(p.StepRecords), len(metas))
 	totalIn, totalOut := p.TotalInputTokens(), p.TotalOutputTokens()
 	turns := make(map[int]TurnResult, end)
 	for i := range end {
@@ -362,21 +362,28 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken
 	if p.OwnerUID != uid {
 		return nil, 0, ErrForbidden
 	}
-	if p.Current >= TotalSteps(p.NumRounds) {
+	stepIndex := p.Current()
+	if stepIndex >= TotalSteps(p.NumRounds) {
 		return nil, 0, validationErr("Debate is already complete")
 	}
 
-	rt, err := Hydrate(ctx, p, s.philMap)
+	rt, err := Hydrate(p, s.philMap)
 	if err != nil {
 		return nil, 0, fmt.Errorf("hydrate: %w", err)
 	}
-	step := rt.Steps[rt.Current]
+
+	// Build only the one agent this turn runs, not the whole pipeline.
+	nextStep := pipeline(rt.DebaterA, rt.DebaterB, p.NumRounds, p.ModelID, p.MaxWords)[stepIndex]
+	ag, err := nextStep.build(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("build step: %w", err)
+	}
 
 	cb := onToken
-	if step.Agent.HasResponseFormat() {
+	if ag.HasResponseFormat() {
 		cb = nil
 	}
-	result, err := step.Agent.Run(ctx, rt.State, "continue", cb)
+	result, err := ag.Run(ctx, rt.State, "continue", cb)
 	if err != nil {
 		return nil, 0, fmt.Errorf("agent run: %w", err)
 	}
@@ -385,29 +392,27 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken
 	turnOutput := result.Usage.OutputTokens
 
 	p.StepRecords = append(p.StepRecords, StepRecord{
-		Key:          step.Key,
+		Key:          nextStep.Key,
 		Content:      content,
 		InputTokens:  turnInput,
 		OutputTokens: turnOutput,
 		CostUSD:      result.Usage.CostUSD,
 	})
-	stepIndex := p.Current
-	p.Current++
 
 	if err := s.repo.Update(ctx, p); err != nil {
 		return nil, 0, err
 	}
 
-	role := RoleForStep(step.Key, rt.DebaterA, rt.DebaterB)
+	role := RoleForStep(nextStep.Key, rt.DebaterA, rt.DebaterB)
 
 	return &TurnResult{
-		Step:              StepMeta{Key: step.Key, Label: step.Label},
-		AgentName:         step.Agent.Name(),
+		Step:              StepMeta{Key: nextStep.Key, Label: nextStep.Label},
+		AgentName:         ag.Name(),
 		Role:              role,
 		Content:           content,
 		StepIndex:         stepIndex,
 		TotalSteps:        TotalSteps(p.NumRounds),
-		Done:              p.Current >= TotalSteps(p.NumRounds),
+		Done:              p.Current() >= TotalSteps(p.NumRounds),
 		TurnInputTokens:   turnInput,
 		TurnOutputTokens:  turnOutput,
 		TotalInputTokens:  p.TotalInputTokens(),

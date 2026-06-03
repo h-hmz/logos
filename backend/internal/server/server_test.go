@@ -137,7 +137,9 @@ func TestNextTurn_AlreadyComplete(t *testing.T) {
 		NumRounds:    1,
 		ModelID:      "test-model",
 		MaxWords:     100,
-		Current:      debate.TotalSteps(1),
+		// A full set of step records marks the debate complete (progress is
+		// derived from StepRecords length, not a stored counter).
+		StepRecords: make([]debate.StepRecord, debate.TotalSteps(1)),
 	}
 	if err := repo.Create(context.Background(), p); err != nil {
 		t.Fatalf("repo.Create: %v", err)
