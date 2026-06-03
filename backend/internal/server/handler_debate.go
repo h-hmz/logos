@@ -52,6 +52,10 @@ type createDebateRequest struct {
 	DebaterB  string `json:"debater_b"`
 	NumRounds int    `json:"num_rounds"`
 	MaxWords  int    `json:"max_words"`
+	// ModelA/ModelB are the optional per-debater models. Empty falls back to the
+	// default model; when set they must be in the authorized allowlist.
+	ModelA string `json:"model_a"`
+	ModelB string `json:"model_b"`
 }
 
 type stepInfo struct {
@@ -88,6 +92,8 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 		DebaterB:  req.DebaterB,
 		NumRounds: req.NumRounds,
 		MaxWords:  req.MaxWords,
+		ModelA:    req.ModelA,
+		ModelB:    req.ModelB,
 	})
 	if err != nil {
 		writeServiceError(r.Context(), w, err)

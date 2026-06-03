@@ -82,6 +82,26 @@ func TestListPhilosophers(t *testing.T) {
 	}
 }
 
+func TestListModels(t *testing.T) {
+	_, _, h := testServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/models", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var got []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d models, want 3: %v", len(got), got)
+	}
+	if _, ok := got[0]["id"]; !ok {
+		t.Fatalf("model item missing \"id\" field: %v", got[0])
+	}
+}
+
 func TestCreateDebate_InvalidJSON(t *testing.T) {
 	_, _, h := testServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/debates", strings.NewReader("not json"))
@@ -103,6 +123,7 @@ func TestCreateDebate_ValidationErrors(t *testing.T) {
 		{"same debater", map[string]any{"topic": "t", "debater_a": "Kant", "debater_b": "Kant"}},
 		{"empty topic", map[string]any{"topic": "", "debater_a": "Socrates", "debater_b": "Kant"}},
 		{"bad rounds", map[string]any{"topic": "t", "debater_a": "Socrates", "debater_b": "Kant", "num_rounds": 99}},
+		{"unauthorized model_a", map[string]any{"topic": "t", "debater_a": "Socrates", "debater_b": "Kant", "model_a": "openai/gpt-4o"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -135,7 +156,6 @@ func TestNextTurn_AlreadyComplete(t *testing.T) {
 		DebaterAName: s.philosophers[0].Name,
 		DebaterBName: s.philosophers[1].Name,
 		NumRounds:    1,
-		ModelID:      "test-model",
 		MaxWords:     100,
 		// A full set of step records marks the debate complete (progress is
 		// derived from StepRecords length, not a stored counter).
@@ -192,7 +212,6 @@ func TestNextTurn_NonOwnerForbidden(t *testing.T) {
 		DebaterAName: s.philosophers[0].Name,
 		DebaterBName: s.philosophers[1].Name,
 		NumRounds:    1,
-		ModelID:      "test-model",
 		MaxWords:     100,
 	}
 	if err := repo.Create(context.Background(), p); err != nil {

@@ -55,15 +55,22 @@ type Persisted struct {
 	DebaterAName string       `json:"debater_a"              firestore:"debater_a"`
 	DebaterBName string       `json:"debater_b"              firestore:"debater_b"`
 	NumRounds    int          `json:"num_rounds"             firestore:"num_rounds"`
-	ModelID      string       `json:"model_id"               firestore:"model_id"`
+	Models       RoleModels   `json:"models"                 firestore:"models"`
 	MaxWords     int          `json:"max_words"              firestore:"max_words"`
 	StepRecords  []StepRecord `json:"step_records,omitempty" firestore:"step_records,omitempty"`
 	Version      int64        `json:"version"                firestore:"version"`
 }
 
-// Current is the index of the next pipeline step to run, equal to the number of
-// completed steps. It is derived from StepRecords rather than stored, so the two
-// can never drift: every completed step appends exactly one record.
+// RoleModels holds the model each pipeline role runs on.
+type RoleModels struct {
+	DebaterA  string `json:"debater_a" firestore:"debater_a"`
+	DebaterB  string `json:"debater_b" firestore:"debater_b"`
+	Moderator string `json:"moderator" firestore:"moderator"`
+	Critic    string `json:"critic"    firestore:"critic"`
+	Judge     string `json:"judge"     firestore:"judge"`
+}
+
+// Index of the next pipeline step to run, equal to the number of completed steps.
 func (p *Persisted) Current() int { return len(p.StepRecords) }
 
 // Clone returns a deep copy safe to mutate without affecting the original.
@@ -117,8 +124,8 @@ func (p *Persisted) StepContent(key string) (string, bool) {
 // Runtime is the per-request working copy of a debate: persisted fields plus
 // the non-serializable pieces (resolved debater data and the live state map)
 // rebuilt by Hydrate. State carries the per-request scratchpad agents read via
-// {key} substitution and write to via OutputKey (see ADR 0003). The agent for
-// the step being run is built on demand from pipeline, not stored here.
+// {key} substitution and write to via OutputKey. The agent for the step being
+// run is built on demand from pipeline, not stored here.
 type Runtime struct {
 	*Persisted
 	DebaterA philosopher.Data
@@ -132,9 +139,9 @@ func TotalSteps(numRounds int) int { return 5 + 2*numRounds }
 
 // BuildStepMeta returns the full (key, label) list without constructing agents.
 // Cheap — it enumerates the pipeline but never invokes a step's build closure,
-// so the modelID/maxWords those closures would use are irrelevant here.
+// so the models/maxWords those closures would use are irrelevant here.
 func BuildStepMeta(a, b philosopher.Data, numRounds int) []StepMeta {
-	steps := pipeline(a, b, numRounds, "", 0)
+	steps := pipeline(a, b, numRounds, RoleModels{}, 0)
 	out := make([]StepMeta, len(steps))
 	for i := range steps {
 		out[i] = StepMeta{Key: steps[i].Key, Label: steps[i].Label}
@@ -180,7 +187,12 @@ var (
 // enumerates every step cheaply — no agents are constructed; each step's build
 // closure builds its agent only when invoked, so a turn builds exactly one.
 // Step i here corresponds 1:1 with StepRecords[i] and BuildStepMeta()[i].
-func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int) []step {
+//
+// Each step runs on its role's model from models: the debaters' rounds and
+// critic-responses on DebaterA/DebaterB, the referee steps on Moderator/Critic/
+// Judge. models is expected fully populated (CreateDebate fills unset roles with
+// the Default Model), so the pipeline reads it directly with no fallback.
+func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords int) []step {
 	var steps []step
 	add := func(key, label string, build func(context.Context) (*agent.Agent, error)) {
 		steps = append(steps, step{Key: key, Label: label, build: build})
@@ -188,7 +200,7 @@ func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int
 
 	// Moderator
 	add("moderator_intro", "Introduction", func(ctx context.Context) (*agent.Agent, error) {
-		return philosopher.MakeModerator(ctx, a, b, modelID)
+		return philosopher.MakeModerator(ctx, a, b, models.Moderator)
 	})
 
 	// Debate rounds. A speaks first each round (so opens on round 1); B always
@@ -209,7 +221,7 @@ func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int
 				OutputKey:      aKey,
 				Situation:      roundSituation(r),
 				OpponentArgKey: bPrevKey,
-				ModelID:        modelID,
+				ModelID:        models.DebaterA,
 				MaxWords:       maxWords,
 			})
 		})
@@ -220,7 +232,7 @@ func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int
 				OutputKey:      bKey,
 				Situation:      fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
 				OpponentArgKey: aKey,
-				ModelID:        modelID,
+				ModelID:        models.DebaterB,
 				MaxWords:       maxWords,
 			})
 		})
@@ -228,7 +240,7 @@ func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int
 
 	// Critic
 	add("critic_feedback", "Critic Analysis", func(ctx context.Context) (*agent.Agent, error) {
-		return philosopher.MakeCritic(ctx, a, b, numRounds, modelID, maxWords*2)
+		return philosopher.MakeCritic(ctx, a, b, numRounds, models.Critic, maxWords*2)
 	})
 
 	// Philosopher responses to critic
@@ -240,7 +252,7 @@ func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int
 			OutputKey: aCritKey,
 			Situation: "response to the critic — address their challenges and refine your position",
 			CriticKey: "critic_feedback",
-			ModelID:   modelID,
+			ModelID:   models.DebaterA,
 			MaxWords:  maxWords,
 		})
 	})
@@ -252,14 +264,14 @@ func pipeline(a, b philosopher.Data, numRounds int, modelID string, maxWords int
 			OutputKey: bCritKey,
 			Situation: "response to the critic — address their challenges and refine your position",
 			CriticKey: "critic_feedback",
-			ModelID:   modelID,
+			ModelID:   models.DebaterB,
 			MaxWords:  maxWords,
 		})
 	})
 
 	// Judge
 	add("final_verdict", "Judge's Verdict", func(ctx context.Context) (*agent.Agent, error) {
-		return philosopher.MakeJudge(ctx, a, b, numRounds, modelID)
+		return philosopher.MakeJudge(ctx, a, b, numRounds, models.Judge)
 	})
 
 	return steps

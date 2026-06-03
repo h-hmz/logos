@@ -85,6 +85,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 	r.Group(func(pr chi.Router) {
 		pr.Use(authMiddleware(verifier, allow))
 		pr.Get("/philosophers", s.listPhilosophers)
+		pr.Get("/models", s.listModels)
 		pr.Get("/me/quota", s.getQuota)
 		pr.Post("/debates", s.createDebate)
 		// Per-debate routes share sessionIDMiddleware so the slog handler

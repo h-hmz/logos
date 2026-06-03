@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/h-hmz/logos/internal/agent"
+	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/tutor"
 )
@@ -138,7 +139,9 @@ func (s *Service) runTutorExplain(ctx context.Context, debateID string, req Tuto
 		}
 	}
 
-	tutorAgent, err := tutor.MakeTutor(ctx, p.ModelID)
+	// The tutor is not a debate-pipeline role; it always runs on the live
+	// Default Model rather than anything stored on the debate.
+	tutorAgent, err := tutor.MakeTutor(ctx, config.DefaultModel())
 	if err != nil {
 		return TutorResult{}, 0, fmt.Errorf("make tutor: %w", err)
 	}

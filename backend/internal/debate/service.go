@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/h-hmz/logos/internal/config"
+	"github.com/h-hmz/logos/internal/models"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/quota"
 )
@@ -236,13 +237,17 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 // ── CreateDebate ───────────────────────────────────────────────────────────
 
 // CreateDebateParams is the caller-supplied input; defaults are applied inside
-// the service so every caller sees the same business rules.
+// the service so every caller sees the same business rules. ModelA and ModelB
+// are the optional Debater Models: when empty they fall back to the Default
+// Model; when set they must be in the authorized allowlist (see models.Allowed).
 type CreateDebateParams struct {
 	Topic     string
 	DebaterA  string
 	DebaterB  string
 	NumRounds int
 	MaxWords  int
+	ModelA    string
+	ModelB    string
 }
 
 // CreateDebateResult bundles the new debate record with the philosopher data
@@ -253,6 +258,21 @@ type CreateDebateResult struct {
 	DebaterA philosopher.Data
 	DebaterB philosopher.Data
 	Steps    []StepMeta
+}
+
+// resolveDebaterModel resolves a caller-supplied Debater Model. An omitted
+// (empty/blank) value falls back to the Default Model — the operator-set
+// MODEL, which is trusted and not gated by the allowlist. A provided value must
+// be an authorized model, else a ValidationError (HTTP 400) is returned.
+func resolveDebaterModel(raw string) (string, error) {
+	m := strings.TrimSpace(raw)
+	if m == "" {
+		return config.DefaultModel(), nil
+	}
+	if !models.Allowed(m) {
+		return "", validationErr(fmt.Sprintf("model %q is not an allowed model", m))
+	}
+	return m, nil
 }
 
 // CreateDebate validates the request, applies defaults, and persists a new
@@ -280,6 +300,29 @@ func (s *Service) CreateDebate(ctx context.Context, uid string, in CreateDebateP
 		return nil, validationErr("Topic cannot be empty")
 	}
 
+	modelA, err := resolveDebaterModel(in.ModelA)
+	if err != nil {
+		return nil, err
+	}
+	modelB, err := resolveDebaterModel(in.ModelB)
+	if err != nil {
+		return nil, err
+	}
+
+	// Per-role models. Debaters take the (validated) caller-supplied models;
+	// moderator/critic/judge are not yet caller-configurable, so they seed to
+	// the Default Model — the core routes per role, so exposing them later is a
+	// pure transport change. The Tutor is intentionally absent: it is not a
+	// pipeline role and reads the live Default Model when invoked.
+	def := config.DefaultModel()
+	roleModels := RoleModels{
+		DebaterA:  modelA,
+		DebaterB:  modelB,
+		Moderator: def,
+		Critic:    def,
+		Judge:     def,
+	}
+
 	p := &Persisted{
 		ID:           uuid.NewString(),
 		OwnerUID:     uid,
@@ -287,7 +330,7 @@ func (s *Service) CreateDebate(ctx context.Context, uid string, in CreateDebateP
 		DebaterAName: a.Name,
 		DebaterBName: b.Name,
 		NumRounds:    in.NumRounds,
-		ModelID:      config.DefaultModel(),
+		Models:       roleModels,
 		MaxWords:     in.MaxWords,
 	}
 	if err := s.repo.Create(ctx, p); err != nil {
@@ -373,7 +416,7 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken
 	}
 
 	// Build only the one agent this turn runs, not the whole pipeline.
-	nextStep := pipeline(rt.DebaterA, rt.DebaterB, p.NumRounds, p.ModelID, p.MaxWords)[stepIndex]
+	nextStep := pipeline(rt.DebaterA, rt.DebaterB, p.NumRounds, p.Models, p.MaxWords)[stepIndex]
 	ag, err := nextStep.build(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("build step: %w", err)

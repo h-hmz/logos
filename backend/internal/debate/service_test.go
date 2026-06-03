@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/philosopher"
 )
 
@@ -25,6 +26,66 @@ func TestRoleForStep(t *testing.T) {
 			t.Fatalf("RoleForStep(%q) = %q, want %q", key, got, want)
 		}
 	}
+}
+
+// TestCreateDebate_Models verifies Debater Model resolution: an omitted model
+// falls back to the Default Model, a provided authorized model is stamped onto
+// the record, and a provided unauthorized model is rejected as a ValidationError.
+func TestCreateDebate_Models(t *testing.T) {
+	phils := map[string]philosopher.Data{
+		"Socrates": {Name: "Socrates", School: "Classical", Identity: "id", KeyThinkers: "k"},
+		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
+	}
+	t.Setenv("MODEL", "default-model")
+	if err := config.Load(""); err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	svc := NewService(NewMemoryRepo(), phils)
+	ctx := context.Background()
+	base := CreateDebateParams{Topic: "free will", DebaterA: "Socrates", DebaterB: "Kant"}
+
+	t.Run("omitted falls back to default", func(t *testing.T) {
+		res, err := svc.CreateDebate(ctx, "alice", base)
+		if err != nil {
+			t.Fatalf("CreateDebate: %v", err)
+		}
+		// Every role seeds to the Default Model when nothing is supplied.
+		want := RoleModels{DebaterA: "default-model", DebaterB: "default-model", Moderator: "default-model", Critic: "default-model", Judge: "default-model"}
+		if res.Debate.Models != want {
+			t.Fatalf("Models = %+v, want %+v", res.Debate.Models, want)
+		}
+	})
+
+	t.Run("authorized debater models are stamped", func(t *testing.T) {
+		in := base
+		in.ModelA = "z-ai/glm-4.6"
+		in.ModelB = "  qwen/qwen3-235b-a22b-2507  " // surrounding space is trimmed
+		res, err := svc.CreateDebate(ctx, "alice", in)
+		if err != nil {
+			t.Fatalf("CreateDebate: %v", err)
+		}
+		if res.Debate.Models.DebaterA != "z-ai/glm-4.6" {
+			t.Errorf("DebaterA = %q, want %q", res.Debate.Models.DebaterA, "z-ai/glm-4.6")
+		}
+		if res.Debate.Models.DebaterB != "qwen/qwen3-235b-a22b-2507" {
+			t.Errorf("DebaterB = %q, want %q", res.Debate.Models.DebaterB, "qwen/qwen3-235b-a22b-2507")
+		}
+		// Referee roles still seed to the Default Model (not yet caller-configurable).
+		if res.Debate.Models.Moderator != "default-model" || res.Debate.Models.Critic != "default-model" || res.Debate.Models.Judge != "default-model" {
+			t.Errorf("referee models = (%q, %q, %q), want all %q",
+				res.Debate.Models.Moderator, res.Debate.Models.Critic, res.Debate.Models.Judge, "default-model")
+		}
+	})
+
+	t.Run("unauthorized model is rejected", func(t *testing.T) {
+		in := base
+		in.ModelA = "openai/gpt-4o"
+		_, err := svc.CreateDebate(ctx, "alice", in)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("CreateDebate err = %v, want *ValidationError", err)
+		}
+	})
 }
 
 // TestNextTurn_OwnershipGate verifies only the owner may advance a debate: a
@@ -50,7 +111,6 @@ func TestNextTurn_OwnershipGate(t *testing.T) {
 			DebaterAName: "Socrates",
 			DebaterBName: "Kant",
 			NumRounds:    1,
-			ModelID:      "test-model",
 			MaxWords:     100,
 			StepRecords:  make([]StepRecord, completed),
 		})
