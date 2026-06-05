@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Bust } from '../components/Bust'
 import { RuleOrnament } from '../components/RuleOrnament'
-import { createDebate, fetchPhilosophers, type DebateSession, type Philosopher } from '../api'
+import { createDebate, fetchModels, fetchPhilosophers, modelLabel, type DebateSession, type ModelOption, type Philosopher } from '../api'
 import { enrich, ERAS, type EnrichedPhilosopher } from '../philosopher-meta'
 
 interface Props {
@@ -132,6 +132,11 @@ export function StagePage({ onDebateCreated }: Props) {
   const [topic, setTopic] = useState('')
   const [pickA, setPickA] = useState<EnrichedPhilosopher | null>(null)
   const [pickB, setPickB] = useState<EnrichedPhilosopher | null>(null)
+  // Authorized Debater Models and the per-corner choice. Empty string means the
+  // "Default" option (the server falls back to its default model).
+  const [models, setModels] = useState<ModelOption[]>([])
+  const [modelA, setModelA] = useState('')
+  const [modelB, setModelB] = useState('')
   const [rounds, setRounds] = useState(3)
   const [words, setWords] = useState(250)
   const [era, setEra] = useState<'All' | string>('All')
@@ -148,6 +153,14 @@ export function StagePage({ onDebateCreated }: Props) {
       .then((phils: Philosopher[]) => setPhilosophers(phils.map(enrich)))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoadingRoster(false))
+  }, [])
+
+  // Load the model allowlist for the per-debater dropdowns. A failure here is
+  // non-fatal: the dropdowns still offer "Default", so debates can proceed.
+  useEffect(() => {
+    fetchModels()
+      .then(setModels)
+      .catch(() => setModels([]))
   }, [])
 
   const filtered = useMemo(
@@ -178,6 +191,8 @@ export function StagePage({ onDebateCreated }: Props) {
         debater_b: pickB.name,
         num_rounds: rounds,
         max_words: words,
+        model_a: modelA,
+        model_b: modelB,
       })
       onDebateCreated(debate)
     } catch (e) {
@@ -288,6 +303,9 @@ export function StagePage({ onDebateCreated }: Props) {
                 onClear={() => { setPickA(null); setSlot('a') }}
                 active={slot === 'a' && !pickA}
                 onScrollToRoster={() => rosterRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                models={models}
+                model={modelA}
+                onModelChange={setModelA}
               />
               <div className="versus">vs.</div>
               <CornerSlot
@@ -296,6 +314,9 @@ export function StagePage({ onDebateCreated }: Props) {
                 onClear={() => { setPickB(null); setSlot('b') }}
                 active={slot === 'b' && !pickB}
                 onScrollToRoster={() => rosterRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                models={models}
+                model={modelB}
+                onModelChange={setModelB}
               />
             </div>
 
@@ -433,9 +454,12 @@ interface CornerSlotProps {
   onClear: () => void
   active: boolean
   onScrollToRoster: () => void
+  models: ModelOption[]
+  model: string
+  onModelChange: (id: string) => void
 }
 
-function CornerSlot({ picked, label, onClear, active, onScrollToRoster }: CornerSlotProps) {
+function CornerSlot({ picked, label, onClear, active, onScrollToRoster, models, model, onModelChange }: CornerSlotProps) {
   if (!picked) {
     return (
       <div
@@ -469,6 +493,15 @@ function CornerSlot({ picked, label, onClear, active, onScrollToRoster }: Corner
           <div className="school">{picked.school}</div>
         </div>
         {picked.oneliner && <div className="quote">&ldquo;{picked.oneliner}&rdquo;</div>}
+        <div className="model-pick">
+          <label>Model</label>
+          <select value={model} onChange={(e) => onModelChange(e.target.value)}>
+            <option value="">Default</option>
+            {models.map((m) => (
+              <option key={m.id} value={m.id}>{modelLabel(m.id)}</option>
+            ))}
+          </select>
+        </div>
       </div>
     </div>
   )

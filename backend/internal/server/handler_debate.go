@@ -67,6 +67,9 @@ type stepInfo struct {
 type debaterInfo struct {
 	Name   string `json:"name"`
 	School string `json:"school"`
+	// Model is the resolved model this debater runs on (the Default Model when
+	// the caller didn't pick one), surfaced so the UI can label each corner.
+	Model string `json:"model"`
 }
 
 type createDebateResponse struct {
@@ -104,8 +107,8 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 	resp := createDebateResponse{
 		ID:         res.Debate.ID,
 		Topic:      res.Debate.Topic,
-		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School},
-		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School},
+		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School, Model: res.Debate.Models.DebaterA},
+		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School, Model: res.Debate.Models.DebaterB},
 		TotalSteps: len(res.Steps),
 	}
 	for _, sm := range res.Steps {
@@ -136,8 +139,8 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 	resp := getDebateResponse{
 		ID:         res.Debate.ID,
 		Topic:      res.Debate.Topic,
-		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School},
-		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School},
+		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School, Model: res.Debate.Models.DebaterA},
+		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School, Model: res.Debate.Models.DebaterB},
 		TotalSteps: len(res.Steps),
 		Turns:      make(map[int]turnResult, len(res.Turns)),
 	}

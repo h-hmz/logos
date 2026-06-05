@@ -1,4 +1,4 @@
-import { type DebateSession } from '../api'
+import { modelLabel, type DebateSession } from '../api'
 import { type EnrichedPhilosopher } from '../philosopher-meta'
 import { roleForLabel, type Role } from '../step-role'
 import { Bust } from './Bust'
@@ -48,6 +48,7 @@ export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, acti
               <div className="line">
                 <span className="school">{a.school}</span>
               </div>
+              {a.model && <div className="model">{modelLabel(a.model)}</div>}
             </div>
           </div>
           <div className="vs-small">vs.</div>
@@ -58,6 +59,7 @@ export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, acti
               <div className="line">
                 <span className="school">{b.school}</span>
               </div>
+              {b.model && <div className="model">{modelLabel(b.model)}</div>}
             </div>
           </div>
           <div className="spacer" />

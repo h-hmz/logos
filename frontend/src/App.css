@@ -244,6 +244,10 @@ button { font-family: inherit; }
 .corner .body .meta .name { font-family: var(--serif-d); font-size: 22px; font-weight: 500; line-height: 1.1; margin-bottom: 4px; }
 .corner .body .meta .school { font-family: var(--sc); font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent-ink); margin-bottom: 0; }
 .corner .body .quote { grid-column: 1 / -1; font-family: var(--serif); font-size: 13px; font-style: italic; color: var(--ink-soft); line-height: 1.45; }
+.corner .body .model-pick { grid-column: 1 / -1; margin-top: auto; }
+.corner .body .model-pick label { display: block; font-family: var(--sc); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 5px; }
+.corner .body .model-pick select { width: 100%; font-family: var(--mono); font-size: 11px; padding: 6px 8px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); cursor: pointer; }
+.corner .body .model-pick select:focus { outline: none; border-color: var(--accent); }
 .corner.empty .empty-msg { margin: auto; text-align: center; color: var(--ink-soft); font-style: italic; font-size: 17px; }
 
 .versus {
@@ -320,6 +324,7 @@ button { font-family: inherit; }
 .fighter .meta .name { font-family: var(--serif-d); font-size: 18px; font-weight: 500; line-height: 1; }
 .fighter .meta .line { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
 .fighter .meta .school { font-family: var(--sc); font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent-ink); }
+.fighter .meta .model { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; color: var(--ink-soft); margin-top: 2px; }
 .vs-small { font-family: var(--serif-d); font-style: italic; font-size: 22px; color: var(--accent); }
 .fighters .spacer { flex: 1; }
 
@@ -631,6 +636,8 @@ button { font-family: inherit; }
 [data-theme="dark"] .corner.empty { background: rgba(239,224,194,0.02); }
 [data-theme="dark"] .roster-card.picked { background: rgba(212,98,63,0.09); }
 [data-theme="dark"] .setup-row .segmented button.on { color: var(--bg); }
+/* color-scheme makes the native option popup match the candlelit surface. */
+[data-theme="dark"] .corner .body .model-pick select { color-scheme: dark; }
 [data-theme="dark"] .chip.on { color: var(--bg); }
 [data-theme="dark"] .sc-track { background: rgba(239,224,194,0.09); }
 [data-theme="dark"] .next-bar-inner { box-shadow: 0 6px 30px rgba(0,0,0,0.55); }

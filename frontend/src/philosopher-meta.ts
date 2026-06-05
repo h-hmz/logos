@@ -71,6 +71,7 @@ export interface EnrichedPhilosopher extends PhilosopherMeta {
   name: string
   school: string
   one_liner?: string
+  model?: string
   initials: string
 }
 

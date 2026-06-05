@@ -202,6 +202,52 @@ func TestCreateDebate_StampsOwner(t *testing.T) {
 	}
 }
 
+// TestDebate_ReturnsDebaterModels verifies the resolved per-debater model
+// surfaces in both the create and get responses: a caller-picked model on
+// debater A, the Default Model (test-model) on the unpicked debater B.
+func TestDebate_ReturnsDebaterModels(t *testing.T) {
+	_, _, h := testServer(t)
+	body, _ := json.Marshal(map[string]any{
+		"topic":     "free will",
+		"debater_a": "Socrates",
+		"debater_b": "Kant",
+		"model_a":   "z-ai/glm-4.6", // an authorized Debater Model
+	})
+	req := httptest.NewRequest(http.MethodPost, "/debates", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — body: %s", rr.Code, rr.Body.String())
+	}
+	var created createDebateResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if created.DebaterA.Model != "z-ai/glm-4.6" {
+		t.Errorf("create DebaterA.Model = %q, want %q", created.DebaterA.Model, "z-ai/glm-4.6")
+	}
+	if created.DebaterB.Model != "test-model" {
+		t.Errorf("create DebaterB.Model = %q, want %q (default)", created.DebaterB.Model, "test-model")
+	}
+
+	// The same models must survive a round-trip through GET /debates/{id}.
+	getReq := httptest.NewRequest(http.MethodGet, "/debates/"+created.ID, nil)
+	getRR := httptest.NewRecorder()
+	h.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("get status = %d, want 200 — body: %s", getRR.Code, getRR.Body.String())
+	}
+	var got getDebateResponse
+	if err := json.Unmarshal(getRR.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode get: %v", err)
+	}
+	if got.DebaterA.Model != "z-ai/glm-4.6" || got.DebaterB.Model != "test-model" {
+		t.Errorf("get models = (%q, %q), want (%q, %q)",
+			got.DebaterA.Model, got.DebaterB.Model, "z-ai/glm-4.6", "test-model")
+	}
+}
+
 // TestNextTurn_NonOwnerForbidden verifies a caller who does not own a debate is
 // refused with 403 when advancing it (reads stay open; only /next is gated).
 func TestNextTurn_NonOwnerForbidden(t *testing.T) {

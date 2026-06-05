@@ -6,6 +6,10 @@ export interface Philosopher {
   era?: string
   dates?: string
   one_liner?: string
+  // The model this debater runs on for the debate. Present on a debate's
+  // debater_a/debater_b (resolved to the default model when unpicked); absent
+  // on the /philosophers catalog, which has no per-debate model.
+  model?: string
 }
 
 export type TurnRole = 'moderator' | 'a' | 'b' | 'critic' | 'judge'
@@ -107,6 +111,24 @@ export interface CreateDebateParams {
   debater_b: string
   num_rounds: number
   max_words: number
+  // Optional per-debater models. Empty/omitted falls back to the default model;
+  // when set, must be one of the ids returned by fetchModels (the allowlist).
+  model_a?: string
+  model_b?: string
+}
+
+// ModelOption is one authorized Debater Model from GET /models. The server
+// returns objects (not bare strings) so display metadata can be added later
+// without reshaping the JSON.
+export interface ModelOption {
+  id: string
+}
+
+// modelLabel prettifies a model id for display: ids are provider/model slugs
+// (e.g. "z-ai/glm-4.6"), and the part after the slash reads cleanest.
+export function modelLabel(id: string): string {
+  const i = id.indexOf('/')
+  return i === -1 ? id : id.slice(i + 1)
 }
 
 // ── API ────────────────────────────────────────────────────────────────────────
@@ -164,6 +186,16 @@ export async function fetchPhilosophers(): Promise<Philosopher[]> {
     headers: await getAuthHeader(),
   })
   if (!res.ok) throw new Error('Failed to load philosophers')
+  return res.json()
+}
+
+// The authorized Debater Models backing the per-debater dropdowns. Empty
+// selection (the "Default" option) means "use the server's default model".
+export async function fetchModels(): Promise<ModelOption[]> {
+  const res = await fetch(`${API_BASE}/models`, {
+    headers: await getAuthHeader(),
+  })
+  if (!res.ok) throw new Error('Failed to load models')
   return res.json()
 }
 
