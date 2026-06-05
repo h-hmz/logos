@@ -434,6 +434,28 @@ button { font-family: inherit; }
 .next-bar-inner .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .auto-label { font-family: var(--sc); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-soft); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 
+/* observer interjection — input above the bar, and the aside it renders as on its turn */
+.interject-row { max-width: 900px; margin: 0 auto 10px; pointer-events: auto; display: flex; align-items: flex-end; gap: 10px; }
+.interject-input {
+  flex: 1; resize: vertical; min-height: 38px; max-height: 140px;
+  background: var(--panel); border: 1px solid var(--rule);
+  padding: 9px 12px; font-family: var(--serif); font-size: 15px; color: var(--ink-2); line-height: 1.4;
+}
+.interject-input:focus { outline: none; border-color: var(--accent); }
+.interject-input::placeholder { color: var(--ink-soft); font-style: italic; }
+.interject-count { white-space: nowrap; align-self: center; }
+.turn .say .interjection-aside {
+  /* Borrows the Moderator panel's palette: a lit-parchment gradient with a
+     faint inset terracotta ring, kept on the left-rule shape. The dark-theme
+     surface is overridden below, mirroring .curtain.moderator. */
+  margin: 0 0 16px; padding: 11px 16px; border-left: 2px solid var(--accent);
+  background: linear-gradient(180deg, #f7f0e1 0%, #f2e9d6 100%);
+  box-shadow: inset 0 0 0 1px rgba(176,74,42,0.08);
+  color: var(--ink-2); display: flex; flex-direction: column; gap: 3px;
+}
+.interjection-tag { font-family: var(--sc); font-size: 10px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--accent-ink); }
+.interjection-text { font-family: var(--serif); font-style: italic; font-size: 15.5px; line-height: 1.5; color: var(--ink-2); }
+
 /* live error banner */
 .live-error {
   margin: 20px 0; padding: 12px 18px;
@@ -622,6 +644,12 @@ button { font-family: inherit; }
 }
 [data-theme="dark"] .curtain.moderator h2 { color: var(--ink); }
 [data-theme="dark"] .curtain.moderator .body-text { color: var(--ink-2); }
+
+/* Interjection aside shares the Moderator's dark surface (warm wood + ring). */
+[data-theme="dark"] .turn .say .interjection-aside {
+  background: linear-gradient(180deg, #2a2017 0%, #241c13 100%);
+  box-shadow: inset 0 0 0 1px rgba(212,98,63,0.12);
+}
 
 /* Fix visibility for curtains that stay dark in dark mode (Critic, Judge) */
 [data-theme="dark"] .curtain:not(.moderator) {

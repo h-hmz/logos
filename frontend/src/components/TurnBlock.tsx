@@ -27,6 +27,8 @@ interface TurnBlockProps {
   debateId?: string
   stepKey?: string
   coordinator?: AudioCoordinator
+  // The owner's interjection that steered this turn, rendered as an aside.
+  interjection?: string
 }
 
 export function TurnBlock({
@@ -42,6 +44,7 @@ export function TurnBlock({
   debateId,
   stepKey,
   coordinator,
+  interjection,
 }: TurnBlockProps) {
   const selectable = !streaming && !!text && !!stepKey
   // Raw `text` carries Gemini TTS delivery cues like [excited]; hide them
@@ -93,6 +96,12 @@ export function TurnBlock({
               )}
           </span>
         </div>
+        {interjection && (
+          <div className="interjection-aside">
+            <span className="interjection-tag">⟢ A voice from the agora</span>
+            <span className="interjection-text">{interjection}</span>
+          </div>
+        )}
         <div className="body" data-turn-key={selectable ? stepKey : undefined}>
           {streaming ? (
             paragraphs.map((p, i) => (

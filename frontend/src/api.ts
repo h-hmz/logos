@@ -97,6 +97,8 @@ export interface TurnResult {
   turn_output_tokens: number
   total_input_tokens: number
   total_output_tokens: number
+  // The owner's interjection that conditioned this turn, echoed for rendering.
+  interjection?: string
 }
 
 export interface CreateDebateParams {
@@ -367,16 +369,20 @@ export async function nextTurn(debateId: string): Promise<TurnResult> {
 
 // Stream a turn via SSE; invokes onToken for each partial token and resolves with the
 // final TurnResult carried on the `done` event. Throws on `error` events.
+// interjection, when non-empty, is the owner's note steering this turn.
 export async function streamTurn(
   debateId: string,
   onToken: (text: string) => void,
+  interjection?: string,
 ): Promise<TurnResult> {
   const res = await fetch(`${API_BASE}/debates/${debateId}/next`, {
     method: 'POST',
     headers: {
       Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
       ...await getAuthHeader(),
     },
+    body: JSON.stringify({ interjection: interjection ?? '' }),
   })
   if (!res.ok || !res.body) {
     const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))

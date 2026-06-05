@@ -11,13 +11,34 @@ import (
 	"github.com/h-hmz/logos/internal/philosopher"
 )
 
+// turnInput carries the per-turn, request-scoped inputs a step's agent needs at
+// build time — distinct from the debate's persistent shape pipeline is built
+// from. Only the step a turn actually runs is handed one (see runNextTurn).
+type turnInput struct {
+	Interjection string // owner's note for this turn (empty when none); honored only by debater steps
+}
+
+// interjectionKeySuffix forms a step's interjection State slot from its key:
+// "socrates_r1" → "socrates_r1_interjection". Per-step like every other
+// inter-step value, so prior notes can later be seeded for other steps to read.
+const interjectionKeySuffix = "_interjection"
+
+// interjectionSlot is the State slot stepKey reads its interjection from, or ""
+// to omit the slot when there is no note this turn.
+func (t turnInput) interjectionSlot(stepKey string) string {
+	if t.Interjection == "" {
+		return ""
+	}
+	return stepKey + interjectionKeySuffix
+}
+
 // step is one node of the debate pipeline: its identity (Key, Label) plus a
 // lazy builder so callers that only need metadata never construct an agent.
 // The builder is invoked for exactly the one step a turn runs (see runNextTurn).
 type step struct {
 	Key   string
 	Label string
-	build func(ctx context.Context) (*agent.Agent, error)
+	build func(ctx context.Context, in turnInput) (*agent.Agent, error)
 }
 
 // StepMeta is the lightweight form of a pipeline step — no agent, safe to
@@ -35,6 +56,7 @@ type StepMeta struct {
 type StepRecord struct {
 	Key          string  `json:"key"           firestore:"key"`
 	Content      string  `json:"content"       firestore:"content"`
+	Interjection string  `json:"interjection,omitempty" firestore:"interjection,omitempty"`
 	InputTokens  int     `json:"input_tokens"  firestore:"input_tokens"`
 	OutputTokens int     `json:"output_tokens" firestore:"output_tokens"`
 	CostUSD      float64 `json:"cost_usd"      firestore:"cost_usd"`
@@ -192,14 +214,18 @@ var (
 // critic-responses on DebaterA/DebaterB, the referee steps on Moderator/Critic/
 // Judge. models is expected fully populated (CreateDebate fills unset roles with
 // the Default Model), so the pipeline reads it directly with no fallback.
+//
+// pipeline takes only the debate's persistent shape, never a per-turn value: the
+// interjection is request-scoped and reaches the one step a turn runs via that
+// step's build (turnInput), not through here.
 func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords int) []step {
 	var steps []step
-	add := func(key, label string, build func(context.Context) (*agent.Agent, error)) {
+	add := func(key, label string, build func(context.Context, turnInput) (*agent.Agent, error)) {
 		steps = append(steps, step{Key: key, Label: label, build: build})
 	}
 
 	// Moderator
-	add("moderator_intro", "Introduction", func(ctx context.Context) (*agent.Agent, error) {
+	add("moderator_intro", "Introduction", func(ctx context.Context, _ turnInput) (*agent.Agent, error) {
 		return philosopher.MakeModerator(ctx, a, b, models.Moderator)
 	})
 
@@ -214,24 +240,26 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 		aKey := fmt.Sprintf("%s_r%d", philosopher.Key(a.Name), r)
 		bKey := fmt.Sprintf("%s_r%d", philosopher.Key(b.Name), r)
 
-		add(aKey, fmt.Sprintf("%s — Round %d", a.Name, r), func(ctx context.Context) (*agent.Agent, error) {
+		add(aKey, fmt.Sprintf("%s — Round %d", a.Name, r), func(ctx context.Context, in turnInput) (*agent.Agent, error) {
 			return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
 				Data:           a,
 				AgentName:      aKey,
 				OutputKey:      aKey,
 				Situation:      roundSituation(r),
 				OpponentArgKey: bPrevKey,
+				AudienceKey:    in.interjectionSlot(aKey),
 				ModelID:        models.DebaterA,
 				MaxWords:       maxWords,
 			})
 		})
-		add(bKey, fmt.Sprintf("%s — Round %d", b.Name, r), func(ctx context.Context) (*agent.Agent, error) {
+		add(bKey, fmt.Sprintf("%s — Round %d", b.Name, r), func(ctx context.Context, in turnInput) (*agent.Agent, error) {
 			return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
 				Data:           b,
 				AgentName:      bKey,
 				OutputKey:      bKey,
 				Situation:      fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
 				OpponentArgKey: aKey,
+				AudienceKey:    in.interjectionSlot(bKey),
 				ModelID:        models.DebaterB,
 				MaxWords:       maxWords,
 			})
@@ -239,38 +267,40 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 	}
 
 	// Critic
-	add("critic_feedback", "Critic Analysis", func(ctx context.Context) (*agent.Agent, error) {
+	add("critic_feedback", "Critic Analysis", func(ctx context.Context, _ turnInput) (*agent.Agent, error) {
 		return philosopher.MakeCritic(ctx, a, b, numRounds, models.Critic, maxWords*2)
 	})
 
 	// Philosopher responses to critic
 	aCritKey := fmt.Sprintf("%s_critic_response", philosopher.Key(a.Name))
-	add(aCritKey, fmt.Sprintf("%s — Response to Critic", a.Name), func(ctx context.Context) (*agent.Agent, error) {
+	add(aCritKey, fmt.Sprintf("%s — Response to Critic", a.Name), func(ctx context.Context, in turnInput) (*agent.Agent, error) {
 		return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-			Data:      a,
-			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(a.Name)),
-			OutputKey: aCritKey,
-			Situation: "response to the critic — address their challenges and refine your position",
-			CriticKey: "critic_feedback",
-			ModelID:   models.DebaterA,
-			MaxWords:  maxWords,
+			Data:        a,
+			AgentName:   fmt.Sprintf("%s_CriticResponse", philosopher.Key(a.Name)),
+			OutputKey:   aCritKey,
+			Situation:   "response to the critic — address their challenges and refine your position",
+			CriticKey:   "critic_feedback",
+			AudienceKey: in.interjectionSlot(aCritKey),
+			ModelID:     models.DebaterA,
+			MaxWords:    maxWords,
 		})
 	})
 	bCritKey := fmt.Sprintf("%s_critic_response", philosopher.Key(b.Name))
-	add(bCritKey, fmt.Sprintf("%s — Response to Critic", b.Name), func(ctx context.Context) (*agent.Agent, error) {
+	add(bCritKey, fmt.Sprintf("%s — Response to Critic", b.Name), func(ctx context.Context, in turnInput) (*agent.Agent, error) {
 		return philosopher.MakePhilosopher(ctx, philosopher.MakePhilosopherOpts{
-			Data:      b,
-			AgentName: fmt.Sprintf("%s_CriticResponse", philosopher.Key(b.Name)),
-			OutputKey: bCritKey,
-			Situation: "response to the critic — address their challenges and refine your position",
-			CriticKey: "critic_feedback",
-			ModelID:   models.DebaterB,
-			MaxWords:  maxWords,
+			Data:        b,
+			AgentName:   fmt.Sprintf("%s_CriticResponse", philosopher.Key(b.Name)),
+			OutputKey:   bCritKey,
+			Situation:   "response to the critic — address their challenges and refine your position",
+			CriticKey:   "critic_feedback",
+			AudienceKey: in.interjectionSlot(bCritKey),
+			ModelID:     models.DebaterB,
+			MaxWords:    maxWords,
 		})
 	})
 
 	// Judge
-	add("final_verdict", "Judge's Verdict", func(ctx context.Context) (*agent.Agent, error) {
+	add("final_verdict", "Judge's Verdict", func(ctx context.Context, _ turnInput) (*agent.Agent, error) {
 		return philosopher.MakeJudge(ctx, a, b, numRounds, models.Judge)
 	})
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -155,6 +156,7 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 			Done:              t.Done,
 			TotalInputTokens:  t.TotalInputTokens,
 			TotalOutputTokens: t.TotalOutputTokens,
+			Interjection:      t.Interjection,
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -175,6 +177,29 @@ type turnResult struct {
 	TurnOutputTokens  int    `json:"turn_output_tokens"`
 	TotalInputTokens  int    `json:"total_input_tokens"`
 	TotalOutputTokens int    `json:"total_output_tokens"`
+	Interjection      string `json:"interjection,omitempty"`
+}
+
+// nextTurnRequest is the optional body of POST /next; an absent/empty body is a
+// plain advance. Interjection length/role validation happens in the service.
+type nextTurnRequest struct {
+	Interjection string `json:"interjection"`
+}
+
+// decodeInterjection reads the optional interjection from the request body. An
+// empty body is valid (a plain advance), so io.EOF is not an error; bad JSON is.
+func decodeInterjection(r *http.Request) (string, error) {
+	if r.Body == nil {
+		return "", nil
+	}
+	var req nextTurnRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		}
+		return "", err
+	}
+	return req.Interjection, nil
 }
 
 func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
@@ -182,12 +207,18 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	uid := UIDFromContext(r.Context())
 	defer r.Body.Close()
 
-	if wantsSSE(r) {
-		s.nextTurnSSE(w, r, uid, debateID)
+	interjection, err := decodeInterjection(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	res, err := s.svc.NextTurn(r.Context(), uid, debateID, nil)
+	if wantsSSE(r) {
+		s.nextTurnSSE(w, r, uid, debateID, interjection)
+		return
+	}
+
+	res, err := s.svc.NextTurn(r.Context(), uid, debateID, interjection, nil)
 	if err != nil {
 		writeServiceError(r.Context(), w, err)
 		return
@@ -202,14 +233,14 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 // any token is streamed, so its rejections (402/409) and other pre-stream
 // failures surface as real HTTP statuses. Once an event has been flushed
 // (status 200 committed), failures can only ride the SSE error event.
-func (s *Server) nextTurnSSE(w http.ResponseWriter, r *http.Request, uid, debateID string) {
+func (s *Server) nextTurnSSE(w http.ResponseWriter, r *http.Request, uid, debateID, interjection string) {
 	sw, ok := newSSEWriter(r.Context(), w)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
 
-	res, err := s.svc.NextTurn(r.Context(), uid, debateID, sw.SendToken)
+	res, err := s.svc.NextTurn(r.Context(), uid, debateID, interjection, sw.SendToken)
 	if err != nil {
 		status, msg := mapServiceError(err)
 		if status == http.StatusInternalServerError {
@@ -242,6 +273,7 @@ func toTurnResultPayload(res *debate.TurnResult) turnResult {
 		TurnOutputTokens:  res.TurnOutputTokens,
 		TotalInputTokens:  res.TotalInputTokens,
 		TotalOutputTokens: res.TotalOutputTokens,
+		Interjection:      res.Interjection,
 	}
 }
 

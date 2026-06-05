@@ -23,6 +23,8 @@ func (e *ValidationError) Error() string { return e.Msg }
 
 func validationErr(msg string) error { return &ValidationError{Msg: msg} }
 
+const InterjectionMaxLen = 1000
+
 // Quota-related sentinel errors. Handlers map ErrOverBudget to HTTP 402 and
 // ErrGenerationInFlight to HTTP 409.
 var (
@@ -222,6 +224,7 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 			Done:              i+1 >= total,
 			TotalInputTokens:  totalIn,
 			TotalOutputTokens: totalOut,
+			Interjection:      p.StepRecords[i].Interjection,
 		}
 	}
 
@@ -359,6 +362,7 @@ type TurnResult struct {
 	TurnOutputTokens  int
 	TotalInputTokens  int
 	TotalOutputTokens int
+	Interjection      string
 }
 
 // NextTurn runs the next pipeline step for the given debate. uid is the
@@ -375,7 +379,7 @@ type TurnResult struct {
 // Returns ErrNotFound, ErrForbidden, ErrVersionConflict, *ValidationError,
 // ErrOverBudget, or ErrGenerationInFlight for callers that need to distinguish
 // cases.
-func (s *Service) NextTurn(ctx context.Context, uid, debateID string, onToken func(string)) (*TurnResult, error) {
+func (s *Service) NextTurn(ctx context.Context, uid, debateID, interjection string, onToken func(string)) (*TurnResult, error) {
 	release, err := s.admitGeneration(ctx, uid)
 	if err != nil {
 		return nil, err
@@ -384,7 +388,7 @@ func (s *Service) NextTurn(ctx context.Context, uid, debateID string, onToken fu
 
 	var res *TurnResult
 	err = s.charge(ctx, uid, func() (float64, error) {
-		r, cost, runErr := s.runNextTurn(ctx, uid, debateID, onToken)
+		r, cost, runErr := s.runNextTurn(ctx, uid, debateID, interjection, onToken)
 		res = r
 		return cost, runErr
 	})
@@ -397,7 +401,7 @@ func (s *Service) NextTurn(ctx context.Context, uid, debateID string, onToken fu
 // runNextTurn executes one pipeline step and returns the result plus the
 // generation's provider-billed cost (Usage.CostUSD). Separated from quota
 // bookkeeping so admitGeneration/charge can wrap it uniformly with TutorExplain.
-func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken func(string)) (*TurnResult, float64, error) {
+func (s *Service) runNextTurn(ctx context.Context, uid, debateID, interjection string, onToken func(string)) (*TurnResult, float64, error) {
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
 		return nil, 0, err
@@ -410,6 +414,12 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken
 		return nil, 0, validationErr("Debate is already complete")
 	}
 
+	// Trim first so whitespace-only input is treated as absent, not a short note.
+	interjection = strings.TrimSpace(interjection)
+	if len(interjection) > InterjectionMaxLen {
+		return nil, 0, validationErr(fmt.Sprintf("interjection exceeds %d characters", InterjectionMaxLen))
+	}
+
 	rt, err := Hydrate(p, s.philMap)
 	if err != nil {
 		return nil, 0, fmt.Errorf("hydrate: %w", err)
@@ -417,7 +427,17 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken
 
 	// Build only the one agent this turn runs, not the whole pipeline.
 	nextStep := pipeline(rt.DebaterA, rt.DebaterB, p.NumRounds, p.Models, p.MaxWords)[stepIndex]
-	ag, err := nextStep.build(ctx)
+
+	// An interjection may only steer a debater turn: reject one aimed at a referee
+	// step (fail loud, don't silently drop it), then seed the slot it reads.
+	if interjection != "" {
+		if role := RoleForStep(nextStep.Key, rt.DebaterA, rt.DebaterB); role != "a" && role != "b" {
+			return nil, 0, validationErr("an interjection can only be added to a debater's turn")
+		}
+		rt.State[nextStep.Key+interjectionKeySuffix] = interjection
+	}
+
+	ag, err := nextStep.build(ctx, turnInput{Interjection: interjection})
 	if err != nil {
 		return nil, 0, fmt.Errorf("build step: %w", err)
 	}
@@ -437,6 +457,7 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken
 	p.StepRecords = append(p.StepRecords, StepRecord{
 		Key:          nextStep.Key,
 		Content:      content,
+		Interjection: interjection,
 		InputTokens:  turnInput,
 		OutputTokens: turnOutput,
 		CostUSD:      result.Usage.CostUSD,
@@ -460,6 +481,7 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID string, onToken
 		TurnOutputTokens:  turnOutput,
 		TotalInputTokens:  p.TotalInputTokens(),
 		TotalOutputTokens: p.TotalOutputTokens(),
+		Interjection:      interjection,
 	}, result.Usage.CostUSD, nil
 }
 

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   parseStructured,
   type CriticFinding,
@@ -48,6 +48,14 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   const { idx, buffers, turnResults, totalIn, totalOut, advance } =
     useDebatePlayback(debate, initialTurns, onTurnCompleted, auto)
 
+  // The owner's pending interjection for the upcoming turn, carried into advance
+  // and cleared after.
+  const [draft, setDraft] = useState('')
+  const handleAdvance = useCallback(() => {
+    advance(draft)
+    setDraft('')
+  }, [advance, draft])
+
   const activeStep = debate.steps[idx]
   const activeRole = activeStep ? roleForLabel(activeStep.label, nameA, nameB) : null
 
@@ -73,14 +81,14 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (e.code === 'ArrowRight' || e.code === 'Space') {
         e.preventDefault()
-        advance()
+        handleAdvance()
       } else if (e.code === 'KeyP') {
         setAuto((v) => !v)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [advance])
+  }, [handleAdvance])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -231,6 +239,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 debateId={debate.id}
                 stepKey={step.key}
                 coordinator={coordinatorRef.current}
+                interjection={buf.interjection}
               />
             )
           }
@@ -312,8 +321,10 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         idx={idx}
         auto={auto}
         setAuto={setAuto}
-        onAdvance={advance}
+        onAdvance={handleAdvance}
         streaming={!!buffers[idx]?.streaming && !buffers[idx]?.done}
+        interjection={draft}
+        onInterjectionChange={setDraft}
       />
     </main>
   )

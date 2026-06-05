@@ -2,6 +2,9 @@ import { type DebateSession } from '../api'
 import { type EnrichedPhilosopher } from '../philosopher-meta'
 import { roleForLabel, trimmedLabel } from '../step-role'
 
+// Mirrors the backend's InterjectionMaxLen so the input caps locally.
+const INTERJECTION_MAX_LEN = 1000
+
 interface NextBarProps {
   debate: DebateSession
   a: EnrichedPhilosopher
@@ -11,6 +14,8 @@ interface NextBarProps {
   setAuto: (v: boolean) => void
   onAdvance: () => void
   streaming: boolean
+  interjection: string
+  onInterjectionChange: (v: string) => void
 }
 
 export function NextBar({
@@ -22,11 +27,16 @@ export function NextBar({
   setAuto,
   onAdvance,
   streaming,
+  interjection,
+  onInterjectionChange,
 }: NextBarProps) {
   const total = debate.total_steps
   const atEnd = idx >= total
   const step = debate.steps[Math.min(idx, total - 1)]
   const role = step ? roleForLabel(step.label, a.name, b.name) : null
+  // Interjections steer debater turns only, and only when advancing by hand.
+  const nextSpeaker = role === 'a' ? a.name : role === 'b' ? b.name : null
+  const canInterject = !!nextSpeaker && !auto && !atEnd
   const labelText = !step
     ? 'The bout is over'
     : role === 'moderator'
@@ -43,6 +53,24 @@ export function NextBar({
 
   return (
     <div className="next-bar">
+      {canInterject && (
+        <div className="interject-row">
+          <textarea
+            className="interject-input"
+            rows={1}
+            maxLength={INTERJECTION_MAX_LEN}
+            value={interjection}
+            onChange={(e) => onInterjectionChange(e.target.value)}
+            placeholder={`Interject — a note for ${nextSpeaker} to weigh next (optional)`}
+            disabled={streaming}
+          />
+          {interjection.trim() && (
+            <span className="interject-count t-mono">
+              {interjection.trim().length}/{INTERJECTION_MAX_LEN}
+            </span>
+          )}
+        </div>
+      )}
       <div className="next-bar-inner">
         <div className="desc">
           <span className="t-mono" style={{ marginRight: 10 }}>

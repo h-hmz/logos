@@ -3,6 +3,7 @@ package debate
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/h-hmz/logos/internal/config"
@@ -120,14 +121,91 @@ func TestNextTurn_OwnershipGate(t *testing.T) {
 	}
 
 	seed("d1", "alice", 0)
-	if _, err := svc.NextTurn(ctx, "bob", "d1", nil); !errors.Is(err, ErrForbidden) {
+	if _, err := svc.NextTurn(ctx, "bob", "d1", "", nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-owner NextTurn err = %v, want ErrForbidden", err)
 	}
 
 	seed("d2", "alice", TotalSteps(1))
-	_, err := svc.NextTurn(ctx, "alice", "d2", nil)
+	_, err := svc.NextTurn(ctx, "alice", "d2", "", nil)
 	var ve *ValidationError
 	if !errors.As(err, &ve) {
 		t.Fatalf("owner NextTurn err = %v, want *ValidationError (past ownership gate)", err)
+	}
+}
+
+// TestNextTurn_InterjectionValidation covers the two pre-generation guards on an
+// interjection: it must fit InterjectionMaxLen, and it may only steer a debater
+// turn (the moderator intro at step 0 is a referee step). Both reject before any
+// model call, so no LLM fake is needed.
+func TestNextTurn_InterjectionValidation(t *testing.T) {
+	phils := map[string]philosopher.Data{
+		"Socrates": {Name: "Socrates", School: "Classical", Identity: "id", KeyThinkers: "k"},
+		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
+	}
+	repo := NewMemoryRepo()
+	svc := NewService(repo, phils)
+	ctx := context.Background()
+
+	// A fresh debate owned by alice; step 0 (next to run) is the moderator intro.
+	if err := repo.Create(ctx, &Persisted{
+		ID: "d1", OwnerUID: "alice", DebaterAName: "Socrates", DebaterBName: "Kant",
+		NumRounds: 1, MaxWords: 100,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	t.Run("over-length is rejected", func(t *testing.T) {
+		long := strings.Repeat("x", InterjectionMaxLen+1)
+		_, err := svc.NextTurn(ctx, "alice", "d1", long, nil)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("err = %v, want *ValidationError for over-length note", err)
+		}
+	})
+
+	t.Run("rejected on a referee step", func(t *testing.T) {
+		// The next step is the moderator intro — not a debater turn — so even a
+		// well-formed note is refused rather than silently dropped.
+		_, err := svc.NextTurn(ctx, "alice", "d1", "Press him on free will.", nil)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("err = %v, want *ValidationError for note on referee step", err)
+		}
+	})
+}
+
+// TestGetSession_SurfacesInterjection verifies a persisted interjection is
+// replayed on the turn it shaped, so a client rehydrating the debate sees the
+// note against its turn.
+func TestGetSession_SurfacesInterjection(t *testing.T) {
+	phils := map[string]philosopher.Data{
+		"Socrates": {Name: "Socrates", School: "Classical", Identity: "id", KeyThinkers: "k"},
+		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
+	}
+	repo := NewMemoryRepo()
+	svc := NewService(repo, phils)
+	ctx := context.Background()
+
+	const note = "Press him on whether that assumes free will."
+	if err := repo.Create(ctx, &Persisted{
+		ID: "d1", OwnerUID: "alice", DebaterAName: "Socrates", DebaterBName: "Kant",
+		NumRounds: 1, MaxWords: 100,
+		StepRecords: []StepRecord{
+			{Key: "moderator_intro", Content: "Welcome."},
+			{Key: "socrates_r1", Content: "My opening.", Interjection: note},
+		},
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	res, err := svc.GetSession(ctx, "d1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got := res.Turns[1].Interjection; got != note {
+		t.Fatalf("Turns[1].Interjection = %q, want %q", got, note)
+	}
+	if got := res.Turns[0].Interjection; got != "" {
+		t.Fatalf("Turns[0].Interjection = %q, want empty (no note on that turn)", got)
 	}
 }

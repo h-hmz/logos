@@ -15,6 +15,9 @@ export interface TurnBuffer {
   tokens: number
   streaming: boolean
   error?: string
+  // The owner's interjection that steered this turn, if any — stashed at turn
+  // start so it renders immediately, and seeded from prior turns on rehydrate.
+  interjection?: string
 }
 
 export interface DebatePlayback {
@@ -23,7 +26,7 @@ export interface DebatePlayback {
   turnResults: Record<number, TurnResult>
   totalIn: number
   totalOut: number
-  advance: () => Promise<void>
+  advance: (interjection?: string) => Promise<void>
 }
 
 export function useDebatePlayback(
@@ -53,6 +56,7 @@ export function useDebatePlayback(
         done: true,
         tokens: t.turn_output_tokens ?? 0,
         streaming: false,
+        interjection: t.interjection,
       }
     }
     return b
@@ -80,14 +84,15 @@ export function useDebatePlayback(
     }
   }, [idx, debate.id])
 
-  const advance = useCallback(async () => {
+  const advance = useCallback(async (interjection?: string) => {
     if (inFlight.current) return
     if (idx >= debate.total_steps) return
     const stepIndex = idx
+    const note = interjection?.trim() || undefined
     inFlight.current = true
     setBuffers((prev) => ({
       ...prev,
-      [stepIndex]: { text: '', done: false, tokens: 0, streaming: true },
+      [stepIndex]: { text: '', done: false, tokens: 0, streaming: true, interjection: note },
     }))
     try {
       const result = await streamTurn(debate.id, (chunk) => {
@@ -95,7 +100,7 @@ export function useDebatePlayback(
           const cur = prev[stepIndex] ?? { text: '', done: false, tokens: 0, streaming: true }
           return { ...prev, [stepIndex]: { ...cur, text: cur.text + chunk } }
         })
-      })
+      }, note)
       setBuffers((prev) => ({
         ...prev,
         [stepIndex]: {
@@ -103,6 +108,7 @@ export function useDebatePlayback(
           done: true,
           tokens: result.turn_output_tokens,
           streaming: false,
+          interjection: result.interjection ?? note,
         },
       }))
       setTurnResults((prev) => ({ ...prev, [stepIndex]: result }))
@@ -128,6 +134,7 @@ export function useDebatePlayback(
           tokens: 0,
           streaming: false,
           error: msg,
+          interjection: prev[stepIndex]?.interjection,
         },
       }))
     } finally {
