@@ -25,6 +25,7 @@ type tutorRequest struct {
 type tutorResponse struct {
 	Content     string   `json:"content"`
 	Suggestions []string `json:"suggestions,omitempty"`
+	CostUSD     float64  `json:"cost_usd"`
 }
 
 func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
@@ -53,5 +54,5 @@ func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, tutorResponse{Content: result.Content, Suggestions: result.Suggestions})
+	writeJSON(w, http.StatusOK, tutorResponse{Content: result.Content, Suggestions: result.Suggestions, CostUSD: result.CostUSD})
 }

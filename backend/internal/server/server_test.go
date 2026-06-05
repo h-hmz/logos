@@ -248,6 +248,50 @@ func TestDebate_ReturnsDebaterModels(t *testing.T) {
 	}
 }
 
+// TestGetDebate_ReturnsPerTurnUsage verifies a completed step's per-turn input/
+// output tokens and cost surface in GET /debates/{id}, so the live transcript
+// can label each turn. Regression guard: GetSession once dropped the per-turn
+// counts, leaving only running totals.
+func TestGetDebate_ReturnsPerTurnUsage(t *testing.T) {
+	s, repo, h := testServer(t)
+	p := &debate.Persisted{
+		ID:           "d1",
+		OwnerUID:     "dev-local",
+		DebaterAName: s.philosophers[0].Name,
+		DebaterBName: s.philosophers[1].Name,
+		NumRounds:    1,
+		MaxWords:     100,
+		// One completed step (the moderator intro) carrying provider-billed usage.
+		StepRecords: []debate.StepRecord{
+			{Key: "moderator_intro", Content: "Welcome.", InputTokens: 321, OutputTokens: 705, CostUSD: 0.0042},
+		},
+	}
+	if err := repo.Create(context.Background(), p); err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/debates/d1", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — body: %s", rr.Code, rr.Body.String())
+	}
+	var got getDebateResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	turn, ok := got.Turns[0]
+	if !ok {
+		t.Fatalf("turns[0] missing in response: %v", got.Turns)
+	}
+	if turn.TurnInputTokens != 321 || turn.TurnOutputTokens != 705 {
+		t.Errorf("per-turn tokens = (%d, %d), want (321, 705)", turn.TurnInputTokens, turn.TurnOutputTokens)
+	}
+	if turn.TurnCostUSD != 0.0042 {
+		t.Errorf("TurnCostUSD = %v, want 0.0042", turn.TurnCostUSD)
+	}
+}
+
 // TestNextTurn_NonOwnerForbidden verifies a caller who does not own a debate is
 // refused with 403 when advancing it (reads stay open; only /next is gated).
 func TestNextTurn_NonOwnerForbidden(t *testing.T) {

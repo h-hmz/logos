@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { formatCostUSD } from '../api'
 import { type EnrichedPhilosopher } from '../philosopher-meta'
 import { stripTTSTags, stripTTSTagsStreaming } from '../ttsTags'
 import { Bust } from './Bust'
@@ -21,7 +22,11 @@ interface TurnBlockProps {
   // TTS as soon as the data is ready.
   fullText?: string
   streaming: boolean
+  // This turn's output token count, prompt (input) token count, and
+  // provider-billed cost in USD — shown together in the side panel.
   tokens: number
+  inputTokens: number
+  costUSD: number
   active: boolean
   error?: string
   debateId?: string
@@ -39,6 +44,8 @@ export function TurnBlock({
   fullText,
   streaming,
   tokens,
+  inputTokens,
+  costUSD,
   active,
   error,
   debateId,
@@ -70,7 +77,18 @@ export function TurnBlock({
         <Bust who={who} size="sm" showSchool={false} />
         <div className="name">{who.name}</div>
         <div className="school">{who.school}</div>
-        <div className="meta">{tokens ? `${tokens} tok` : ''}</div>
+        {(tokens > 0 || inputTokens > 0) && (
+          <div className="usage">
+            <div className="toks" title="input · output tokens">
+              {inputTokens.toLocaleString()} in · {tokens.toLocaleString()} out
+            </div>
+            {costUSD > 0 && (
+              <div className="cost" title="provider-billed cost for this turn">
+                {formatCostUSD(costUSD)}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div className="say">
         <div className="label-row">
@@ -79,7 +97,11 @@ export function TurnBlock({
             className="stat"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
           >
-            {streaming ? `streaming · ${displayText.length} ch` : tokens ? `${tokens} tok` : ''}
+            {streaming
+              ? `streaming · ${displayText.length} ch`
+              : tokens || inputTokens
+                ? `${(inputTokens + tokens).toLocaleString()} tok`
+                : ''}
             {audioText &&
               debateId &&
               stepKey &&

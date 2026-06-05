@@ -157,6 +157,9 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 			StepIndex:         t.StepIndex,
 			TotalSteps:        t.TotalSteps,
 			Done:              t.Done,
+			TurnInputTokens:   t.TurnInputTokens,
+			TurnOutputTokens:  t.TurnOutputTokens,
+			TurnCostUSD:       t.TurnCostUSD,
 			TotalInputTokens:  t.TotalInputTokens,
 			TotalOutputTokens: t.TotalOutputTokens,
 			Interjection:      t.Interjection,
@@ -168,19 +171,20 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 // ── POST /debates/{debateID}/next ───────────────────────────────────────────
 
 type turnResult struct {
-	Key               string `json:"key"`
-	Label             string `json:"label"`
-	Author            string `json:"author"`
-	Role              string `json:"role"`
-	Content           string `json:"content"`
-	StepIndex         int    `json:"step_index"`
-	TotalSteps        int    `json:"total_steps"`
-	Done              bool   `json:"done"`
-	TurnInputTokens   int    `json:"turn_input_tokens"`
-	TurnOutputTokens  int    `json:"turn_output_tokens"`
-	TotalInputTokens  int    `json:"total_input_tokens"`
-	TotalOutputTokens int    `json:"total_output_tokens"`
-	Interjection      string `json:"interjection,omitempty"`
+	Key               string  `json:"key"`
+	Label             string  `json:"label"`
+	Author            string  `json:"author"`
+	Role              string  `json:"role"`
+	Content           string  `json:"content"`
+	StepIndex         int     `json:"step_index"`
+	TotalSteps        int     `json:"total_steps"`
+	Done              bool    `json:"done"`
+	TurnInputTokens   int     `json:"turn_input_tokens"`
+	TurnOutputTokens  int     `json:"turn_output_tokens"`
+	TurnCostUSD       float64 `json:"turn_cost_usd"`
+	TotalInputTokens  int     `json:"total_input_tokens"`
+	TotalOutputTokens int     `json:"total_output_tokens"`
+	Interjection      string  `json:"interjection,omitempty"`
 }
 
 // nextTurnRequest is the optional body of POST /next; an absent/empty body is a
@@ -274,9 +278,9 @@ func toTurnResultPayload(res *debate.TurnResult) turnResult {
 		Done:              res.Done,
 		TurnInputTokens:   res.TurnInputTokens,
 		TurnOutputTokens:  res.TurnOutputTokens,
+		TurnCostUSD:       res.TurnCostUSD,
 		TotalInputTokens:  res.TotalInputTokens,
 		TotalOutputTokens: res.TotalOutputTokens,
 		Interjection:      res.Interjection,
 	}
 }
-

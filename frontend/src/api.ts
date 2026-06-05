@@ -99,6 +99,8 @@ export interface TurnResult {
   done: boolean
   turn_input_tokens: number
   turn_output_tokens: number
+  // Provider-billed cost of this turn's generation, in USD.
+  turn_cost_usd: number
   total_input_tokens: number
   total_output_tokens: number
   // The owner's interjection that conditioned this turn, echoed for rendering.
@@ -129,6 +131,16 @@ export interface ModelOption {
 export function modelLabel(id: string): string {
   const i = id.indexOf('/')
   return i === -1 ? id : id.slice(i + 1)
+}
+
+// formatCostUSD renders a per-turn cost. Turn costs are usually a fraction of a
+// cent, so sub-cent values keep four decimals (never floored to $0.00, which
+// would hide a real charge); a cent or more rounds to the usual two.
+export function formatCostUSD(usd: number): string {
+  if (usd <= 0) return '$0.00'
+  if (usd < 0.0001) return '<$0.0001'
+  if (usd < 0.01) return `$${usd.toFixed(4)}`
+  return `$${usd.toFixed(2)}`
 }
 
 // ── API ────────────────────────────────────────────────────────────────────────
@@ -305,6 +317,8 @@ export interface TutorMessage {
 export interface TutorResult {
   content: string
   suggestions: string[]
+  // Provider-billed cost of this tutor reply, in USD.
+  cost_usd: number
 }
 
 // Stream a tutor explanation via SSE; invokes onToken for each partial token
@@ -331,8 +345,8 @@ export async function streamTutor(
   // Backend currently responds with JSON; SSE will return when streaming
   // is re-introduced. The parser below stays in place for that day.
   if (!res.headers.get('content-type')?.includes('text/event-stream')) {
-    const parsed = await res.json() as { content?: string; suggestions?: string[] }
-    return { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [] }
+    const parsed = await res.json() as { content?: string; suggestions?: string[]; cost_usd?: number }
+    return { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [], cost_usd: parsed?.cost_usd ?? 0 }
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -368,8 +382,8 @@ export async function streamTutor(
         }
       } else if (eventName === 'done') {
         try {
-          const parsed = JSON.parse(data) as { content?: string; suggestions?: string[] }
-          finalResult = { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [] }
+          const parsed = JSON.parse(data) as { content?: string; suggestions?: string[]; cost_usd?: number }
+          finalResult = { content: parsed?.content ?? '', suggestions: parsed?.suggestions ?? [], cost_usd: parsed?.cost_usd ?? 0 }
         } catch { /* noop */ }
       } else if (eventName === 'error') {
         try {

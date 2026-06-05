@@ -12,7 +12,11 @@ export interface TurnBuffer {
   // unblocks audio synthesis ahead of the visual reveal.
   fullText?: string
   done: boolean
+  // tokens is this turn's output token count; inputTokens its prompt count and
+  // costUSD its provider-billed cost. All zero until the turn completes.
   tokens: number
+  inputTokens: number
+  costUSD: number
   streaming: boolean
   error?: string
   // The owner's interjection that steered this turn, if any — stashed at turn
@@ -55,6 +59,8 @@ export function useDebatePlayback(
         text: t.content,
         done: true,
         tokens: t.turn_output_tokens ?? 0,
+        inputTokens: t.turn_input_tokens ?? 0,
+        costUSD: t.turn_cost_usd ?? 0,
         streaming: false,
         interjection: t.interjection,
       }
@@ -92,12 +98,12 @@ export function useDebatePlayback(
     inFlight.current = true
     setBuffers((prev) => ({
       ...prev,
-      [stepIndex]: { text: '', done: false, tokens: 0, streaming: true, interjection: note },
+      [stepIndex]: { text: '', done: false, tokens: 0, inputTokens: 0, costUSD: 0, streaming: true, interjection: note },
     }))
     try {
       const result = await streamTurn(debate.id, (chunk) => {
         setBuffers((prev) => {
-          const cur = prev[stepIndex] ?? { text: '', done: false, tokens: 0, streaming: true }
+          const cur = prev[stepIndex] ?? { text: '', done: false, tokens: 0, inputTokens: 0, costUSD: 0, streaming: true }
           return { ...prev, [stepIndex]: { ...cur, text: cur.text + chunk } }
         })
       }, note)
@@ -107,6 +113,8 @@ export function useDebatePlayback(
           text: result.content,
           done: true,
           tokens: result.turn_output_tokens,
+          inputTokens: result.turn_input_tokens,
+          costUSD: result.turn_cost_usd,
           streaming: false,
           interjection: result.interjection ?? note,
         },
@@ -132,6 +140,8 @@ export function useDebatePlayback(
           text: prev[stepIndex]?.text ?? '',
           done: false,
           tokens: 0,
+          inputTokens: 0,
+          costUSD: 0,
           streaming: false,
           error: msg,
           interjection: prev[stepIndex]?.interjection,

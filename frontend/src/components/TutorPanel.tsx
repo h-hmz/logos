@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { ApiError, streamTutor, type TutorMessage } from '../api'
+import { ApiError, formatCostUSD, streamTutor, type TutorMessage } from '../api'
 import { useQuota } from '../QuotaContext'
 import { InlineMd } from './InlineMd'
 import { NoctuaIcon } from './NoctuaIcon'
@@ -26,6 +26,8 @@ interface ChatEntry {
   streaming?: boolean
   error?: string
   suggestions?: string[]
+  // Provider-billed cost of a completed tutor reply, in USD.
+  cost?: number
 }
 
 const MAX_SELECTION_PREVIEW = 320
@@ -63,7 +65,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
       setBusy(true)
 
       try {
-        const { content: final, suggestions } = await streamTutor(
+        const { content: final, suggestions, cost_usd } = await streamTutor(
           debateId,
           { selection, turn_key: turnKey, history },
           (chunk) => {
@@ -85,6 +87,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
               role: 'tutor',
               content: final || last.content,
               suggestions: suggestions.length > 0 ? suggestions : undefined,
+              cost: cost_usd,
             }
           }
           return copy
@@ -199,7 +202,14 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
       <div className="tutor-chat" ref={scrollRef}>
         {entries.map((e, i) => (
           <div key={i} className={`tutor-msg ${e.role}`}>
-            <div className="tutor-msg-role t-sc">{e.role === 'user' ? 'You' : 'Noctua'}</div>
+            <div className="tutor-msg-role t-sc">
+              {e.role === 'user' ? 'You' : 'Noctua'}
+              {e.role === 'tutor' && !e.streaming && e.cost ? (
+                <span className="tutor-msg-cost" title="provider-billed cost for this reply">
+                  {formatCostUSD(e.cost)}
+                </span>
+              ) : null}
+            </div>
             <div className="tutor-msg-body">
               {e.content ? <InlineMd text={e.content} /> : e.streaming ? <em>considering…</em> : null}
               {e.streaming && e.content && <span className="cursor">·</span>}

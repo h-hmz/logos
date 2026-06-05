@@ -352,6 +352,8 @@ button { font-family: inherit; }
 .turn .who .name { font-family: var(--serif-d); font-size: 19px; font-weight: 500; line-height: 1.1; margin-top: 8px; }
 .turn .who .school { font-family: var(--sc); font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent-ink); margin-top: 2px; }
 .turn .who .meta { font-family: var(--mono); font-size: 10px; color: var(--ink-soft); margin-top: 6px; }
+.turn .who .usage { font-family: var(--mono); font-size: 10px; color: var(--ink-soft); margin-top: 6px; line-height: 1.5; }
+.turn .who .usage .cost { color: var(--accent-ink); margin-top: 1px; }
 .turn .say { position: relative; }
 .turn .say .label-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .turn .say .label-row .round { font-family: var(--sc); font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent-ink); }
@@ -792,8 +794,9 @@ main.noctua-open .next-bar {
   display: flex; flex-direction: column; gap: 14px;
 }
 .tutor-msg { display: flex; flex-direction: column; gap: 4px; }
-.tutor-msg-role { color: var(--ink-soft); }
+.tutor-msg-role { color: var(--ink-soft); display: flex; align-items: baseline; gap: 8px; }
 .tutor-msg.user .tutor-msg-role { color: var(--accent-ink); }
+.tutor-msg-cost { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; color: var(--accent-ink); }
 .tutor-msg-body {
   font-family: var(--serif); font-size: 15px; line-height: 1.55; color: var(--ink);
 }

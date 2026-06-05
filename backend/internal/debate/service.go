@@ -222,6 +222,9 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 			StepIndex:         i,
 			TotalSteps:        total,
 			Done:              i+1 >= total,
+			TurnInputTokens:   p.StepRecords[i].InputTokens,
+			TurnOutputTokens:  p.StepRecords[i].OutputTokens,
+			TurnCostUSD:       p.StepRecords[i].CostUSD,
 			TotalInputTokens:  totalIn,
 			TotalOutputTokens: totalOut,
 			Interjection:      p.StepRecords[i].Interjection,
@@ -360,6 +363,7 @@ type TurnResult struct {
 	Done              bool
 	TurnInputTokens   int
 	TurnOutputTokens  int
+	TurnCostUSD       float64
 	TotalInputTokens  int
 	TotalOutputTokens int
 	Interjection      string
@@ -479,6 +483,7 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID, interjection s
 		Done:              p.Current() >= TotalSteps(p.NumRounds),
 		TurnInputTokens:   turnInput,
 		TurnOutputTokens:  turnOutput,
+		TurnCostUSD:       result.Usage.CostUSD,
 		TotalInputTokens:  p.TotalInputTokens(),
 		TotalOutputTokens: p.TotalOutputTokens(),
 		Interjection:      interjection,

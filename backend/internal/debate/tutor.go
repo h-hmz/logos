@@ -33,11 +33,13 @@ type TutorRequest struct {
 	History   []TutorMessage
 }
 
-// TutorResult holds the clean tutor reply and any follow-up suggestions parsed
-// from the embedded <!--suggestions--> block.
+// TutorResult holds the clean tutor reply, any follow-up suggestions parsed
+// from the embedded <!--suggestions--> block, and the provider-billed cost of
+// the generation in USD.
 type TutorResult struct {
 	Content     string
 	Suggestions []string
+	CostUSD     float64
 }
 
 // TutorExplain returns a tutor response grounded in the selected turn and its
@@ -58,6 +60,7 @@ func (s *Service) TutorExplain(ctx context.Context, uid, debateID string, req Tu
 	var res TutorResult
 	err = s.charge(ctx, uid, func() (float64, error) {
 		r, cost, runErr := s.runTutorExplain(ctx, debateID, req)
+		r.CostUSD = cost
 		res = r
 		return cost, runErr
 	})

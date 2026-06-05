@@ -1,11 +1,13 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  formatCostUSD,
   parseStructured,
   type CriticFinding,
   type DebateSession,
   type JudgeVerdict,
   type TurnResult,
 } from '../api'
+import type { TurnBuffer } from '../hooks/useDebatePlayback'
 import { enrich } from '../philosopher-meta'
 import { roleForLabel, trimmedLabel } from '../step-role'
 import { CriticCurtain, JudgeCurtain, ModeratorCurtain } from '../components/Curtains'
@@ -23,6 +25,16 @@ interface Props {
   navigate: (r: Route) => void
   initialTurns: Record<number, TurnResult>
   onTurnCompleted: (stepIndex: number, turn: TurnResult) => void
+}
+
+// curtainMeta builds the footer line shown under a moderator/critic/judge
+// curtain: the step label, then this turn's output tokens and cost once the
+// generation has completed (both zero/absent while streaming).
+function curtainMeta(label: string, buf: TurnBuffer): string {
+  let meta = `◆ ${label}`
+  if (buf.tokens) meta += ` · ${buf.tokens.toLocaleString()} tok`
+  if (buf.costUSD > 0) meta += ` · ${formatCostUSD(buf.costUSD)}`
+  return meta
 }
 
 export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Props) {
@@ -194,7 +206,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 text={buf.text}
                 streaming={buf.streaming && !buf.done}
                 error={buf.error}
-                meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
+                meta={curtainMeta(step.label, buf)}
                 debateId={debate.id}
                 stepKey={step.key}
               />
@@ -204,7 +216,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
               <CriticCurtain
                 streaming={buf.streaming && !buf.done}
                 error={buf.error}
-                meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
+                meta={curtainMeta(step.label, buf)}
                 finding={buf.done ? parseStructured<CriticFinding>(buf.text) : null}
                 a={a}
                 b={b}
@@ -216,7 +228,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 streaming={buf.streaming && !buf.done}
                 done={buf.done}
                 error={buf.error}
-                meta={`◆ ${step.label}${buf.tokens ? ` · ${buf.tokens} tok` : ''}`}
+                meta={curtainMeta(step.label, buf)}
                 verdict={buf.done ? parseStructured<JudgeVerdict>(buf.text) : null}
                 a={a}
                 b={b}
@@ -234,6 +246,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 fullText={buf.fullText}
                 streaming={buf.streaming && !buf.done}
                 tokens={buf.tokens}
+                inputTokens={buf.inputTokens}
+                costUSD={buf.costUSD}
                 active={i === idx - 1 || (i === idx && buf.streaming)}
                 error={buf.error}
                 debateId={debate.id}
