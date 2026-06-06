@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { formatCostUSD } from '../api'
+import { useZen } from '../ZenContext'
 import { type EnrichedPhilosopher } from '../philosopher-meta'
 import { stripTTSTags, stripTTSTagsStreaming } from '../ttsTags'
 import { Bust } from './Bust'
@@ -53,6 +54,7 @@ export function TurnBlock({
   coordinator,
   interjection,
 }: TurnBlockProps) {
+  const { zen } = useZen()
   const selectable = !streaming && !!text && !!stepKey
   // Raw `text` carries Gemini TTS delivery cues like [excited]; hide them
   // from the reader while keeping the raw string for the TTS POST body.
@@ -77,7 +79,7 @@ export function TurnBlock({
         <Bust who={who} size="sm" showSchool={false} />
         <div className="name">{who.name}</div>
         <div className="school">{who.school}</div>
-        {(tokens > 0 || inputTokens > 0) && (
+        {!zen && (tokens > 0 || inputTokens > 0) && (
           <div className="usage">
             <div className="toks" title="input · output tokens">
               {inputTokens.toLocaleString()} in · {tokens.toLocaleString()} out
@@ -97,11 +99,13 @@ export function TurnBlock({
             className="stat"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
           >
-            {streaming
-              ? `streaming · ${displayText.length} ch`
-              : tokens || inputTokens
-                ? `${(inputTokens + tokens).toLocaleString()} tok`
-                : ''}
+            {zen
+              ? ''
+              : streaming
+                ? `streaming · ${displayText.length} ch`
+                : tokens || inputTokens
+                  ? `${(inputTokens + tokens).toLocaleString()} tok`
+                  : ''}
             {audioText &&
               debateId &&
               stepKey &&

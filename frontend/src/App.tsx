@@ -6,6 +6,7 @@ import { VerdictPage } from './pages/VerdictPage'
 import { getDebate, type DebateSession, type TurnResult } from './api'
 import { AuthProvider, useAuth } from './AuthContext'
 import { QuotaProvider } from './QuotaContext'
+import { ZenProvider } from './ZenContext'
 import { firebaseEnabled } from './firebase'
 
 const DEBATE_STORAGE_KEY = (id: string) => `logos_debate_${id}`
@@ -44,7 +45,9 @@ export default function App() {
   return (
     <AuthProvider>
       <QuotaProvider>
-        <AppInner />
+        <ZenProvider>
+          <AppInner />
+        </ZenProvider>
       </QuotaProvider>
     </AuthProvider>
   )

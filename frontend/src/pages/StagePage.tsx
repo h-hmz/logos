@@ -212,7 +212,7 @@ export function StagePage({ onDebateCreated }: Props) {
             <em className="accent">Give them something to argue about.</em>
           </h1>
           <p className="t-lead lede">
-            Logos is a multi-agent debate stage. Two philosophers face each other across
+            Logos is a multi-agent debate stage. Two thinkers face each other across
             several rounds; a critic intervenes; a judge delivers a verdict. You are
             the impresario.
           </p>

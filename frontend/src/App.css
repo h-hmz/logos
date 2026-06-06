@@ -279,6 +279,24 @@ button { font-family: inherit; }
   margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--rule); gap: 16px;
 }
 
+/* ----- Menu text weight (Stage setup) -----
+   Cormorant is delicate at label sizes — especially as light text on the
+   candlelit dark surface — so the small-caps labels here switch to EB Garamond
+   600 (sturdier build), and the Cormorant display bits step up to 600. Scoped
+   to .stage so the rest of the app's small-caps styling is unchanged. */
+.stage .t-eyebrow,
+.stage .corner .hdr .k,
+.stage .setup-row .field label {
+  font-family: var(--serif); font-weight: 600; letter-spacing: 0.14em;
+}
+.stage .chip { font-family: var(--serif); font-weight: 600; letter-spacing: 0.1em; }
+.stage .btn { font-family: var(--serif); font-weight: 600; letter-spacing: 0.16em; }
+/* Cormorant display bits — keep the face, add weight */
+.stage .topic-input,
+.stage .versus,
+.stage .setup-row .field .val,
+.stage .setup-row .segmented button { font-weight: 600; }
+
 /* Roster grid */
 .roster { margin-top: 10px; }
 .roster .roster-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; gap: 16px; flex-wrap: wrap; }
@@ -568,23 +586,108 @@ button { font-family: inherit; }
 .verdict-ruling { text-align: center; color: var(--ink); }
 .verdict-ruling .t-sc { display: block; margin-bottom: 4px; color: var(--ink-soft); }
 
-/* ============ Masthead user badge ============ */
-.masthead-user {
-  display: flex; align-items: center; gap: 10px;
-  border-left: 1px solid var(--rule);
-  margin-left: 8px; padding-left: 20px;
-}
+/* ============ Masthead profile menu ============ */
 .masthead-avatar {
-  width: 26px; height: 26px; border-radius: 50%;
+  width: 32px; height: 32px; border-radius: 50%;
   object-fit: cover; border: 1.5px solid var(--rule);
   display: block; flex-shrink: 0;
 }
-.masthead-signout {
-  font-family: var(--sc); letter-spacing: 0.18em; text-transform: uppercase;
-  font-size: 12px; color: var(--ink-2); background: none; border: none;
-  padding: 0; cursor: pointer; white-space: nowrap;
+
+.profile-menu {
+  position: relative;
+  border-left: 1px solid var(--rule);
+  margin-left: 8px; padding-left: 20px;
 }
-.masthead-signout:hover { color: var(--accent-ink); }
+.profile-trigger {
+  display: grid; place-items: center;
+  background: none; border: none; padding: 0; cursor: pointer;
+  border-radius: 50%; line-height: 0;
+  transition: transform .15s ease;
+}
+.profile-trigger:hover { transform: translateY(-1px); }
+.profile-trigger:hover .masthead-avatar,
+.profile-trigger[aria-expanded="true"] .masthead-avatar { border-color: var(--accent); }
+.profile-avatar-fallback {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: var(--panel); border: 1.5px solid var(--rule);
+  font-family: var(--sc); font-size: 16px; color: var(--ink-2);
+  transition: border-color .15s ease;
+}
+.profile-trigger:hover .profile-avatar-fallback,
+.profile-trigger[aria-expanded="true"] .profile-avatar-fallback { border-color: var(--accent); }
+
+.profile-dropdown {
+  position: absolute; top: calc(100% + 12px); right: 0; z-index: 60;
+  min-width: 220px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(26,22,18,0.22);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.profile-dropdown-head {
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 4px;
+}
+.profile-name {
+  font-family: var(--serif-d); font-size: 17px; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.profile-email {
+  font-family: var(--mono); font-size: 11px; color: var(--ink-soft);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.profile-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+}
+.profile-row-label {
+  font-family: var(--sc); letter-spacing: 0.16em; text-transform: uppercase;
+  font-size: 11px; color: var(--ink-soft);
+}
+.profile-row-value {
+  font-family: var(--mono); font-size: 12px; color: var(--ink-2);
+}
+.profile-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 12px; border: none; border-radius: 8px;
+  background: none; cursor: pointer; text-align: left;
+  font-family: var(--sc); letter-spacing: 0.14em; text-transform: uppercase;
+  font-size: 12px; color: var(--ink-2);
+  transition: background .12s ease, color .12s ease;
+}
+.profile-item:hover { background: var(--bg-2); color: var(--accent-ink); }
+.profile-item svg { flex-shrink: 0; }
+
+/* Toggle items (Zen mode) carry a trailing on/off state pushed to the right. */
+.profile-toggle.on { color: var(--accent-ink); }
+.profile-toggle-state {
+  margin-left: auto;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 1px 7px;
+  /* Fixed width so swapping ON↔OFF never reflows the row. */
+  min-width: 38px; text-align: center;
+}
+.profile-toggle.on .profile-toggle-state {
+  color: var(--accent-ink); border-color: var(--accent);
+  background: rgba(176, 74, 42, 0.08);
+}
+
+/* Items with a description stack a muted sub-label under the title so the
+   feature explains itself without needing a hover. The icon is nudged to the
+   top to align with the title line rather than the centre of both lines. */
+.profile-item.has-desc { align-items: flex-start; }
+.profile-item.has-desc svg { margin-top: 2px; }
+.profile-item.has-desc .profile-toggle-state { margin-top: 1px; }
+.profile-item-text { display: flex; flex-direction: column; gap: 2px; }
+.profile-item-desc {
+  font-family: var(--serif); text-transform: none; letter-spacing: 0;
+  font-size: 12px; line-height: 1.25; color: var(--ink-soft);
+  /* One line, always — the dropdown sizes to fit it so the row count can't
+     flip between the ON and OFF states. */
+  white-space: nowrap;
+}
 
 /* Lifetime dollar budget remaining — distinct from the per-debate token pills. */
 .quota-pill {

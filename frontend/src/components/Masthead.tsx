@@ -1,6 +1,6 @@
 import { useAuth } from '../AuthContext'
 import { firebaseEnabled } from '../firebase'
-import { QuotaPill } from './QuotaPill'
+import { ProfileMenu } from './ProfileMenu'
 
 export type Route =
   | { page: 'stage' }
@@ -17,7 +17,13 @@ interface MastheadProps {
 
 export function Masthead({ route, debateId, navigate, theme, onToggleTheme }: MastheadProps) {
   const page = route.page
-  const { user, signOut } = useAuth()
+  const { user } = useAuth()
+  // The profile dropdown hosts the theme toggle (and budget/sign-out). It shows
+  // whenever there's an identity to attach it to: a signed-in user, or — with
+  // Firebase off in local dev — a placeholder "dev user". The only state without
+  // a profile menu is the signed-out gate, which falls back to a standalone
+  // toggle so the control is never lost.
+  const showProfile = !firebaseEnabled || Boolean(user)
   const liveHref = debateId ? { page: 'live' as const, id: debateId } : null
   const verdictHref = debateId ? { page: 'verdict' as const, id: debateId } : null
 
@@ -59,30 +65,18 @@ export function Masthead({ route, debateId, navigate, theme, onToggleTheme }: Ma
         >
           Verdict
         </a>
-        <QuotaPill />
-        <button
-          type="button"
-          className="theme-toggle"
-          onClick={onToggleTheme}
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          title={theme === 'dark' ? 'Light' : 'Dark'}
-        >
-          {theme === 'dark' ? '☉' : '☾'}
-        </button>
-        {firebaseEnabled && user && (
-          <span className="masthead-user">
-            {user.photoURL && (
-              <img
-                src={user.photoURL}
-                alt={user.displayName ?? 'User'}
-                className="masthead-avatar"
-                referrerPolicy="no-referrer"
-              />
-            )}
-            <button type="button" className="masthead-signout" onClick={signOut}>
-              Sign out
-            </button>
-          </span>
+        {showProfile ? (
+          <ProfileMenu theme={theme} onToggleTheme={onToggleTheme} />
+        ) : (
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={onToggleTheme}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light' : 'Dark'}
+          >
+            {theme === 'dark' ? '☉' : '☾'}
+          </button>
         )}
       </nav>
     </header>

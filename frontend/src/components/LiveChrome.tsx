@@ -1,6 +1,7 @@
 import { modelLabel, type DebateSession } from '../api'
 import { type EnrichedPhilosopher } from '../philosopher-meta'
 import { roleForLabel, type Role } from '../step-role'
+import { useZen } from '../ZenContext'
 import { Bust } from './Bust'
 import { TokenPill } from './TokenPill'
 
@@ -17,6 +18,7 @@ interface ChromeProps {
 }
 
 export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, activeRole }: ChromeProps) {
+  const { zen } = useZen()
   const total = debate.total_steps
   return (
     <div className="live-chrome">
@@ -29,15 +31,17 @@ export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, acti
             </div>
             <div className="topic">&ldquo;{debate.topic}&rdquo;</div>
           </div>
-          <div
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}
-          >
-            <div style={{ display: 'flex', gap: 8 }}>
-              <TokenPill n={tokensA} label={a.initials} live={activeRole === 'a'} />
-              <TokenPill n={tokensB} label={b.initials} live={activeRole === 'b'} />
-              <TokenPill n={totalOut} label="Σ" />
+          {!zen && (
+            <div
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}
+            >
+              <div style={{ display: 'flex', gap: 8 }}>
+                <TokenPill n={tokensA} label={a.initials} live={activeRole === 'a'} />
+                <TokenPill n={tokensB} label={b.initials} live={activeRole === 'b'} />
+                <TokenPill n={totalOut} label="Σ" />
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="fighters">

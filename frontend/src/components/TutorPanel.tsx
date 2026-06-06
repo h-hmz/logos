@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { ApiError, formatCostUSD, streamTutor, type TutorMessage } from '../api'
 import { useQuota } from '../QuotaContext'
+import { useZen } from '../ZenContext'
 import { InlineMd } from './InlineMd'
 import { NoctuaIcon } from './NoctuaIcon'
 
@@ -43,6 +44,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
   const entriesRef = useRef<ChatEntry[]>([])
   useEffect(() => { entriesRef.current = entries }, [entries])
   const { refresh: refreshQuota } = useQuota()
+  const { zen } = useZen()
 
   const toHistory = (list: ChatEntry[]): TutorMessage[] =>
     list
@@ -204,7 +206,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
           <div key={i} className={`tutor-msg ${e.role}`}>
             <div className="tutor-msg-role t-sc">
               {e.role === 'user' ? 'You' : 'Noctua'}
-              {e.role === 'tutor' && !e.streaming && e.cost ? (
+              {!zen && e.role === 'tutor' && !e.streaming && e.cost ? (
                 <span className="tutor-msg-cost" title="provider-billed cost for this reply">
                   {formatCostUSD(e.cost)}
                 </span>

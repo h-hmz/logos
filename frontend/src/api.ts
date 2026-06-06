@@ -197,7 +197,7 @@ export async function fetchPhilosophers(): Promise<Philosopher[]> {
   const res = await fetch(`${API_BASE}/philosophers`, {
     headers: await getAuthHeader(),
   })
-  if (!res.ok) throw new Error('Failed to load philosophers')
+  if (!res.ok) throw new Error('Failed to load data')
   return res.json()
 }
 
