@@ -15,9 +15,11 @@ interface ChromeProps {
   totalOut: number
   totalIn: number
   activeRole: Role | null
+  modelA: string
+  modelB: string
 }
 
-export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, activeRole }: ChromeProps) {
+export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, activeRole, modelA, modelB }: ChromeProps) {
   const { zen } = useZen()
   const total = debate.total_steps
   return (
@@ -52,7 +54,7 @@ export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, acti
               <div className="line">
                 <span className="school">{a.school}</span>
               </div>
-              {a.model && <div className="model">{modelLabel(a.model)}</div>}
+              {modelA && <div className="model">{modelLabel(modelA)}</div>}
             </div>
           </div>
           <div className="vs-small">vs.</div>
@@ -63,7 +65,7 @@ export function LiveChrome({ debate, a, b, idx, tokensA, tokensB, totalOut, acti
               <div className="line">
                 <span className="school">{b.school}</span>
               </div>
-              {b.model && <div className="model">{modelLabel(b.model)}</div>}
+              {modelB && <div className="model">{modelLabel(modelB)}</div>}
             </div>
           </div>
           <div className="spacer" />

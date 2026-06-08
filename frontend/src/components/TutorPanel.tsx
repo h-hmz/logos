@@ -19,6 +19,7 @@ interface Props {
   selection: string
   visible: boolean
   onClose: () => void
+  model: string
 }
 
 interface ChatEntry {
@@ -33,7 +34,7 @@ interface ChatEntry {
 
 const MAX_SELECTION_PREVIEW = 320
 
-export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: Props) {
+export function TutorPanel({ debateId, turnKey, selection, visible, onClose, model }: Props) {
   const [entries, setEntries] = useState<ChatEntry[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -69,7 +70,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
       try {
         const { content: final, suggestions, cost_usd } = await streamTutor(
           debateId,
-          { selection, turn_key: turnKey, history },
+          { selection, turn_key: turnKey, history, model },
           (chunk) => {
             setEntries((prev) => {
               const copy = prev.slice()
@@ -114,7 +115,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose }: P
         setBusy(false)
       }
     },
-    [busy, debateId, selection, turnKey, refreshQuota],
+    [busy, debateId, selection, turnKey, refreshQuota, model],
   )
 
   // Focus the composer on open (mount or reopen) and preselect the default so

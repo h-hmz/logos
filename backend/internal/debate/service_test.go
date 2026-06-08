@@ -6,9 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/philosopher"
 )
+
+// validModel is an allowlisted model used by gate tests that need to advance
+// past the model check to reach the behaviour under test.
+const validModel = "z-ai/glm-4.6"
 
 func TestRoleForStep(t *testing.T) {
 	a := philosopher.Data{Name: "Socrates"}
@@ -27,66 +30,6 @@ func TestRoleForStep(t *testing.T) {
 			t.Fatalf("RoleForStep(%q) = %q, want %q", key, got, want)
 		}
 	}
-}
-
-// TestCreateDebate_Models verifies Debater Model resolution: an omitted model
-// falls back to the Default Model, a provided authorized model is stamped onto
-// the record, and a provided unauthorized model is rejected as a ValidationError.
-func TestCreateDebate_Models(t *testing.T) {
-	phils := map[string]philosopher.Data{
-		"Socrates": {Name: "Socrates", School: "Classical", Identity: "id", KeyThinkers: "k"},
-		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
-	}
-	t.Setenv("MODEL", "default-model")
-	if err := config.Load(""); err != nil {
-		t.Fatalf("config.Load: %v", err)
-	}
-	svc := NewService(NewMemoryRepo(), phils)
-	ctx := context.Background()
-	base := CreateDebateParams{Topic: "free will", DebaterA: "Socrates", DebaterB: "Kant"}
-
-	t.Run("omitted falls back to default", func(t *testing.T) {
-		res, err := svc.CreateDebate(ctx, "alice", base)
-		if err != nil {
-			t.Fatalf("CreateDebate: %v", err)
-		}
-		// Every role seeds to the Default Model when nothing is supplied.
-		want := RoleModels{DebaterA: "default-model", DebaterB: "default-model", Moderator: "default-model", Critic: "default-model", Judge: "default-model"}
-		if res.Debate.Models != want {
-			t.Fatalf("Models = %+v, want %+v", res.Debate.Models, want)
-		}
-	})
-
-	t.Run("authorized debater models are stamped", func(t *testing.T) {
-		in := base
-		in.ModelA = "z-ai/glm-4.6"
-		in.ModelB = "  qwen/qwen3-235b-a22b-2507  " // surrounding space is trimmed
-		res, err := svc.CreateDebate(ctx, "alice", in)
-		if err != nil {
-			t.Fatalf("CreateDebate: %v", err)
-		}
-		if res.Debate.Models.DebaterA != "z-ai/glm-4.6" {
-			t.Errorf("DebaterA = %q, want %q", res.Debate.Models.DebaterA, "z-ai/glm-4.6")
-		}
-		if res.Debate.Models.DebaterB != "qwen/qwen3-235b-a22b-2507" {
-			t.Errorf("DebaterB = %q, want %q", res.Debate.Models.DebaterB, "qwen/qwen3-235b-a22b-2507")
-		}
-		// Referee roles still seed to the Default Model (not yet caller-configurable).
-		if res.Debate.Models.Moderator != "default-model" || res.Debate.Models.Critic != "default-model" || res.Debate.Models.Judge != "default-model" {
-			t.Errorf("referee models = (%q, %q, %q), want all %q",
-				res.Debate.Models.Moderator, res.Debate.Models.Critic, res.Debate.Models.Judge, "default-model")
-		}
-	})
-
-	t.Run("unauthorized model is rejected", func(t *testing.T) {
-		in := base
-		in.ModelA = "openai/gpt-4o"
-		_, err := svc.CreateDebate(ctx, "alice", in)
-		var ve *ValidationError
-		if !errors.As(err, &ve) {
-			t.Fatalf("CreateDebate err = %v, want *ValidationError", err)
-		}
-	})
 }
 
 // TestNextTurn_OwnershipGate verifies only the owner may advance a debate: a
@@ -121,12 +64,12 @@ func TestNextTurn_OwnershipGate(t *testing.T) {
 	}
 
 	seed("d1", "alice", 0)
-	if _, err := svc.NextTurn(ctx, "bob", "d1", "", nil); !errors.Is(err, ErrForbidden) {
+	if _, err := svc.NextTurn(ctx, "bob", "d1", "", validModel, nil); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("non-owner NextTurn err = %v, want ErrForbidden", err)
 	}
 
 	seed("d2", "alice", TotalSteps(1))
-	_, err := svc.NextTurn(ctx, "alice", "d2", "", nil)
+	_, err := svc.NextTurn(ctx, "alice", "d2", "", validModel, nil)
 	var ve *ValidationError
 	if !errors.As(err, &ve) {
 		t.Fatalf("owner NextTurn err = %v, want *ValidationError (past ownership gate)", err)
@@ -156,7 +99,7 @@ func TestNextTurn_InterjectionValidation(t *testing.T) {
 
 	t.Run("over-length is rejected", func(t *testing.T) {
 		long := strings.Repeat("x", InterjectionMaxLen+1)
-		_, err := svc.NextTurn(ctx, "alice", "d1", long, nil)
+		_, err := svc.NextTurn(ctx, "alice", "d1", long, validModel, nil)
 		var ve *ValidationError
 		if !errors.As(err, &ve) {
 			t.Fatalf("err = %v, want *ValidationError for over-length note", err)
@@ -166,10 +109,93 @@ func TestNextTurn_InterjectionValidation(t *testing.T) {
 	t.Run("rejected on a referee step", func(t *testing.T) {
 		// The next step is the moderator intro — not a debater turn — so even a
 		// well-formed note is refused rather than silently dropped.
-		_, err := svc.NextTurn(ctx, "alice", "d1", "Press him on free will.", nil)
+		_, err := svc.NextTurn(ctx, "alice", "d1", "Press him on free will.", validModel, nil)
 		var ve *ValidationError
 		if !errors.As(err, &ve) {
 			t.Fatalf("err = %v, want *ValidationError for note on referee step", err)
+		}
+	})
+}
+
+// TestRetryTurn_Gates covers every pre-generation guard on the retry path, each
+// of which returns before any model call so no LLM fake is needed: ownership,
+// a required step_key, an empty debate with nothing to retry, and a step_key
+// that is not the current last record (only the last step is retryable).
+func TestRetryTurn_Gates(t *testing.T) {
+	phils := map[string]philosopher.Data{
+		"Socrates": {Name: "Socrates", School: "Classical", Identity: "id", KeyThinkers: "k"},
+		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
+	}
+	repo := NewMemoryRepo()
+	svc := NewService(repo, phils)
+	ctx := context.Background()
+
+	seed := func(id, owner string, records ...StepRecord) {
+		t.Helper()
+		err := repo.Create(ctx, &Persisted{
+			ID: id, OwnerUID: owner, DebaterAName: "Socrates", DebaterBName: "Kant",
+			NumRounds: 1, MaxWords: 100, StepRecords: records,
+		})
+		if err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+
+	t.Run("non-owner is forbidden", func(t *testing.T) {
+		seed("d1", "alice", StepRecord{Key: "moderator_intro", Content: "Welcome."})
+		if _, err := svc.RetryTurn(ctx, "bob", "d1", "moderator_intro", "", nil); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("non-owner RetryTurn err = %v, want ErrForbidden", err)
+		}
+	})
+
+	t.Run("missing step_key is rejected", func(t *testing.T) {
+		seed("d2", "alice", StepRecord{Key: "moderator_intro", Content: "Welcome."})
+		_, err := svc.RetryTurn(ctx, "alice", "d2", "  ", "", nil)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("err = %v, want *ValidationError for missing step_key", err)
+		}
+	})
+
+	t.Run("empty debate has nothing to retry", func(t *testing.T) {
+		seed("d3", "alice") // no completed steps
+		_, err := svc.RetryTurn(ctx, "alice", "d3", "moderator_intro", "", nil)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("err = %v, want *ValidationError for empty debate", err)
+		}
+	})
+
+	t.Run("non-last step is refused", func(t *testing.T) {
+		// Last record is socrates_r1; targeting the earlier moderator intro is
+		// neither the last step nor a fresh view, and both resolve as ErrNotLastStep.
+		seed("d4", "alice",
+			StepRecord{Key: "moderator_intro", Content: "Welcome."},
+			StepRecord{Key: "socrates_r1", Content: "My opening."},
+		)
+		if _, err := svc.RetryTurn(ctx, "alice", "d4", "moderator_intro", "", nil); !errors.Is(err, ErrNotLastStep) {
+			t.Fatalf("err = %v, want ErrNotLastStep", err)
+		}
+	})
+
+	t.Run("non-allowlisted model is rejected", func(t *testing.T) {
+		// The model gate runs after the last-step check but before any generation,
+		// so a bad model on a valid target fails fast with no LLM call.
+		seed("d5", "alice", StepRecord{Key: "moderator_intro", Content: "Welcome."})
+		_, err := svc.RetryTurn(ctx, "alice", "d5", "moderator_intro", "openai/gpt-4o", nil)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("err = %v, want *ValidationError for non-allowlisted model", err)
+		}
+	})
+
+	t.Run("missing model is rejected", func(t *testing.T) {
+		// Every generation must name a model — there is no sticky default anymore.
+		seed("d6", "alice", StepRecord{Key: "moderator_intro", Content: "Welcome."})
+		_, err := svc.RetryTurn(ctx, "alice", "d6", "moderator_intro", "", nil)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Fatalf("err = %v, want *ValidationError for missing model", err)
 		}
 	})
 }

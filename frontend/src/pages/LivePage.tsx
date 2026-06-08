@@ -1,8 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  DEFAULT_MODEL,
+  MODELS,
   formatCostUSD,
   parseStructured,
   type CriticFinding,
+  type DebateModels,
   type DebateSession,
   type JudgeVerdict,
   type TurnResult,
@@ -14,6 +17,7 @@ import { CriticCurtain, JudgeCurtain, ModeratorCurtain } from '../components/Cur
 import { LiveChrome } from '../components/LiveChrome'
 import { NextBar } from '../components/NextBar'
 import { NoctuaIcon } from '../components/NoctuaIcon'
+import { StepRetry } from '../components/StepRetry'
 import { TurnBlock } from '../components/TurnBlock'
 import { TutorPanel } from '../components/TutorPanel'
 import { makeAudioCoordinator } from '../components/PlayButton'
@@ -49,6 +53,30 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   const nameB = b.name
 
   const [auto, setAuto] = useState(false)
+  // The client's per-role model choice for this debate. Read from the stash
+  // written at creation; on a cleared/cross-device load, reconstruct each role's
+  // model from its latest completed step, defaulting roles not yet seen.
+  const [roleModels] = useState<DebateModels>(() => {
+    try {
+      const raw = localStorage.getItem(`logos_models_${debate.id}`)
+      if (raw) {
+        const m = JSON.parse(raw)
+        if (m && typeof m.a === 'string' && typeof m.b === 'string' && typeof m.referee === 'string') {
+          return m as DebateModels
+        }
+      }
+    } catch { /* noop */ }
+    const derived: DebateModels = { a: DEFAULT_MODEL, b: DEFAULT_MODEL, referee: DEFAULT_MODEL }
+    for (let i = 0; i < debate.total_steps; i++) {
+      const m = initialTurns[i]?.model
+      if (!m) continue
+      const role = roleForLabel(debate.steps[i].label, nameA, nameB)
+      if (role === 'a') derived.a = m
+      else if (role === 'b') derived.b = m
+      else derived.referee = m
+    }
+    return derived
+  })
   const [selPopover, setSelPopover] = useState<{
     x: number
     y: number
@@ -61,8 +89,12 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   const [tutorPanelOpen, setTutorPanelOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const { idx, buffers, turnResults, totalIn, totalOut, advance } =
-    useDebatePlayback(debate, initialTurns, onTurnCompleted, auto)
+  const { idx, buffers, turnResults, totalIn, totalOut, advance, retry } =
+    useDebatePlayback(debate, initialTurns, onTurnCompleted, auto, roleModels)
+
+  // A generation is in flight when any buffer is streaming. The retry control is
+  // disabled while busy (the backend allows one generation at a time).
+  const busy = useMemo(() => Object.values(buffers).some((b) => b.streaming), [buffers])
 
   // The owner's pending interjection for the upcoming turn, carried into advance
   // and cleared after.
@@ -175,6 +207,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         totalOut={totalOut}
         totalIn={totalIn}
         activeRole={activeRole}
+        modelA={roleModels.a}
+        modelB={roleModels.b}
       />
 
       <section className="container-narrow transcript">
@@ -264,6 +298,16 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
           return (
             <Fragment key={key}>
               {body}
+              {i === idx - 1 && (
+                <StepRetry
+                  onRetry={retry}
+                  busy={busy}
+                  retrying={!!buf.streaming}
+                  role={role}
+                  models={MODELS}
+                  currentModel={buf.model}
+                />
+              )}
             </Fragment>
           )
         })}
@@ -329,6 +373,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
           selection={tutorTarget.selection}
           visible={tutorPanelOpen}
           onClose={() => setTutorPanelOpen(false)}
+          model={roleModels.referee}
         />
       )}
 

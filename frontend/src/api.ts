@@ -6,10 +6,6 @@ export interface Philosopher {
   era?: string
   dates?: string
   one_liner?: string
-  // The model this debater runs on for the debate. Present on a debate's
-  // debater_a/debater_b (resolved to the default model when unpicked); absent
-  // on the /philosophers catalog, which has no per-debate model.
-  model?: string
 }
 
 export type TurnRole = 'moderator' | 'a' | 'b' | 'critic' | 'judge'
@@ -105,6 +101,9 @@ export interface TurnResult {
   total_output_tokens: number
   // The owner's interjection that conditioned this turn, echoed for rendering.
   interjection?: string
+  // The model that produced this step. A retry may run on a different model than
+  // the role was assigned at creation (the Retry Model).
+  model?: string
 }
 
 export interface CreateDebateParams {
@@ -113,17 +112,28 @@ export interface CreateDebateParams {
   debater_b: string
   num_rounds: number
   max_words: number
-  // Optional per-debater models. Empty/omitted falls back to the default model;
-  // when set, must be one of the ids returned by fetchModels (the allowlist).
-  model_a?: string
-  model_b?: string
 }
 
-// ModelOption is one authorized Debater Model from GET /models. The server
-// returns objects (not bare strings) so display metadata can be added later
-// without reshaping the JSON.
-export interface ModelOption {
-  id: string
+// MODELS is the authorized model allowlist, mirrored from the backend
+// (backend/internal/models/models.go).
+export const MODELS = [
+  'deepseek/deepseek-v4-pro',
+  'qwen/qwen3-235b-a22b-2507',
+  'z-ai/glm-4.6',
+] as const
+
+// DEFAULT_MODEL is the client-side default a debate starts every role on, until
+// the user picks otherwise.
+export const DEFAULT_MODEL: string = MODELS[2]
+
+// DebateModels is the client's per-role model choice for a debate: the two
+// debaters (which may differ) and a single model for the referee steps
+// (moderator, critic, judge). The frontend holds this and sends the right one on
+// each generation.
+export interface DebateModels {
+  a: string
+  b: string
+  referee: string
 }
 
 // modelLabel prettifies a model id for display: ids are provider/model slugs
@@ -169,11 +179,17 @@ export class ApiError extends Error {
 const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
 
 async function getAuthHeader(): Promise<Record<string, string>> {
-  if (firebaseEnabled && auth?.currentUser) {
-    const token = await auth.currentUser.getIdToken()
+  if (firebaseEnabled) {
+    // Firebase is configured, so a real ID token is required. Never fall back to
+    // the dev token here — the backend's real verifier rejects it with a 401.
+    // The App-level gate holds requests until the session is restored, so this
+    // throw is a belt-and-suspenders guard for any call that slips through.
+    const user = auth?.currentUser
+    if (!user) throw new ApiError(401, 'Not signed in')
+    const token = await user.getIdToken()
     return { Authorization: `Bearer ${token}` }
   }
-  // Local dev fallback: noop verifier accepts any non-empty token.
+  // Local dev (no Firebase configured): the noop verifier accepts any token.
   return { Authorization: 'Bearer local-dev-token' }
 }
 
@@ -198,16 +214,6 @@ export async function fetchPhilosophers(): Promise<Philosopher[]> {
     headers: await getAuthHeader(),
   })
   if (!res.ok) throw new Error('Failed to load data')
-  return res.json()
-}
-
-// The authorized Debater Models backing the per-debater dropdowns. Empty
-// selection (the "Default" option) means "use the server's default model".
-export async function fetchModels(): Promise<ModelOption[]> {
-  const res = await fetch(`${API_BASE}/models`, {
-    headers: await getAuthHeader(),
-  })
-  if (!res.ok) throw new Error('Failed to load models')
   return res.json()
 }
 
@@ -326,7 +332,7 @@ export interface TutorResult {
 // `done` event.
 export async function streamTutor(
   debateId: string,
-  body: { selection: string; turn_key: string; history: TutorMessage[] },
+  body: { selection: string; turn_key: string; history: TutorMessage[]; model: string },
   onToken: (text: string) => void,
 ): Promise<TutorResult> {
   const res = await fetch(`${API_BASE}/debates/${debateId}/tutor`, {
@@ -401,48 +407,37 @@ export async function streamTutor(
   throw new Error('Stream ended without a result')
 }
 
-export async function nextTurn(debateId: string): Promise<TurnResult> {
-  const res = await fetch(`${API_BASE}/debates/${debateId}/next`, {
-    method: 'POST',
-    headers: await getAuthHeader(),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new ApiError(res.status, err.detail ?? 'Failed to advance debate')
-  }
-  return res.json()
-}
-
-// Stream a turn via SSE; invokes onToken for each partial token and resolves with the
-// final TurnResult carried on the `done` event. Throws on `error` events.
-// interjection, when non-empty, is the owner's note steering this turn.
-export async function streamTurn(
-  debateId: string,
+// streamTurnResult POSTs to a turn-producing endpoint (next or retry) with SSE
+// requested, invoking onToken for each partial token and resolving with the
+// final TurnResult carried on the `done` event. Throws ApiError on a non-OK
+// response (so callers can read status, e.g. 402) and Error on an SSE `error`
+// event. streamTurn and streamRetry differ only in path and body.
+async function streamTurnResult(
+  path: string,
+  body: object,
   onToken: (text: string) => void,
-  interjection?: string,
 ): Promise<TurnResult> {
-  const res = await fetch(`${API_BASE}/debates/${debateId}/next`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: {
       Accept: 'text/event-stream',
       'Content-Type': 'application/json',
       ...await getAuthHeader(),
     },
-    body: JSON.stringify({ interjection: interjection ?? '' }),
+    body: JSON.stringify(body),
   })
   if (!res.ok || !res.body) {
     const err = await res.json?.().catch(() => ({ detail: 'Stream failed' }))
     throw new ApiError(res.status, err?.detail ?? 'Stream failed')
   }
-  // Backend currently responds with JSON; SSE will return when streaming
-  // is re-introduced. The parser below stays in place for that day.
+  // Backend may respond with plain JSON instead of SSE; return it directly. The
+  // parser below handles the event-stream case.
   if (!res.headers.get('content-type')?.includes('text/event-stream')) {
     return await res.json() as TurnResult
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-  let currentEvent = 'message'
   let finalResult: TurnResult | null = null
   let errorMsg: string | null = null
 
@@ -463,9 +458,8 @@ export async function streamTurn(
         else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
       }
       const data = dataLines.join('\n')
-      currentEvent = eventName
 
-      if (currentEvent === 'token') {
+      if (eventName === 'token') {
         try {
           const parsed = JSON.parse(data)
           const text = typeof parsed === 'string' ? parsed : parsed?.text ?? ''
@@ -473,9 +467,9 @@ export async function streamTurn(
         } catch {
           if (data) onToken(data)
         }
-      } else if (currentEvent === 'done') {
+      } else if (eventName === 'done') {
         try { finalResult = JSON.parse(data) as TurnResult } catch { /* noop */ }
-      } else if (currentEvent === 'error') {
+      } else if (eventName === 'error') {
         try {
           const parsed = JSON.parse(data)
           errorMsg = parsed?.detail ?? parsed?.message ?? data
@@ -489,4 +483,30 @@ export async function streamTurn(
   if (errorMsg) throw new Error(errorMsg)
   if (finalResult) return finalResult
   throw new Error('Stream ended without a result')
+}
+
+// Stream a turn via SSE; invokes onToken for each partial token and resolves
+// with the final TurnResult. model is the allowlisted model the turn runs on
+// (required). interjection, when non-empty, is the owner's note
+// steering this turn.
+export function streamTurn(
+  debateId: string,
+  onToken: (text: string) => void,
+  model: string,
+  interjection?: string,
+): Promise<TurnResult> {
+  return streamTurnResult(`/debates/${debateId}/next`, { interjection: interjection ?? '', model }, onToken)
+}
+
+// Stream a retry of the debate's last completed step via SSE. stepKey is the
+// step the caller expects to redo; the backend rejects anything that is not the
+// current last record (409). model is the allowlisted model the re-roll runs on
+// (required). The fresh generation replaces that step's record.
+export function streamRetry(
+  debateId: string,
+  stepKey: string,
+  onToken: (text: string) => void,
+  model: string,
+): Promise<TurnResult> {
+  return streamTurnResult(`/debates/${debateId}/retry`, { step_key: stepKey, model }, onToken)
 }

@@ -11,7 +11,6 @@ import (
 )
 
 var (
-	defaultModel    string
 	ttsEnabled      bool
 	ttsModel        string
 	llmAPIKey       string
@@ -58,11 +57,6 @@ func Load(envPath string) error {
 	if ttsModel == "" {
 		ttsModel = defaultTTSModel
 	}
-	defaultModel = os.Getenv("MODEL")
-	if defaultModel == "" {
-		return errors.New("config: MODEL env var is required")
-	}
-
 	quotaEnabled = strings.EqualFold(os.Getenv("QUOTA_ENABLED"), "TRUE")
 	quotaLimitUSD = DefaultQuotaLimitUSD
 	if raw := strings.TrimSpace(os.Getenv("QUOTA_USD_LIMIT")); raw != "" {
@@ -76,9 +70,8 @@ func Load(envPath string) error {
 	return nil
 }
 
-func DefaultModel() string { return defaultModel }
-func TTSEnabled() bool     { return ttsEnabled }
-func TTSModel() string     { return ttsModel }
+func TTSEnabled() bool { return ttsEnabled }
+func TTSModel() string { return ttsModel }
 
 // LLMAPIKey returns the API key for the OpenAI-compatible LLM
 // provider configured via LLM_BASE_URL (OpenRouter by default).

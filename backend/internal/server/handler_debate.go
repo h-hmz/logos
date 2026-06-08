@@ -25,10 +25,14 @@ func mapServiceError(err error) (int, string) {
 		return http.StatusConflict, "debate state changed concurrently; refresh and retry"
 	case errors.Is(err, debate.ErrGenerationInFlight):
 		return http.StatusConflict, "a generation is already in progress; wait for it to finish"
+	case errors.Is(err, debate.ErrNotLastStep):
+		return http.StatusConflict, "only the last step can be retried; refresh and retry"
 	case errors.Is(err, debate.ErrForbidden):
 		return http.StatusForbidden, "only the debate's owner can advance it"
 	case errors.Is(err, debate.ErrOverBudget):
 		return http.StatusPaymentRequired, "generation quota exhausted"
+	case errors.Is(err, debate.ErrProviderAuth):
+		return http.StatusBadGateway, "the model provider rejected the server's API key"
 	case errors.As(err, &ve):
 		return http.StatusBadRequest, ve.Msg
 	default:
@@ -36,10 +40,12 @@ func mapServiceError(err error) (int, string) {
 	}
 }
 
-// writeServiceError maps domain errors to HTTP responses.
+// writeServiceError maps domain errors to HTTP responses. Server-side failures
+// (5xx, including the 502 for a rejected provider key) are logged with their
+// underlying error so the cause is recoverable from the logs.
 func writeServiceError(ctx context.Context, w http.ResponseWriter, err error) {
 	status, msg := mapServiceError(err)
-	if status == http.StatusInternalServerError {
+	if status >= http.StatusInternalServerError {
 		slog.ErrorContext(ctx, "service error", "error", err)
 	}
 	writeError(w, status, msg)
@@ -53,10 +59,6 @@ type createDebateRequest struct {
 	DebaterB  string `json:"debater_b"`
 	NumRounds int    `json:"num_rounds"`
 	MaxWords  int    `json:"max_words"`
-	// ModelA/ModelB are the optional per-debater models. Empty falls back to the
-	// default model; when set they must be in the authorized allowlist.
-	ModelA string `json:"model_a"`
-	ModelB string `json:"model_b"`
 }
 
 type stepInfo struct {
@@ -67,9 +69,6 @@ type stepInfo struct {
 type debaterInfo struct {
 	Name   string `json:"name"`
 	School string `json:"school"`
-	// Model is the resolved model this debater runs on (the Default Model when
-	// the caller didn't pick one), surfaced so the UI can label each corner.
-	Model string `json:"model"`
 }
 
 type createDebateResponse struct {
@@ -96,8 +95,6 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 		DebaterB:  req.DebaterB,
 		NumRounds: req.NumRounds,
 		MaxWords:  req.MaxWords,
-		ModelA:    req.ModelA,
-		ModelB:    req.ModelB,
 	})
 	if err != nil {
 		writeServiceError(r.Context(), w, err)
@@ -107,8 +104,8 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 	resp := createDebateResponse{
 		ID:         res.Debate.ID,
 		Topic:      res.Debate.Topic,
-		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School, Model: res.Debate.Models.DebaterA},
-		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School, Model: res.Debate.Models.DebaterB},
+		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School},
+		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School},
 		TotalSteps: len(res.Steps),
 	}
 	for _, sm := range res.Steps {
@@ -139,8 +136,8 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 	resp := getDebateResponse{
 		ID:         res.Debate.ID,
 		Topic:      res.Debate.Topic,
-		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School, Model: res.Debate.Models.DebaterA},
-		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School, Model: res.Debate.Models.DebaterB},
+		DebaterA:   debaterInfo{Name: res.DebaterA.Name, School: res.DebaterA.School},
+		DebaterB:   debaterInfo{Name: res.DebaterB.Name, School: res.DebaterB.School},
 		TotalSteps: len(res.Steps),
 		Turns:      make(map[int]turnResult, len(res.Turns)),
 	}
@@ -163,6 +160,7 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 			TotalInputTokens:  t.TotalInputTokens,
 			TotalOutputTokens: t.TotalOutputTokens,
 			Interjection:      t.Interjection,
+			Model:             t.Model,
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -185,28 +183,29 @@ type turnResult struct {
 	TotalInputTokens  int     `json:"total_input_tokens"`
 	TotalOutputTokens int     `json:"total_output_tokens"`
 	Interjection      string  `json:"interjection,omitempty"`
+	Model             string  `json:"model,omitempty"`
 }
 
-// nextTurnRequest is the optional body of POST /next; an absent/empty body is a
-// plain advance. Interjection length/role validation happens in the service.
 type nextTurnRequest struct {
 	Interjection string `json:"interjection"`
+	Model        string `json:"model"`
 }
 
-// decodeInterjection reads the optional interjection from the request body. An
-// empty body is valid (a plain advance), so io.EOF is not an error; bad JSON is.
-func decodeInterjection(r *http.Request) (string, error) {
+// decodeNextTurn reads the interjection and model from the request body. An
+// absent body decodes to empties (the service then rejects the missing model),
+// so io.EOF is not a transport error; bad JSON is.
+func decodeNextTurn(r *http.Request) (interjection, model string, err error) {
 	if r.Body == nil {
-		return "", nil
+		return "", "", nil
 	}
 	var req nextTurnRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		if errors.Is(err, io.EOF) {
-			return "", nil
+			return "", "", nil
 		}
-		return "", err
+		return "", "", err
 	}
-	return req.Interjection, nil
+	return req.Interjection, req.Model, nil
 }
 
 func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
@@ -214,18 +213,18 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 	uid := UIDFromContext(r.Context())
 	defer r.Body.Close()
 
-	interjection, err := decodeInterjection(r)
+	interjection, model, err := decodeNextTurn(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
 	if wantsSSE(r) {
-		s.nextTurnSSE(w, r, uid, debateID, interjection)
+		s.nextTurnSSE(w, r, uid, debateID, interjection, model)
 		return
 	}
 
-	res, err := s.svc.NextTurn(r.Context(), uid, debateID, interjection, nil)
+	res, err := s.svc.NextTurn(r.Context(), uid, debateID, interjection, model, nil)
 	if err != nil {
 		writeServiceError(r.Context(), w, err)
 		return
@@ -240,22 +239,103 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 // any token is streamed, so its rejections (402/409) and other pre-stream
 // failures surface as real HTTP statuses. Once an event has been flushed
 // (status 200 committed), failures can only ride the SSE error event.
-func (s *Server) nextTurnSSE(w http.ResponseWriter, r *http.Request, uid, debateID, interjection string) {
+func (s *Server) nextTurnSSE(w http.ResponseWriter, r *http.Request, uid, debateID, interjection, model string) {
 	sw, ok := newSSEWriter(r.Context(), w)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming not supported")
 		return
 	}
 
-	res, err := s.svc.NextTurn(r.Context(), uid, debateID, interjection, sw.SendToken)
+	res, err := s.svc.NextTurn(r.Context(), uid, debateID, interjection, model, sw.SendToken)
 	if err != nil {
 		status, msg := mapServiceError(err)
-		if status == http.StatusInternalServerError {
+		if status >= http.StatusInternalServerError {
 			slog.ErrorContext(r.Context(), "service error (sse)", "error", err)
 		}
 		// If nothing has been streamed yet, the HTTP status is still open —
 		// return a real status (e.g. 402/409 from the quota gate) instead of
 		// burying the failure in an SSE error event the client must parse.
+		if !sw.committed() {
+			writeError(w, status, msg)
+			return
+		}
+		sw.SendError(msg)
+		return
+	}
+	sw.SendDone(toTurnResultPayload(res))
+}
+
+// ── POST /debates/{debateID}/retry ──────────────────────────────────────────
+
+// retryTurnRequest is the body of POST /retry. step_key names the step the
+// caller expects to redo; it must be the debate's current last step (the
+// service rejects anything else). It is required — an empty/absent value is a
+// 400 from the service. model is the allowlisted model the re-roll runs on.
+type retryTurnRequest struct {
+	StepKey string `json:"step_key"`
+	Model   string `json:"model"`
+}
+
+// decodeRetryRequest reads step_key and model from the request body. An
+// empty/absent body decodes to empties (not an error here) so the service owns
+// the "step_key required" rejection with a domain message; malformed JSON is a
+// transport-level 400.
+func decodeRetryRequest(r *http.Request) (stepKey, model string, err error) {
+	if r.Body == nil {
+		return "", "", nil
+	}
+	var req retryTurnRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			return "", "", nil
+		}
+		return "", "", err
+	}
+	return req.StepKey, req.Model, nil
+}
+
+func (s *Server) retryTurn(w http.ResponseWriter, r *http.Request) {
+	debateID := chi.URLParam(r, "debateID")
+	uid := UIDFromContext(r.Context())
+	defer r.Body.Close()
+
+	stepKey, model, err := decodeRetryRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if wantsSSE(r) {
+		s.retryTurnSSE(w, r, uid, debateID, stepKey, model)
+		return
+	}
+
+	res, err := s.svc.RetryTurn(r.Context(), uid, debateID, stepKey, model, nil)
+	if err != nil {
+		writeServiceError(r.Context(), w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, toTurnResultPayload(res))
+}
+
+// retryTurnSSE mirrors nextTurnSSE for the retry path: the quota gate and all
+// pre-generation validation (owner, target step, model, budget) run before any
+// token is streamed, so their rejections surface as real HTTP statuses; once an
+// event has been flushed, failures can only ride the SSE error event.
+func (s *Server) retryTurnSSE(w http.ResponseWriter, r *http.Request, uid, debateID, stepKey, model string) {
+	sw, ok := newSSEWriter(r.Context(), w)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	res, err := s.svc.RetryTurn(r.Context(), uid, debateID, stepKey, model, sw.SendToken)
+	if err != nil {
+		status, msg := mapServiceError(err)
+		if status >= http.StatusInternalServerError {
+			slog.ErrorContext(r.Context(), "service error (sse)", "error", err)
+		}
 		if !sw.committed() {
 			writeError(w, status, msg)
 			return
@@ -282,5 +362,6 @@ func toTurnResultPayload(res *debate.TurnResult) turnResult {
 		TotalInputTokens:  res.TotalInputTokens,
 		TotalOutputTokens: res.TotalOutputTokens,
 		Interjection:      res.Interjection,
+		Model:             res.Model,
 	}
 }

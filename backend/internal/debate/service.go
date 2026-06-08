@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/h-hmz/logos/internal/config"
+	"github.com/h-hmz/logos/internal/agent"
 	"github.com/h-hmz/logos/internal/models"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/quota"
@@ -33,6 +33,14 @@ var (
 	// ErrGenerationInFlight signals the caller already has a generation
 	// executing on this instance; concurrent generations per user are refused.
 	ErrGenerationInFlight = errors.New("generation already in flight")
+	// ErrProviderAuth signals the upstream LLM provider rejected our API key (401/403)
+	ErrProviderAuth = errors.New("llm provider rejected the API key")
+	// ErrNotLastStep signals a retry targeted a step that is not the debate's
+	// current last record — either an earlier step (only the last is retryable)
+	// or a head that has advanced under a stale client. A step key alone can't
+	// tell the two apart, and both resolve the same way: refetch and retry.
+	// Handlers map it to HTTP 409.
+	ErrNotLastStep = errors.New("retry target is not the last step")
 )
 
 // Service holds the debate orchestration logic: spawning pipelines, running
@@ -214,10 +222,11 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 	turns := make(map[int]TurnResult, end)
 	for i := range end {
 		meta := metas[i]
+		role := RoleForStep(meta.Key, a, b)
 		turns[i] = TurnResult{
 			Step:              meta,
 			AgentName:         meta.Key,
-			Role:              RoleForStep(meta.Key, a, b),
+			Role:              role,
 			Content:           p.StepRecords[i].Content,
 			StepIndex:         i,
 			TotalSteps:        total,
@@ -228,6 +237,7 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 			TotalInputTokens:  totalIn,
 			TotalOutputTokens: totalOut,
 			Interjection:      p.StepRecords[i].Interjection,
+			Model:             p.StepRecords[i].Model,
 		}
 	}
 
@@ -243,17 +253,13 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 // ── CreateDebate ───────────────────────────────────────────────────────────
 
 // CreateDebateParams is the caller-supplied input; defaults are applied inside
-// the service so every caller sees the same business rules. ModelA and ModelB
-// are the optional Debater Models: when empty they fall back to the Default
-// Model; when set they must be in the authorized allowlist (see models.Allowed).
+// the service so every caller sees the same business rules.
 type CreateDebateParams struct {
 	Topic     string
 	DebaterA  string
 	DebaterB  string
 	NumRounds int
 	MaxWords  int
-	ModelA    string
-	ModelB    string
 }
 
 // CreateDebateResult bundles the new debate record with the philosopher data
@@ -266,14 +272,12 @@ type CreateDebateResult struct {
 	Steps    []StepMeta
 }
 
-// resolveDebaterModel resolves a caller-supplied Debater Model. An omitted
-// (empty/blank) value falls back to the Default Model — the operator-set
-// MODEL, which is trusted and not gated by the allowlist. A provided value must
-// be an authorized model, else a ValidationError (HTTP 400) is returned.
-func resolveDebaterModel(raw string) (string, error) {
+// validateModel checks a caller-supplied model for a generation. It must be non-empty
+// and in the allowlist. Returns the trimmed model or a ValidationError (HTTP 400).
+func validateModel(raw string) (string, error) {
 	m := strings.TrimSpace(raw)
 	if m == "" {
-		return config.DefaultModel(), nil
+		return "", validationErr("model is required")
 	}
 	if !models.Allowed(m) {
 		return "", validationErr(fmt.Sprintf("model %q is not an allowed model", m))
@@ -306,29 +310,6 @@ func (s *Service) CreateDebate(ctx context.Context, uid string, in CreateDebateP
 		return nil, validationErr("Topic cannot be empty")
 	}
 
-	modelA, err := resolveDebaterModel(in.ModelA)
-	if err != nil {
-		return nil, err
-	}
-	modelB, err := resolveDebaterModel(in.ModelB)
-	if err != nil {
-		return nil, err
-	}
-
-	// Per-role models. Debaters take the (validated) caller-supplied models;
-	// moderator/critic/judge are not yet caller-configurable, so they seed to
-	// the Default Model — the core routes per role, so exposing them later is a
-	// pure transport change. The Tutor is intentionally absent: it is not a
-	// pipeline role and reads the live Default Model when invoked.
-	def := config.DefaultModel()
-	roleModels := RoleModels{
-		DebaterA:  modelA,
-		DebaterB:  modelB,
-		Moderator: def,
-		Critic:    def,
-		Judge:     def,
-	}
-
 	p := &Persisted{
 		ID:           uuid.NewString(),
 		OwnerUID:     uid,
@@ -336,7 +317,6 @@ func (s *Service) CreateDebate(ctx context.Context, uid string, in CreateDebateP
 		DebaterAName: a.Name,
 		DebaterBName: b.Name,
 		NumRounds:    in.NumRounds,
-		Models:       roleModels,
 		MaxWords:     in.MaxWords,
 	}
 	if err := s.repo.Create(ctx, p); err != nil {
@@ -367,6 +347,7 @@ type TurnResult struct {
 	TotalInputTokens  int
 	TotalOutputTokens int
 	Interjection      string
+	Model             string
 }
 
 // NextTurn runs the next pipeline step for the given debate. uid is the
@@ -383,7 +364,7 @@ type TurnResult struct {
 // Returns ErrNotFound, ErrForbidden, ErrVersionConflict, *ValidationError,
 // ErrOverBudget, or ErrGenerationInFlight for callers that need to distinguish
 // cases.
-func (s *Service) NextTurn(ctx context.Context, uid, debateID, interjection string, onToken func(string)) (*TurnResult, error) {
+func (s *Service) NextTurn(ctx context.Context, uid, debateID, interjection, model string, onToken func(string)) (*TurnResult, error) {
 	release, err := s.admitGeneration(ctx, uid)
 	if err != nil {
 		return nil, err
@@ -392,7 +373,7 @@ func (s *Service) NextTurn(ctx context.Context, uid, debateID, interjection stri
 
 	var res *TurnResult
 	err = s.charge(ctx, uid, func() (float64, error) {
-		r, cost, runErr := s.runNextTurn(ctx, uid, debateID, interjection, onToken)
+		r, cost, runErr := s.runNextTurn(ctx, uid, debateID, interjection, model, onToken)
 		res = r
 		return cost, runErr
 	})
@@ -402,10 +383,31 @@ func (s *Service) NextTurn(ctx context.Context, uid, debateID, interjection stri
 	return res, nil
 }
 
-// runNextTurn executes one pipeline step and returns the result plus the
-// generation's provider-billed cost (Usage.CostUSD). Separated from quota
-// bookkeeping so admitGeneration/charge can wrap it uniformly with TutorExplain.
-func (s *Service) runNextTurn(ctx context.Context, uid, debateID, interjection string, onToken func(string)) (*TurnResult, float64, error) {
+// RetryTurn re-runs the debate's last completed step, replacing its record with a fresh generation.
+func (s *Service) RetryTurn(ctx context.Context, uid, debateID, stepKey, model string, onToken func(string)) (*TurnResult, error) {
+	release, err := s.admitGeneration(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	var res *TurnResult
+	err = s.charge(ctx, uid, func() (float64, error) {
+		r, cost, runErr := s.runRetryTurn(ctx, uid, debateID, stepKey, model, onToken)
+		res = r
+		return cost, runErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// runNextTurn loads the debate, enforces the advance preconditions (owner, not
+// already complete, an allowlisted model, interjection bounds), and runs the
+// next pipeline step. Separated from quota bookkeeping so admitGeneration/charge
+// can wrap it uniformly with TutorExplain.
+func (s *Service) runNextTurn(ctx context.Context, uid, debateID, interjection, model string, onToken func(string)) (*TurnResult, float64, error) {
 	p, err := s.repo.Get(ctx, debateID)
 	if err != nil {
 		return nil, 0, err
@@ -413,9 +415,12 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID, interjection s
 	if p.OwnerUID != uid {
 		return nil, 0, ErrForbidden
 	}
-	stepIndex := p.Current()
-	if stepIndex >= TotalSteps(p.NumRounds) {
+	if p.Current() >= TotalSteps(p.NumRounds) {
 		return nil, 0, validationErr("Debate is already complete")
+	}
+	mdl, err := validateModel(model)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	// Trim first so whitespace-only input is treated as absent, not a short note.
@@ -424,24 +429,74 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID, interjection s
 		return nil, 0, validationErr(fmt.Sprintf("interjection exceeds %d characters", InterjectionMaxLen))
 	}
 
-	rt, err := Hydrate(p, s.philMap)
+	return s.runStep(ctx, p, interjection, mdl, onToken)
+}
+
+// runRetryTurn loads the debate, enforces the retry preconditions (owner, a
+// completed step exists, stepKey is the current last record, an allowlisted
+// model), then re-runs that step on a clone with the last record popped. Working
+// on a clone is what makes the retry atomic and non-destructive: the regenerated
+// step sees every prior step but not its own old output, and a failed generation
+// never reaches repo.Update, so the original record survives. The preserved
+// interjection was already validated when the original generation was created.
+func (s *Service) runRetryTurn(ctx context.Context, uid, debateID, stepKey, model string, onToken func(string)) (*TurnResult, float64, error) {
+	p, err := s.repo.Get(ctx, debateID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if p.OwnerUID != uid {
+		return nil, 0, ErrForbidden
+	}
+	if strings.TrimSpace(stepKey) == "" {
+		return nil, 0, validationErr("step_key is required")
+	}
+	if p.Current() == 0 {
+		return nil, 0, validationErr("no completed step to retry")
+	}
+	last := p.StepRecords[p.Current()-1]
+	if stepKey != last.Key {
+		return nil, 0, ErrNotLastStep
+	}
+	mdl, err := validateModel(model)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	base := p.Clone()
+	base.StepRecords = base.StepRecords[:len(base.StepRecords)-1]
+	return s.runStep(ctx, base, last.Interjection, mdl, onToken)
+}
+
+// runStep runs the single pipeline step that comes next for base — the step at
+// index base.Current() — under the given interjection on the given model,
+// appends its record, and commits. base must hold exactly the records completed
+// before that step: NextTurn passes the live debate (run the head), RetryTurn
+// passes a clone with the last record popped (re-run the head). The append +
+// repo.Update is the atomic commit, guarded by base.Version's optimistic check.
+func (s *Service) runStep(ctx context.Context, base *Persisted, interjection, model string, onToken func(string)) (*TurnResult, float64, error) {
+	stepIndex := base.Current()
+
+	rt, err := Hydrate(base, s.philMap)
 	if err != nil {
 		return nil, 0, fmt.Errorf("hydrate: %w", err)
 	}
 
-	// Build only the one agent this turn runs, not the whole pipeline.
-	nextStep := pipeline(rt.DebaterA, rt.DebaterB, p.NumRounds, p.Models, p.MaxWords)[stepIndex]
+	// Build only the one agent this step runs, on the supplied model.
+	curStep := pipeline(rt.DebaterA, rt.DebaterB, base.NumRounds, model, base.MaxWords)[stepIndex]
+	role := RoleForStep(curStep.Key, rt.DebaterA, rt.DebaterB)
 
 	// An interjection may only steer a debater turn: reject one aimed at a referee
-	// step (fail loud, don't silently drop it), then seed the slot it reads.
+	// step (fail loud, don't silently drop it), then seed the slot it reads. On a
+	// retry the note comes from storage and is only ever non-empty on a debater
+	// step, so this guard never trips for legitimate data.
 	if interjection != "" {
-		if role := RoleForStep(nextStep.Key, rt.DebaterA, rt.DebaterB); role != "a" && role != "b" {
+		if role != "a" && role != "b" {
 			return nil, 0, validationErr("an interjection can only be added to a debater's turn")
 		}
-		rt.State[nextStep.Key+interjectionKeySuffix] = interjection
+		rt.State[curStep.Key+interjectionKeySuffix] = interjection
 	}
 
-	ag, err := nextStep.build(ctx, turnInput{Interjection: interjection})
+	ag, err := curStep.build(ctx, turnInput{Interjection: interjection})
 	if err != nil {
 		return nil, 0, fmt.Errorf("build step: %w", err)
 	}
@@ -452,41 +507,44 @@ func (s *Service) runNextTurn(ctx context.Context, uid, debateID, interjection s
 	}
 	result, err := ag.Run(ctx, rt.State, "continue", cb)
 	if err != nil {
+		if agent.IsProviderAuthError(err) {
+			return nil, 0, fmt.Errorf("%w: %v", ErrProviderAuth, err)
+		}
 		return nil, 0, fmt.Errorf("agent run: %w", err)
 	}
 	content := result.Text
 	turnInput := result.Usage.InputTokens
 	turnOutput := result.Usage.OutputTokens
 
-	p.StepRecords = append(p.StepRecords, StepRecord{
-		Key:          nextStep.Key,
+	base.StepRecords = append(base.StepRecords, StepRecord{
+		Key:          curStep.Key,
 		Content:      content,
+		Model:        model,
 		Interjection: interjection,
 		InputTokens:  turnInput,
 		OutputTokens: turnOutput,
 		CostUSD:      result.Usage.CostUSD,
 	})
 
-	if err := s.repo.Update(ctx, p); err != nil {
+	if err := s.repo.Update(ctx, base); err != nil {
 		return nil, 0, err
 	}
 
-	role := RoleForStep(nextStep.Key, rt.DebaterA, rt.DebaterB)
-
 	return &TurnResult{
-		Step:              StepMeta{Key: nextStep.Key, Label: nextStep.Label},
+		Step:              StepMeta{Key: curStep.Key, Label: curStep.Label},
 		AgentName:         ag.Name(),
 		Role:              role,
 		Content:           content,
 		StepIndex:         stepIndex,
-		TotalSteps:        TotalSteps(p.NumRounds),
-		Done:              p.Current() >= TotalSteps(p.NumRounds),
+		TotalSteps:        TotalSteps(base.NumRounds),
+		Done:              base.Current() >= TotalSteps(base.NumRounds),
 		TurnInputTokens:   turnInput,
 		TurnOutputTokens:  turnOutput,
 		TurnCostUSD:       result.Usage.CostUSD,
-		TotalInputTokens:  p.TotalInputTokens(),
-		TotalOutputTokens: p.TotalOutputTokens(),
+		TotalInputTokens:  base.TotalInputTokens(),
+		TotalOutputTokens: base.TotalOutputTokens(),
 		Interjection:      interjection,
+		Model:             model,
 	}, result.Usage.CostUSD, nil
 }
 

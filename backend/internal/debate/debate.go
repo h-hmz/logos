@@ -56,6 +56,7 @@ type StepMeta struct {
 type StepRecord struct {
 	Key          string  `json:"key"           firestore:"key"`
 	Content      string  `json:"content"       firestore:"content"`
+	Model        string  `json:"model,omitempty" firestore:"model,omitempty"`
 	Interjection string  `json:"interjection,omitempty" firestore:"interjection,omitempty"`
 	InputTokens  int     `json:"input_tokens"  firestore:"input_tokens"`
 	OutputTokens int     `json:"output_tokens" firestore:"output_tokens"`
@@ -77,19 +78,9 @@ type Persisted struct {
 	DebaterAName string       `json:"debater_a"              firestore:"debater_a"`
 	DebaterBName string       `json:"debater_b"              firestore:"debater_b"`
 	NumRounds    int          `json:"num_rounds"             firestore:"num_rounds"`
-	Models       RoleModels   `json:"models"                 firestore:"models"`
 	MaxWords     int          `json:"max_words"              firestore:"max_words"`
 	StepRecords  []StepRecord `json:"step_records,omitempty" firestore:"step_records,omitempty"`
 	Version      int64        `json:"version"                firestore:"version"`
-}
-
-// RoleModels holds the model each pipeline role runs on.
-type RoleModels struct {
-	DebaterA  string `json:"debater_a" firestore:"debater_a"`
-	DebaterB  string `json:"debater_b" firestore:"debater_b"`
-	Moderator string `json:"moderator" firestore:"moderator"`
-	Critic    string `json:"critic"    firestore:"critic"`
-	Judge     string `json:"judge"     firestore:"judge"`
 }
 
 // Index of the next pipeline step to run, equal to the number of completed steps.
@@ -163,7 +154,7 @@ func TotalSteps(numRounds int) int { return 5 + 2*numRounds }
 // Cheap — it enumerates the pipeline but never invokes a step's build closure,
 // so the models/maxWords those closures would use are irrelevant here.
 func BuildStepMeta(a, b philosopher.Data, numRounds int) []StepMeta {
-	steps := pipeline(a, b, numRounds, RoleModels{}, 0)
+	steps := pipeline(a, b, numRounds, "", 0)
 	out := make([]StepMeta, len(steps))
 	for i := range steps {
 		out[i] = StepMeta{Key: steps[i].Key, Label: steps[i].Label}
@@ -210,15 +201,15 @@ var (
 // closure builds its agent only when invoked, so a turn builds exactly one.
 // Step i here corresponds 1:1 with StepRecords[i] and BuildStepMeta()[i].
 //
-// Each step runs on its role's model from models: the debaters' rounds and
-// critic-responses on DebaterA/DebaterB, the referee steps on Moderator/Critic/
-// Judge. models is expected fully populated (CreateDebate fills unset roles with
-// the Default Model), so the pipeline reads it directly with no fallback.
+// model is the single model the built step runs on. A turn builds exactly one
+// step, and that step (whatever its role) runs on user-supplied model.
+// Enumerating the other steps' builders with the same model is harmless:
+// they are never invoked.
 //
-// pipeline takes only the debate's persistent shape, never a per-turn value: the
-// interjection is request-scoped and reaches the one step a turn runs via that
-// step's build (turnInput), not through here.
-func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords int) []step {
+// pipeline takes only the debate's shape plus this model, never a per-turn value:
+// the interjection is request-scoped and reaches the one step a turn runs via
+// that step's build (turnInput), not through here.
+func pipeline(a, b philosopher.Data, numRounds int, model string, maxWords int) []step {
 	var steps []step
 	add := func(key, label string, build func(context.Context, turnInput) (*agent.Agent, error)) {
 		steps = append(steps, step{Key: key, Label: label, build: build})
@@ -226,7 +217,7 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 
 	// Moderator
 	add("moderator_intro", "Introduction", func(ctx context.Context, _ turnInput) (*agent.Agent, error) {
-		return philosopher.MakeModerator(ctx, a, b, models.Moderator)
+		return philosopher.MakeModerator(ctx, a, b, model)
 	})
 
 	// Debate rounds. A speaks first each round (so opens on round 1); B always
@@ -248,7 +239,7 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 				Situation:      roundSituation(r),
 				OpponentArgKey: bPrevKey,
 				AudienceKey:    in.interjectionSlot(aKey),
-				ModelID:        models.DebaterA,
+				ModelID:        model,
 				MaxWords:       maxWords,
 			})
 		})
@@ -260,7 +251,7 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 				Situation:      fmt.Sprintf("round %d — respond to your opponent then advance your argument", r),
 				OpponentArgKey: aKey,
 				AudienceKey:    in.interjectionSlot(bKey),
-				ModelID:        models.DebaterB,
+				ModelID:        model,
 				MaxWords:       maxWords,
 			})
 		})
@@ -268,7 +259,7 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 
 	// Critic
 	add("critic_feedback", "Critic Analysis", func(ctx context.Context, _ turnInput) (*agent.Agent, error) {
-		return philosopher.MakeCritic(ctx, a, b, numRounds, models.Critic, maxWords*2)
+		return philosopher.MakeCritic(ctx, a, b, numRounds, model, maxWords*2)
 	})
 
 	// Philosopher responses to critic
@@ -281,7 +272,7 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 			Situation:   "response to the critic — address their challenges and refine your position",
 			CriticKey:   "critic_feedback",
 			AudienceKey: in.interjectionSlot(aCritKey),
-			ModelID:     models.DebaterA,
+			ModelID:     model,
 			MaxWords:    maxWords,
 		})
 	})
@@ -294,14 +285,14 @@ func pipeline(a, b philosopher.Data, numRounds int, models RoleModels, maxWords 
 			Situation:   "response to the critic — address their challenges and refine your position",
 			CriticKey:   "critic_feedback",
 			AudienceKey: in.interjectionSlot(bCritKey),
-			ModelID:     models.DebaterB,
+			ModelID:     model,
 			MaxWords:    maxWords,
 		})
 	})
 
 	// Judge
 	add("final_verdict", "Judge's Verdict", func(ctx context.Context, _ turnInput) (*agent.Agent, error) {
-		return philosopher.MakeJudge(ctx, a, b, numRounds, models.Judge)
+		return philosopher.MakeJudge(ctx, a, b, numRounds, model)
 	})
 
 	return steps

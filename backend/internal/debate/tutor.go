@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/h-hmz/logos/internal/agent"
-	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/tutor"
 )
@@ -26,11 +25,11 @@ type TutorMessage struct {
 	Content string
 }
 
-// TutorRequest is the caller-supplied input to TutorExplain.
 type TutorRequest struct {
 	Selection string
 	TurnKey   string
 	History   []TutorMessage
+	Model     string
 }
 
 // TutorResult holds the clean tutor reply, any follow-up suggestions parsed
@@ -74,6 +73,10 @@ func (s *Service) TutorExplain(ctx context.Context, uid, debateID string, req Tu
 // provider-billed cost (Usage.CostUSD). Separated from quota bookkeeping so
 // admitGeneration/charge can wrap it uniformly with NextTurn.
 func (s *Service) runTutorExplain(ctx context.Context, debateID string, req TutorRequest) (TutorResult, float64, error) {
+	mdl, err := validateModel(req.Model)
+	if err != nil {
+		return TutorResult{}, 0, err
+	}
 	selection := strings.TrimSpace(req.Selection)
 	if selection == "" {
 		return TutorResult{}, 0, validationErr("selection is empty")
@@ -142,9 +145,9 @@ func (s *Service) runTutorExplain(ctx context.Context, debateID string, req Tuto
 		}
 	}
 
-	// The tutor is not a debate-pipeline role; it always runs on the live
-	// Default Model rather than anything stored on the debate.
-	tutorAgent, err := tutor.MakeTutor(ctx, config.DefaultModel())
+	// The tutor is not a debate-pipeline role; it runs on the model the caller
+	// supplied for this request (validated above).
+	tutorAgent, err := tutor.MakeTutor(ctx, mdl)
 	if err != nil {
 		return TutorResult{}, 0, fmt.Errorf("make tutor: %w", err)
 	}
@@ -161,6 +164,9 @@ func (s *Service) runTutorExplain(ctx context.Context, debateID string, req Tuto
 
 	result, err := tutorAgent.Run(ctx, agent.State{}, userText, nil)
 	if err != nil {
+		if agent.IsProviderAuthError(err) {
+			return TutorResult{}, 0, fmt.Errorf("%w: %v", ErrProviderAuth, err)
+		}
 		return TutorResult{}, 0, fmt.Errorf("tutor: %w", err)
 	}
 

@@ -156,3 +156,13 @@ func isRetryable(err error) bool {
 	}
 	return false
 }
+
+// IsProviderAuthError reports whether err is the upstream LLM provider rejecting
+// our credentials (HTTP 401/403) — e.g. a missing, invalid, or expired LLM_API_KEY.
+func IsProviderAuthError(err error) bool {
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == 401 || apiErr.StatusCode == 403
+	}
+	return false
+}

@@ -190,7 +190,19 @@ function AppInner() {
 
   const debateId = debate?.id
 
-  if (firebaseEnabled && !loading && !user) {
+  // While Firebase is restoring the session (notably on a page refresh), render
+  // no content. Mounting pages now would fire API calls before auth.currentUser
+  // is ready, sending the dev-fallback bearer token that the backend's real
+  // verifier rejects with a 401.
+  if (firebaseEnabled && loading) {
+    return (
+      <div className="app">
+        <Masthead route={route} debateId={debateId} navigate={navigate} theme={theme} onToggleTheme={toggleTheme} />
+      </div>
+    )
+  }
+
+  if (firebaseEnabled && !user) {
     return (
       <div className="app">
         <Masthead route={route} debateId={debateId} navigate={navigate} theme={theme} onToggleTheme={toggleTheme} />

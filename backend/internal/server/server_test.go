@@ -82,26 +82,6 @@ func TestListPhilosophers(t *testing.T) {
 	}
 }
 
-func TestListModels(t *testing.T) {
-	_, _, h := testServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/models", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	var got []map[string]any
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("got %d models, want 3: %v", len(got), got)
-	}
-	if _, ok := got[0]["id"]; !ok {
-		t.Fatalf("model item missing \"id\" field: %v", got[0])
-	}
-}
-
 func TestCreateDebate_InvalidJSON(t *testing.T) {
 	_, _, h := testServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/debates", strings.NewReader("not json"))
@@ -123,7 +103,6 @@ func TestCreateDebate_ValidationErrors(t *testing.T) {
 		{"same debater", map[string]any{"topic": "t", "debater_a": "Kant", "debater_b": "Kant"}},
 		{"empty topic", map[string]any{"topic": "", "debater_a": "Socrates", "debater_b": "Kant"}},
 		{"bad rounds", map[string]any{"topic": "t", "debater_a": "Socrates", "debater_b": "Kant", "num_rounds": 99}},
-		{"unauthorized model_a", map[string]any{"topic": "t", "debater_a": "Socrates", "debater_b": "Kant", "model_a": "openai/gpt-4o"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,52 +181,6 @@ func TestCreateDebate_StampsOwner(t *testing.T) {
 	}
 }
 
-// TestDebate_ReturnsDebaterModels verifies the resolved per-debater model
-// surfaces in both the create and get responses: a caller-picked model on
-// debater A, the Default Model (test-model) on the unpicked debater B.
-func TestDebate_ReturnsDebaterModels(t *testing.T) {
-	_, _, h := testServer(t)
-	body, _ := json.Marshal(map[string]any{
-		"topic":     "free will",
-		"debater_a": "Socrates",
-		"debater_b": "Kant",
-		"model_a":   "z-ai/glm-4.6", // an authorized Debater Model
-	})
-	req := httptest.NewRequest(http.MethodPost, "/debates", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 — body: %s", rr.Code, rr.Body.String())
-	}
-	var created createDebateResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create: %v", err)
-	}
-	if created.DebaterA.Model != "z-ai/glm-4.6" {
-		t.Errorf("create DebaterA.Model = %q, want %q", created.DebaterA.Model, "z-ai/glm-4.6")
-	}
-	if created.DebaterB.Model != "test-model" {
-		t.Errorf("create DebaterB.Model = %q, want %q (default)", created.DebaterB.Model, "test-model")
-	}
-
-	// The same models must survive a round-trip through GET /debates/{id}.
-	getReq := httptest.NewRequest(http.MethodGet, "/debates/"+created.ID, nil)
-	getRR := httptest.NewRecorder()
-	h.ServeHTTP(getRR, getReq)
-	if getRR.Code != http.StatusOK {
-		t.Fatalf("get status = %d, want 200 — body: %s", getRR.Code, getRR.Body.String())
-	}
-	var got getDebateResponse
-	if err := json.Unmarshal(getRR.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode get: %v", err)
-	}
-	if got.DebaterA.Model != "z-ai/glm-4.6" || got.DebaterB.Model != "test-model" {
-		t.Errorf("get models = (%q, %q), want (%q, %q)",
-			got.DebaterA.Model, got.DebaterB.Model, "z-ai/glm-4.6", "test-model")
-	}
-}
-
 // TestGetDebate_ReturnsPerTurnUsage verifies a completed step's per-turn input/
 // output tokens and cost surface in GET /debates/{id}, so the live transcript
 // can label each turn. Regression guard: GetSession once dropped the per-turn
@@ -316,6 +249,75 @@ func TestNextTurn_NonOwnerForbidden(t *testing.T) {
 	}
 }
 
+// TestRetryTurn_Gates exercises the retry endpoint's pre-generation rejections
+// through the router, verifying each maps to the right status: 404 for an
+// unknown debate, 403 for a non-owner, 400 for an empty debate and a missing
+// step_key, and 409 when the named step is not the current last record. All
+// return before any model call. The noop verifier yields UID "dev-local".
+func TestRetryTurn_Gates(t *testing.T) {
+	seedRetry := func(t *testing.T, repo *debate.MemoryRepo, owner string, records ...debate.StepRecord) {
+		t.Helper()
+		err := repo.Create(context.Background(), &debate.Persisted{
+			ID: "d1", OwnerUID: owner,
+			DebaterAName: "Socrates", DebaterBName: "Kant",
+			NumRounds: 1, MaxWords: 100, StepRecords: records,
+		})
+		if err != nil {
+			t.Fatalf("repo.Create: %v", err)
+		}
+	}
+	post := func(t *testing.T, h http.Handler, target, body string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	t.Run("unknown debate is 404", func(t *testing.T) {
+		_, _, h := testServer(t)
+		if code := post(t, h, "/debates/nope/retry", `{"step_key":"moderator_intro"}`); code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", code)
+		}
+	})
+
+	t.Run("non-owner is 403", func(t *testing.T) {
+		_, repo, h := testServer(t)
+		seedRetry(t, repo, "someone-else", debate.StepRecord{Key: "moderator_intro", Content: "Welcome."})
+		if code := post(t, h, "/debates/d1/retry", `{"step_key":"moderator_intro"}`); code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", code)
+		}
+	})
+
+	t.Run("empty debate is 400", func(t *testing.T) {
+		_, repo, h := testServer(t)
+		seedRetry(t, repo, "dev-local") // no completed steps
+		if code := post(t, h, "/debates/d1/retry", `{"step_key":"moderator_intro"}`); code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", code)
+		}
+	})
+
+	t.Run("missing step_key is 400", func(t *testing.T) {
+		_, repo, h := testServer(t)
+		seedRetry(t, repo, "dev-local", debate.StepRecord{Key: "moderator_intro", Content: "Welcome."})
+		if code := post(t, h, "/debates/d1/retry", `{}`); code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", code)
+		}
+	})
+
+	t.Run("non-last step is 409", func(t *testing.T) {
+		_, repo, h := testServer(t)
+		seedRetry(t, repo, "dev-local",
+			debate.StepRecord{Key: "moderator_intro", Content: "Welcome."},
+			debate.StepRecord{Key: "socrates_r1", Content: "My opening."},
+		)
+		if code := post(t, h, "/debates/d1/retry", `{"step_key":"moderator_intro"}`); code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", code)
+		}
+	})
+}
+
 // TestRequestBodyClosed verifies the fix for issue #1: handlers must close
 // r.Body after reading. Regression guard.
 func TestRequestBodyClosed(t *testing.T) {
@@ -337,4 +339,3 @@ type trackedBody struct {
 }
 
 func (t *trackedBody) Close() error { t.closed = true; return nil }
-

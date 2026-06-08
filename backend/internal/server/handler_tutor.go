@@ -20,6 +20,7 @@ type tutorRequest struct {
 	Selection string         `json:"selection"`
 	TurnKey   string         `json:"turn_key"`
 	History   []tutorMessage `json:"history"`
+	Model     string         `json:"model"`
 }
 
 type tutorResponse struct {
@@ -48,6 +49,7 @@ func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 		Selection: req.Selection,
 		TurnKey:   req.TurnKey,
 		History:   history,
+		Model:     req.Model,
 	})
 	if err != nil {
 		writeServiceError(r.Context(), w, err)

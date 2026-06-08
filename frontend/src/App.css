@@ -250,6 +250,13 @@ button { font-family: inherit; }
 .corner .body .model-pick select:focus { outline: none; border-color: var(--accent); }
 .corner.empty .empty-msg { margin: auto; text-align: center; color: var(--ink-soft); font-style: italic; font-size: 17px; }
 
+/* Referee model picker (one model for moderator/critic/judge), below the corners. */
+.referee-model { margin-top: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.referee-model label { font-family: var(--sc); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-soft); }
+.referee-model select { font-family: var(--mono); font-size: 11px; padding: 6px 10px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); cursor: pointer; }
+.referee-model select:focus { outline: none; border-color: var(--accent); }
+[data-theme="dark"] .referee-model select { color-scheme: dark; }
+
 .versus {
   align-self: center; font-family: var(--serif-d); font-style: italic; font-weight: 500;
   font-size: 40px; color: var(--accent); padding: 0 6px;
@@ -487,6 +494,41 @@ button { font-family: inherit; }
   background: rgba(176,74,42,0.08); border: 1px solid var(--accent);
   color: var(--accent-ink); font-family: var(--serif); font-size: 15px;
 }
+
+/* retry affordance under the last completed step — a quiet right-aligned link.
+   For debater turns it mirrors the turn's two-column grid so the link lands at
+   the right edge of the speaker's column (flipped for B); for referee curtains
+   it spans full width and aligns to the panel's right edge. */
+.step-retry { margin: -14px 0 16px; }
+.step-retry.full { display: flex; justify-content: flex-end; }
+.step-retry.turn-aligned { display: grid; grid-template-columns: 140px 1fr; gap: 28px; }
+.step-retry.turn-aligned .retry-cell { grid-column: 2; display: flex; justify-content: flex-end; }
+.step-retry.turn-aligned.b { direction: rtl; }
+.step-retry.turn-aligned.b > * { direction: ltr; }
+.retry-controls { position: relative; display: inline-flex; align-items: center; gap: 10px; }
+.retry-link {
+  background: none; border: none; padding: 4px 2px; cursor: pointer;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--ink-soft);
+  transition: color .12s ease;
+}
+.retry-link:hover:not(:disabled) { color: var(--accent); }
+.retry-link:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Model menu revealed by clicking the retry link — opens upward, right-aligned
+   to the link; each item re-rolls the step on that model. */
+.retry-menu {
+  position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 20;
+  min-width: 190px; background: var(--panel); border: 1px solid var(--rule);
+  box-shadow: 0 8px 30px rgba(26, 22, 18, 0.16); padding: 6px;
+}
+[data-theme="dark"] .retry-menu { box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5); }
+.retry-menu-head { font-family: var(--sc); letter-spacing: 0.18em; text-transform: uppercase; font-size: 10px; color: var(--ink-soft); padding: 4px 8px 6px; }
+.retry-menu-item {
+  display: block; width: 100%; text-align: left; background: none; border: none;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-2); padding: 7px 8px; cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.retry-menu-item:hover { background: var(--bg-2); color: var(--accent-ink); }
+.retry-menu-item .cur { color: var(--ink-soft); }
 
 /* ============ Verdict ============ */
 .verdict-hero {
@@ -793,6 +835,9 @@ button { font-family: inherit; }
   .setup-footer { flex-direction: column; align-items: stretch; }
   .archive-strip { grid-template-columns: 1fr 1fr; }
   .turn { grid-template-columns: 1fr; }
+  /* The turn no longer has a speaker column to align to, so the retry link falls
+     back to a plain right-align (dropping the grid + B's rtl mirroring). */
+  .step-retry.turn-aligned { display: flex; justify-content: flex-end; direction: ltr; gap: 0; }
   .turn .who { text-align: left; display: flex; gap: 12px; align-items: center; position: static; }
   .turn .who .bust { width: 56px; margin: 0; }
   .curtain { margin: 20px -20px; padding: 28px 20px; }
