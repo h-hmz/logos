@@ -99,6 +99,10 @@ export interface TurnResult {
   turn_cost_usd: number
   total_input_tokens: number
   total_output_tokens: number
+  // Generation latency in milliseconds: time to first streamed token and total
+  // duration. ttft falls back to the duration for single-payload steps.
+  turn_ttft_ms: number
+  turn_duration_ms: number
   // The owner's interjection that conditioned this turn, echoed for rendering.
   interjection?: string
   // The model that produced this step. A retry may run on a different model than
@@ -117,9 +121,13 @@ export interface CreateDebateParams {
 // MODELS is the authorized model allowlist, mirrored from the backend
 // (backend/internal/models/models.go).
 export const MODELS = [
-  'deepseek/deepseek-v4-pro',
   'qwen/qwen3-235b-a22b-2507',
-  'z-ai/glm-4.6',
+	'deepseek/deepseek-v4-pro',
+	'z-ai/glm-4.5-air',
+	'google/gemini-3-flash-preview',
+	'openai/gpt-5.4-mini',
+	'z-ai/glm-5',
+	'openai/gpt-5.5',
 ] as const
 
 // DEFAULT_MODEL is the client-side default a debate starts every role on, until
@@ -151,6 +159,15 @@ export function formatCostUSD(usd: number): string {
   if (usd < 0.0001) return '<$0.0001'
   if (usd < 0.01) return `$${usd.toFixed(4)}`
   return `$${usd.toFixed(2)}`
+}
+
+// formatDuration renders a generation latency (milliseconds) in human units:
+// sub-second values stay in whole milliseconds, a second or more reads in
+// seconds with one decimal. Non-positive input (unmeasured) renders as a dash.
+export function formatDuration(ms: number): string {
+  if (ms <= 0) return '—'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
 }
 
 // ── API ────────────────────────────────────────────────────────────────────────

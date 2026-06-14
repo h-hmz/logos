@@ -21,7 +21,7 @@ import (
 // The same client is reused for every generate call.
 type openAICompatLLM struct {
 	client openai.Client
-	id     string
+	model  string
 }
 
 func newOpenAICompatLLM(modelID string) (*openAICompatLLM, error) {
@@ -32,40 +32,39 @@ func newOpenAICompatLLM(modelID string) (*openAICompatLLM, error) {
 	c := openai.NewClient(
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL(config.LLMBaseURL()),
-		// OpenRouter-specific attribution headers; harmless for other
-		// OpenAI-compatible providers (they ignore unknown headers).
+		// OpenRouter-specific attribution headers; harmless for other providers
 		option.WithHeader("HTTP-Referer", "https://github.com/h-hmz/logos"),
 		option.WithHeader("X-Title", "Logos"),
 	)
-	return &openAICompatLLM{client: c, id: modelID}, nil
+	return &openAICompatLLM{client: c, model: modelID}, nil
 }
 
-func (m *openAICompatLLM) name() string { return m.id }
+func (m *openAICompatLLM) name() string { return m.model }
 
 // generate runs a chat completion. Retries up to twice on transient failures
 // (5xx + 429) with a 250ms delay; non-retryable errors return immediately.
-func (m *openAICompatLLM) generate(ctx context.Context, req request, onToken func(string)) (string, Usage, error) {
+func (m *openAICompatLLM) generate(ctx context.Context, req request, onToken func(string)) (string, RunMetrics, error) {
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		text, usage, err := m.generateOnce(ctx, req, onToken)
+		text, metrics, err := m.generateOnce(ctx, req, onToken)
 		if err == nil {
-			return text, usage, nil
+			return text, metrics, nil
 		}
 		if !isRetryable(err) || attempt == maxAttempts {
-			return "", Usage{}, err
+			return "", RunMetrics{}, err
 		}
 		lastErr = err
 		select {
 		case <-ctx.Done():
-			return "", Usage{}, ctx.Err()
+			return "", RunMetrics{}, ctx.Err()
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	return "", Usage{}, lastErr
+	return "", RunMetrics{}, lastErr
 }
 
-func (m *openAICompatLLM) generateOnce(ctx context.Context, req request, onToken func(string)) (string, Usage, error) {
+func (m *openAICompatLLM) generateOnce(ctx context.Context, req request, onToken func(string)) (string, RunMetrics, error) {
 	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.messages))
 	for _, mm := range req.messages {
 		switch mm.role {
@@ -74,12 +73,12 @@ func (m *openAICompatLLM) generateOnce(ctx context.Context, req request, onToken
 		case roleUser:
 			msgs = append(msgs, openai.UserMessage(mm.content))
 		default:
-			return "", Usage{}, fmt.Errorf("agent: unknown role %q", mm.role)
+			return "", RunMetrics{}, fmt.Errorf("agent: unknown role %q", mm.role)
 		}
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:    m.id,
+		Model:    m.model,
 		Messages: msgs,
 	}
 	if req.maxCompletionTokens > 0 {
@@ -131,19 +130,19 @@ func (m *openAICompatLLM) generateOnce(ctx context.Context, req request, onToken
 	}
 
 	if err := stream.Err(); err != nil {
-		return "", Usage{}, fmt.Errorf("openai-compat: %w", err)
+		return "", RunMetrics{}, fmt.Errorf("openai-compat: %w", err)
 	}
 
 	if len(acc.Choices) == 0 {
-		return "", Usage{}, errors.New("openai-compat: empty choices")
+		return "", RunMetrics{}, errors.New("openai-compat: empty choices")
 	}
 
-	usage := Usage{
+	metrics := RunMetrics{
 		InputTokens:  int(acc.Usage.PromptTokens),
 		OutputTokens: int(acc.Usage.CompletionTokens),
 		CostUSD:      costUSD,
 	}
-	return acc.Choices[0].Message.Content, usage, nil
+	return acc.Choices[0].Message.Content, metrics, nil
 }
 
 // isRetryable reports whether an openai-go error should be retried.

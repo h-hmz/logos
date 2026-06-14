@@ -28,17 +28,9 @@ type JSONSchema struct {
 	Schema map[string]any // the JSON Schema document
 }
 
-// Usage reports token and cost accounting for one Run call. A zero Usage means the
-// provider did not report usage.
-type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	CostUSD      float64
-}
-
 // llm is the provider-agnostic chat interface. The production implementation
 // is openAICompatLLM (see openai_compat.go).
 type llm interface {
 	name() string
-	generate(ctx context.Context, req request, onToken func(string)) (string, Usage, error)
+	generate(ctx context.Context, req request, onToken func(string)) (string, RunMetrics, error)
 }

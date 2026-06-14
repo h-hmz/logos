@@ -58,7 +58,7 @@ func roleFromAgentName(name string) string {
 	}
 }
 
-func (i *instrumentedLLM) generate(ctx context.Context, req request, onToken func(string)) (string, Usage, error) {
+func (i *instrumentedLLM) generate(ctx context.Context, req request, onToken func(string)) (string, RunMetrics, error) {
 	ensureInstruments()
 	startT := time.Now()
 	model := i.inner.name()
@@ -78,7 +78,7 @@ func (i *instrumentedLLM) generate(ctx context.Context, req request, onToken fun
 		}
 	}
 
-	text, usage, err := i.inner.generate(ctx, req, wrappedOnToken)
+	text, metrics, err := i.inner.generate(ctx, req, wrappedOnToken)
 	dur := time.Since(startT)
 	durMs := dur.Milliseconds()
 	if ttft == 0 {
@@ -101,32 +101,36 @@ func (i *instrumentedLLM) generate(ctx context.Context, req request, onToken fun
 				attribute.String("error_class", class),
 			))
 		}
-		return text, usage, err
+		return text, metrics, err
 	}
+
+	// Carry the latency onto the metrics so callers can surface it without re-measuring.
+	metrics.TTFTMillis = int(ttft.Milliseconds())
+	metrics.DurationMillis = int(durMs)
 
 	slog.LogAttrs(ctx, slog.LevelInfo, "llm_usage",
 		slog.String("event", "llm_usage"),
 		slog.String("model", model),
 		slog.String("role", role),
-		slog.Int("input_tokens", usage.InputTokens),
-		slog.Int("output_tokens", usage.OutputTokens),
-		slog.Float64("cost_usd", usage.CostUSD),
+		slog.Int("input_tokens", metrics.InputTokens),
+		slog.Int("output_tokens", metrics.OutputTokens),
+		slog.Float64("cost_usd", metrics.CostUSD),
 		slog.Int64("duration_ms", durMs),
 		slog.Int64("ttft_ms", ttft.Milliseconds()),
 	)
 	if inputTokens != nil {
-		inputTokens.Add(ctx, int64(usage.InputTokens), attrs)
+		inputTokens.Add(ctx, int64(metrics.InputTokens), attrs)
 	}
 	if outputTokens != nil {
-		outputTokens.Add(ctx, int64(usage.OutputTokens), attrs)
+		outputTokens.Add(ctx, int64(metrics.OutputTokens), attrs)
 	}
 	if llmCost != nil {
-		llmCost.Add(ctx, usage.CostUSD, attrs)
+		llmCost.Add(ctx, metrics.CostUSD, attrs)
 	}
 	if ttftSeconds != nil {
 		ttftSeconds.Record(ctx, ttft.Seconds(), attrs)
 	}
-	return text, usage, nil
+	return text, metrics, nil
 }
 
 // classifyLLMError maps an error from the underlying llm into a stable, low-

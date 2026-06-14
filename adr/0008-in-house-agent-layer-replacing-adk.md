@@ -79,17 +79,17 @@ type Request struct {
     Messages []Message
     Tools    []Tool          // empty today; reserved for RAG
 }
-type Usage struct { InputTokens, OutputTokens int }
+type RunMetrics struct { InputTokens, OutputTokens int }
 type Chunk struct {
     Delta         string
     ToolCallDelta *ToolCall
-    Usage         *Usage
+    Metrics       *RunMetrics
     Done          bool
 }
 
 type LLM interface {
     Name() string
-    Generate(ctx context.Context, req Request, onChunk func(Chunk) error) (string, []ToolCall, *Usage, error)
+    Generate(ctx context.Context, req Request, onChunk func(Chunk) error) (string, []ToolCall, *RunMetrics, error)
 }
 ```
 
@@ -146,10 +146,10 @@ unit-tested.
 ### 5. Streaming and usage
 
 `Generate` collapses ADK's `iter.Seq2[Event, error]` into a plain-Go
-`(text, toolCalls, usage, error)` return plus an `onChunk` callback.
+`(text, toolCalls, metrics, error)` return plus an `onChunk` callback.
 Same SSE behaviour at the HTTP boundary: `onChunk` fires only on
 delta tokens; the consolidated final text is returned, never
-streamed to the client. Usage lands on the terminal chunk via
+streamed to the client. RunMetrics lands on the terminal chunk via
 OpenAI's `stream_options.include_usage=true`.
 
 ## Consequences

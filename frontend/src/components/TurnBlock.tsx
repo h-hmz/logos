@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { formatCostUSD } from '../api'
+import { formatCostUSD, formatDuration } from '../api'
 import { useZen } from '../ZenContext'
 import { type EnrichedPhilosopher } from '../philosopher-meta'
 import { stripTTSTags, stripTTSTagsStreaming } from '../ttsTags'
@@ -28,6 +28,9 @@ interface TurnBlockProps {
   tokens: number
   inputTokens: number
   costUSD: number
+  // Generation latency in milliseconds: time to first token and total duration.
+  ttftMs: number
+  durationMs: number
   active: boolean
   error?: string
   debateId?: string
@@ -47,6 +50,8 @@ export function TurnBlock({
   tokens,
   inputTokens,
   costUSD,
+  ttftMs,
+  durationMs,
   active,
   error,
   debateId,
@@ -87,6 +92,13 @@ export function TurnBlock({
             {costUSD > 0 && (
               <div className="cost" title="provider-billed cost for this turn">
                 {formatCostUSD(costUSD)}
+              </div>
+            )}
+            {durationMs > 0 && (
+              <div className="timing" title="time to first token → total generation time">
+                {ttftMs > 0 && ttftMs < durationMs
+                  ? `${formatDuration(ttftMs)} → ${formatDuration(durationMs)}`
+                  : formatDuration(durationMs)}
               </div>
             )}
           </div>

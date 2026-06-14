@@ -18,6 +18,10 @@ export interface TurnBuffer {
   tokens: number
   inputTokens: number
   costUSD: number
+  // Generation latency in milliseconds from the server: time to first token and
+  // total duration. Zero until the turn completes.
+  ttftMs: number
+  durationMs: number
   streaming: boolean
   error?: string
   // The owner's interjection that steered this turn, if any — stashed at turn
@@ -72,6 +76,8 @@ export function useDebatePlayback(
         tokens: t.turn_output_tokens ?? 0,
         inputTokens: t.turn_input_tokens ?? 0,
         costUSD: t.turn_cost_usd ?? 0,
+        ttftMs: t.turn_ttft_ms ?? 0,
+        durationMs: t.turn_duration_ms ?? 0,
         streaming: false,
         interjection: t.interjection,
         model: t.model,
@@ -127,6 +133,7 @@ export function useDebatePlayback(
         ...prev,
         [stepIndex]: {
           text: '', done: false, tokens: 0, inputTokens: 0, costUSD: 0,
+          ttftMs: 0, durationMs: 0,
           streaming: true, interjection: note ?? prev[stepIndex]?.interjection,
           model: prev[stepIndex]?.model,
         },
@@ -134,7 +141,7 @@ export function useDebatePlayback(
       try {
         const result = await stream((chunk) => {
           setBuffers((prev) => {
-            const cur = prev[stepIndex] ?? { text: '', done: false, tokens: 0, inputTokens: 0, costUSD: 0, streaming: true }
+            const cur = prev[stepIndex] ?? { text: '', done: false, tokens: 0, inputTokens: 0, costUSD: 0, ttftMs: 0, durationMs: 0, streaming: true }
             return { ...prev, [stepIndex]: { ...cur, text: cur.text + chunk } }
           })
         })
@@ -146,6 +153,8 @@ export function useDebatePlayback(
             tokens: result.turn_output_tokens,
             inputTokens: result.turn_input_tokens,
             costUSD: result.turn_cost_usd,
+            ttftMs: result.turn_ttft_ms,
+            durationMs: result.turn_duration_ms,
             streaming: false,
             interjection: result.interjection ?? note,
             model: result.model,
@@ -181,6 +190,8 @@ export function useDebatePlayback(
               tokens: 0,
               inputTokens: 0,
               costUSD: 0,
+              ttftMs: 0,
+              durationMs: 0,
               streaming: false,
               error: msg,
               interjection: prev[stepIndex]?.interjection,

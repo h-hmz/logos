@@ -75,8 +75,8 @@ func buildGeminiPrompt(text, style string) string {
 // endpoint. Configured by default for OpenRouter (see ADR 0007),
 // overridable via LLM_BASE_URL.
 type openAICompatTTSClient struct {
-	inner openai.Client
-	model string
+	client openai.Client
+	model  string
 }
 
 func newOpenAICompatTTSClient(_ context.Context) (*openAICompatTTSClient, error) {
@@ -90,7 +90,7 @@ func newOpenAICompatTTSClient(_ context.Context) (*openAICompatTTSClient, error)
 		option.WithHeader("HTTP-Referer", "https://github.com/h-hmz/logos"),
 		option.WithHeader("X-Title", "Logos"),
 	)
-	return &openAICompatTTSClient{inner: c, model: config.TTSModel()}, nil
+	return &openAICompatTTSClient{client: c, model: config.TTSModel()}, nil
 }
 
 // Synthesize returns a self-contained WAV for the given text. voice
@@ -159,7 +159,7 @@ func (c *openAICompatTTSClient) synthesizeStream(
 			Voice:          openai.AudioSpeechNewParamsVoice(voice),
 			ResponseFormat: openai.AudioSpeechNewParamsResponseFormatPCM,
 		}
-		resp, err := c.inner.Audio.Speech.New(ctx, params)
+		resp, err := c.client.Audio.Speech.New(ctx, params)
 		if err != nil {
 			return fmt.Errorf("tts: %w", err)
 		}

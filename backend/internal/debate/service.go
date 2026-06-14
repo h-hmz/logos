@@ -224,20 +224,22 @@ func (s *Service) GetSession(ctx context.Context, id string) (*GetSessionResult,
 		meta := metas[i]
 		role := RoleForStep(meta.Key, a, b)
 		turns[i] = TurnResult{
-			Step:              meta,
-			AgentName:         meta.Key,
-			Role:              role,
-			Content:           p.StepRecords[i].Content,
-			StepIndex:         i,
-			TotalSteps:        total,
-			Done:              i+1 >= total,
-			TurnInputTokens:   p.StepRecords[i].InputTokens,
-			TurnOutputTokens:  p.StepRecords[i].OutputTokens,
-			TurnCostUSD:       p.StepRecords[i].CostUSD,
-			TotalInputTokens:  totalIn,
-			TotalOutputTokens: totalOut,
-			Interjection:      p.StepRecords[i].Interjection,
-			Model:             p.StepRecords[i].Model,
+			Step:               meta,
+			AgentName:          meta.Key,
+			Role:               role,
+			Content:            p.StepRecords[i].Content,
+			StepIndex:          i,
+			TotalSteps:         total,
+			Done:               i+1 >= total,
+			TurnInputTokens:    p.StepRecords[i].InputTokens,
+			TurnOutputTokens:   p.StepRecords[i].OutputTokens,
+			TurnCostUSD:        p.StepRecords[i].CostUSD,
+			TotalInputTokens:   totalIn,
+			TotalOutputTokens:  totalOut,
+			TurnTTFTMillis:     p.StepRecords[i].TTFTMillis,
+			TurnDurationMillis: p.StepRecords[i].DurationMillis,
+			Interjection:       p.StepRecords[i].Interjection,
+			Model:              p.StepRecords[i].Model,
 		}
 	}
 
@@ -334,20 +336,22 @@ func (s *Service) CreateDebate(ctx context.Context, uid string, in CreateDebateP
 
 // TurnResult is the domain-level outcome of advancing the debate by one step.
 type TurnResult struct {
-	Step              StepMeta
-	AgentName         string
-	Role              string
-	Content           string
-	StepIndex         int
-	TotalSteps        int
-	Done              bool
-	TurnInputTokens   int
-	TurnOutputTokens  int
-	TurnCostUSD       float64
-	TotalInputTokens  int
-	TotalOutputTokens int
-	Interjection      string
-	Model             string
+	Step               StepMeta
+	AgentName          string
+	Role               string
+	Content            string
+	StepIndex          int
+	TotalSteps         int
+	Done               bool
+	TurnInputTokens    int
+	TurnOutputTokens   int
+	TurnCostUSD        float64
+	TotalInputTokens   int
+	TotalOutputTokens  int
+	TurnTTFTMillis     int
+	TurnDurationMillis int
+	Interjection       string
+	Model              string
 }
 
 // NextTurn runs the next pipeline step for the given debate. uid is the
@@ -513,17 +517,21 @@ func (s *Service) runStep(ctx context.Context, base *Persisted, interjection, mo
 		return nil, 0, fmt.Errorf("agent run: %w", err)
 	}
 	content := result.Text
-	turnInput := result.Usage.InputTokens
-	turnOutput := result.Usage.OutputTokens
+	turnInput := result.Metrics.InputTokens
+	turnOutput := result.Metrics.OutputTokens
+	ttftMS := result.Metrics.TTFTMillis
+	durationMS := result.Metrics.DurationMillis
 
 	base.StepRecords = append(base.StepRecords, StepRecord{
-		Key:          curStep.Key,
-		Content:      content,
-		Model:        model,
-		Interjection: interjection,
-		InputTokens:  turnInput,
-		OutputTokens: turnOutput,
-		CostUSD:      result.Usage.CostUSD,
+		Key:            curStep.Key,
+		Content:        content,
+		Model:          model,
+		Interjection:   interjection,
+		InputTokens:    turnInput,
+		OutputTokens:   turnOutput,
+		CostUSD:        result.Metrics.CostUSD,
+		TTFTMillis:     ttftMS,
+		DurationMillis: durationMS,
 	})
 
 	if err := s.repo.Update(ctx, base); err != nil {
@@ -531,21 +539,23 @@ func (s *Service) runStep(ctx context.Context, base *Persisted, interjection, mo
 	}
 
 	return &TurnResult{
-		Step:              StepMeta{Key: curStep.Key, Label: curStep.Label},
-		AgentName:         ag.Name(),
-		Role:              role,
-		Content:           content,
-		StepIndex:         stepIndex,
-		TotalSteps:        TotalSteps(base.NumRounds),
-		Done:              base.Current() >= TotalSteps(base.NumRounds),
-		TurnInputTokens:   turnInput,
-		TurnOutputTokens:  turnOutput,
-		TurnCostUSD:       result.Usage.CostUSD,
-		TotalInputTokens:  base.TotalInputTokens(),
-		TotalOutputTokens: base.TotalOutputTokens(),
-		Interjection:      interjection,
-		Model:             model,
-	}, result.Usage.CostUSD, nil
+		Step:               StepMeta{Key: curStep.Key, Label: curStep.Label},
+		AgentName:          ag.Name(),
+		Role:               role,
+		Content:            content,
+		StepIndex:          stepIndex,
+		TotalSteps:         TotalSteps(base.NumRounds),
+		Done:               base.Current() >= TotalSteps(base.NumRounds),
+		TurnInputTokens:    turnInput,
+		TurnOutputTokens:   turnOutput,
+		TurnCostUSD:        result.Metrics.CostUSD,
+		TotalInputTokens:   base.TotalInputTokens(),
+		TotalOutputTokens:  base.TotalOutputTokens(),
+		TurnTTFTMillis:     ttftMS,
+		TurnDurationMillis: durationMS,
+		Interjection:       interjection,
+		Model:              model,
+	}, result.Metrics.CostUSD, nil
 }
 
 // ── Shared domain helpers ──────────────────────────────────────────────────

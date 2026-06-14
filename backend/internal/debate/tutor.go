@@ -70,7 +70,7 @@ func (s *Service) TutorExplain(ctx context.Context, uid, debateID string, req Tu
 }
 
 // runTutorExplain performs the tutor generation and returns the result plus its
-// provider-billed cost (Usage.CostUSD). Separated from quota bookkeeping so
+// provider-billed cost (RunMetrics.CostUSD). Separated from quota bookkeeping so
 // admitGeneration/charge can wrap it uniformly with NextTurn.
 func (s *Service) runTutorExplain(ctx context.Context, debateID string, req TutorRequest) (TutorResult, float64, error) {
 	mdl, err := validateModel(req.Model)
@@ -171,7 +171,7 @@ func (s *Service) runTutorExplain(ctx context.Context, debateID string, req Tuto
 	}
 
 	cleanContent, suggestions := tutor.ParseSuggestions(result.Text)
-	return TutorResult{Content: cleanContent, Suggestions: suggestions}, result.Usage.CostUSD, nil
+	return TutorResult{Content: cleanContent, Suggestions: suggestions}, result.Metrics.CostUSD, nil
 }
 
 // speakerNameForKey maps a step key to the human-readable philosopher name

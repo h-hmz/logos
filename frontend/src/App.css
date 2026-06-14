@@ -379,6 +379,7 @@ button { font-family: inherit; }
 .turn .who .meta { font-family: var(--mono); font-size: 10px; color: var(--ink-soft); margin-top: 6px; }
 .turn .who .usage { font-family: var(--mono); font-size: 10px; color: var(--ink-soft); margin-top: 6px; line-height: 1.5; }
 .turn .who .usage .cost { color: var(--accent-ink); margin-top: 1px; }
+.turn .who .usage .timing { margin-top: 1px; }
 .turn .say { position: relative; }
 .turn .say .label-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .turn .say .label-row .round { font-family: var(--sc); font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--accent-ink); }

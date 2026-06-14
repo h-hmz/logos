@@ -146,21 +146,23 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 	}
 	for i, t := range res.Turns {
 		resp.Turns[i] = turnResult{
-			Key:               t.Step.Key,
-			Label:             t.Step.Label,
-			Author:            t.AgentName,
-			Role:              t.Role,
-			Content:           t.Content,
-			StepIndex:         t.StepIndex,
-			TotalSteps:        t.TotalSteps,
-			Done:              t.Done,
-			TurnInputTokens:   t.TurnInputTokens,
-			TurnOutputTokens:  t.TurnOutputTokens,
-			TurnCostUSD:       t.TurnCostUSD,
-			TotalInputTokens:  t.TotalInputTokens,
-			TotalOutputTokens: t.TotalOutputTokens,
-			Interjection:      t.Interjection,
-			Model:             t.Model,
+			Key:                t.Step.Key,
+			Label:              t.Step.Label,
+			Author:             t.AgentName,
+			Role:               t.Role,
+			Content:            t.Content,
+			StepIndex:          t.StepIndex,
+			TotalSteps:         t.TotalSteps,
+			Done:               t.Done,
+			TurnInputTokens:    t.TurnInputTokens,
+			TurnOutputTokens:   t.TurnOutputTokens,
+			TurnCostUSD:        t.TurnCostUSD,
+			TotalInputTokens:   t.TotalInputTokens,
+			TotalOutputTokens:  t.TotalOutputTokens,
+			TurnTTFTMillis:     t.TurnTTFTMillis,
+			TurnDurationMillis: t.TurnDurationMillis,
+			Interjection:       t.Interjection,
+			Model:              t.Model,
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -169,21 +171,23 @@ func (s *Server) getDebate(w http.ResponseWriter, r *http.Request) {
 // ── POST /debates/{debateID}/next ───────────────────────────────────────────
 
 type turnResult struct {
-	Key               string  `json:"key"`
-	Label             string  `json:"label"`
-	Author            string  `json:"author"`
-	Role              string  `json:"role"`
-	Content           string  `json:"content"`
-	StepIndex         int     `json:"step_index"`
-	TotalSteps        int     `json:"total_steps"`
-	Done              bool    `json:"done"`
-	TurnInputTokens   int     `json:"turn_input_tokens"`
-	TurnOutputTokens  int     `json:"turn_output_tokens"`
-	TurnCostUSD       float64 `json:"turn_cost_usd"`
-	TotalInputTokens  int     `json:"total_input_tokens"`
-	TotalOutputTokens int     `json:"total_output_tokens"`
-	Interjection      string  `json:"interjection,omitempty"`
-	Model             string  `json:"model,omitempty"`
+	Key                string  `json:"key"`
+	Label              string  `json:"label"`
+	Author             string  `json:"author"`
+	Role               string  `json:"role"`
+	Content            string  `json:"content"`
+	StepIndex          int     `json:"step_index"`
+	TotalSteps         int     `json:"total_steps"`
+	Done               bool    `json:"done"`
+	TurnInputTokens    int     `json:"turn_input_tokens"`
+	TurnOutputTokens   int     `json:"turn_output_tokens"`
+	TurnCostUSD        float64 `json:"turn_cost_usd"`
+	TotalInputTokens   int     `json:"total_input_tokens"`
+	TotalOutputTokens  int     `json:"total_output_tokens"`
+	TurnTTFTMillis     int     `json:"turn_ttft_ms"`
+	TurnDurationMillis int     `json:"turn_duration_ms"`
+	Interjection       string  `json:"interjection,omitempty"`
+	Model              string  `json:"model,omitempty"`
 }
 
 type nextTurnRequest struct {
@@ -348,20 +352,22 @@ func (s *Server) retryTurnSSE(w http.ResponseWriter, r *http.Request, uid, debat
 
 func toTurnResultPayload(res *debate.TurnResult) turnResult {
 	return turnResult{
-		Key:               res.Step.Key,
-		Label:             res.Step.Label,
-		Author:            res.AgentName,
-		Role:              res.Role,
-		Content:           res.Content,
-		StepIndex:         res.StepIndex,
-		TotalSteps:        res.TotalSteps,
-		Done:              res.Done,
-		TurnInputTokens:   res.TurnInputTokens,
-		TurnOutputTokens:  res.TurnOutputTokens,
-		TurnCostUSD:       res.TurnCostUSD,
-		TotalInputTokens:  res.TotalInputTokens,
-		TotalOutputTokens: res.TotalOutputTokens,
-		Interjection:      res.Interjection,
-		Model:             res.Model,
+		Key:                res.Step.Key,
+		Label:              res.Step.Label,
+		Author:             res.AgentName,
+		Role:               res.Role,
+		Content:            res.Content,
+		StepIndex:          res.StepIndex,
+		TotalSteps:         res.TotalSteps,
+		Done:               res.Done,
+		TurnInputTokens:    res.TurnInputTokens,
+		TurnOutputTokens:   res.TurnOutputTokens,
+		TurnCostUSD:        res.TurnCostUSD,
+		TotalInputTokens:   res.TotalInputTokens,
+		TotalOutputTokens:  res.TotalOutputTokens,
+		TurnTTFTMillis:     res.TurnTTFTMillis,
+		TurnDurationMillis: res.TurnDurationMillis,
+		Interjection:       res.Interjection,
+		Model:              res.Model,
 	}
 }

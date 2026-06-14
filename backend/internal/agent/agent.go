@@ -45,8 +45,20 @@ func (a *Agent) HasResponseFormat() bool { return a.cfg.ResponseFormat != nil }
 
 // RunResult bundles the outcome of one Run.
 type RunResult struct {
-	Text  string
-	Usage Usage
+	Text    string
+	Metrics RunMetrics
+}
+
+// RunMetrics is everything measured about one Run: provider-reported token
+// counts and cost, plus locally-measured latency in milliseconds. A zero value
+// means nothing was reported. Populated cooperatively — the provider call (in
+// llm.generate) fills tokens/cost, instrumentedLLM fills latency.
+type RunMetrics struct {
+	InputTokens    int
+	OutputTokens   int
+	CostUSD        float64
+	TTFTMillis     int
+	DurationMillis int
 }
 
 // Run resolves {key} placeholders in the instruction against state,
@@ -73,7 +85,7 @@ func (a *Agent) Run(ctx context.Context, state State, userMessage string, onToke
 
 	ctx = withAgentName(ctx, a.cfg.Name)
 
-	text, usage, err := m.generate(ctx, req, onToken)
+	text, metrics, err := m.generate(ctx, req, onToken)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -82,5 +94,5 @@ func (a *Agent) Run(ctx context.Context, state State, userMessage string, onToke
 		state[a.cfg.OutputKey] = text
 	}
 
-	return RunResult{Text: text, Usage: usage}, nil
+	return RunResult{Text: text, Metrics: metrics}, nil
 }

@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   MODELS,
   formatCostUSD,
+  formatDuration,
   parseStructured,
   type CriticFinding,
   type DebateModels,
@@ -33,14 +34,22 @@ interface Props {
 }
 
 // curtainMeta builds the footer line shown under a moderator/critic/judge
-// curtain: the step label, then this turn's output tokens and cost once the
-// generation has completed (both zero/absent while streaming). Zen mode drops
-// the token/cost tail, leaving just the label.
+// curtain: the step label, then this turn's output tokens, cost, and latency
+// once the generation has completed (all zero/absent while streaming). Latency
+// shows "first → total" when the step streamed (moderator), else just the total
+// (critic/judge arrive as a single payload). Zen mode drops the whole tail,
+// leaving just the label.
 function curtainMeta(label: string, buf: TurnBuffer, zen: boolean): string {
   let meta = `◆ ${label}`
   if (zen) return meta
   if (buf.tokens) meta += ` · ${buf.tokens.toLocaleString()} tok`
   if (buf.costUSD > 0) meta += ` · ${formatCostUSD(buf.costUSD)}`
+  if (buf.durationMs > 0) {
+    meta +=
+      buf.ttftMs > 0 && buf.ttftMs < buf.durationMs
+        ? ` · ${formatDuration(buf.ttftMs)} → ${formatDuration(buf.durationMs)}`
+        : ` · ${formatDuration(buf.durationMs)}`
+  }
   return meta
 }
 
@@ -286,6 +295,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 tokens={buf.tokens}
                 inputTokens={buf.inputTokens}
                 costUSD={buf.costUSD}
+                ttftMs={buf.ttftMs}
+                durationMs={buf.durationMs}
                 active={i === idx - 1 || (i === idx && buf.streaming)}
                 error={buf.error}
                 debateId={debate.id}

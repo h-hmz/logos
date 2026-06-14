@@ -54,13 +54,15 @@ type StepMeta struct {
 // corresponds to BuildStepMeta()[i], and len(StepRecords) is the number of
 // completed steps — i.e. the index of the next step to run (see Current).
 type StepRecord struct {
-	Key          string  `json:"key"           firestore:"key"`
-	Content      string  `json:"content"       firestore:"content"`
-	Model        string  `json:"model,omitempty" firestore:"model,omitempty"`
-	Interjection string  `json:"interjection,omitempty" firestore:"interjection,omitempty"`
-	InputTokens  int     `json:"input_tokens"  firestore:"input_tokens"`
-	OutputTokens int     `json:"output_tokens" firestore:"output_tokens"`
-	CostUSD      float64 `json:"cost_usd"      firestore:"cost_usd"`
+	Key            string  `json:"key"           firestore:"key"`
+	Content        string  `json:"content"       firestore:"content"`
+	Model          string  `json:"model,omitempty" firestore:"model,omitempty"`
+	Interjection   string  `json:"interjection,omitempty" firestore:"interjection,omitempty"`
+	InputTokens    int     `json:"input_tokens"  firestore:"input_tokens"`
+	OutputTokens   int     `json:"output_tokens" firestore:"output_tokens"`
+	CostUSD        float64 `json:"cost_usd"      firestore:"cost_usd"`
+	TTFTMillis     int     `json:"ttft_ms,omitempty"     firestore:"ttft_ms,omitempty"`
+	DurationMillis int     `json:"duration_ms,omitempty" firestore:"duration_ms,omitempty"`
 }
 
 // Persisted is the JSON-serializable state of a debate. It stores debater
