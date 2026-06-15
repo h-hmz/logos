@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -84,20 +86,75 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	key := tts.NarrationKey(debateID, text, voice, style, config.TTSModel())
+
+	// Serve a persisted narration if one exists. Fail-open: a store read error
+	// is logged and falls through to synthesis (ADR 0012).
+	if rc, ok, err := s.narrations.Open(ctx, key); err != nil {
+		slog.WarnContext(ctx, "tts: narration store read failed; synthesizing", "key", key, "error", err)
+	} else if ok {
+		defer rc.Close()
+		w.Header().Set("Content-Type", fmt.Sprintf("audio/L16;rate=%d;channels=1", tts.SampleRate))
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-TTS-Voice", voice)
+		w.Header().Set("X-TTS-Cache", "hit")
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, rc); err != nil {
+			slog.ErrorContext(ctx, "tts: cached narration stream interrupted", "key", key, "error", err)
+		}
+		return
+	}
+
+	// Miss: synthesize, teeing the PCM into a buffer so a complete clip can be
+	// persisted on success. The tee preserves http.Flusher for progressive
+	// playback — a plain io.MultiWriter would erase it.
+	var buf bytes.Buffer
+	tee := &teeFlushWriter{w: w, buf: &buf}
 	headerSent := false
 	onStart := func(rate int) {
 		w.Header().Set("Content-Type", fmt.Sprintf("audio/L16;rate=%d;channels=1", rate))
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-TTS-Voice", voice)
+		w.Header().Set("X-TTS-Cache", "miss")
 		w.WriteHeader(http.StatusOK)
 		headerSent = true
 	}
-	if err := tts.SynthesizeStream(ctx, text, voice, style, onStart, w); err != nil {
+	if err := tts.SynthesizeStream(ctx, text, voice, style, onStart, tee); err != nil {
 		if !headerSent {
 			slog.ErrorContext(ctx, "tts stream step failed", "step_key", req.StepKey, "error", err)
 			writeError(w, http.StatusBadGateway, "TTS synthesis failed")
 		} else {
 			slog.ErrorContext(ctx, "tts stream step interrupted mid-stream", "step_key", req.StepKey, "error", err)
 		}
+		return
+	}
+
+	// Persist best-effort: the client already has the audio, so a store failure
+	// must not affect the response (ADR 0012).
+	if err := s.narrations.Put(ctx, key, buf.Bytes()); err != nil {
+		slog.WarnContext(ctx, "tts: failed to persist narration", "key", key, "error", err)
+	}
+}
+
+// teeFlushWriter writes streamed PCM to the client and mirrors it into buf for
+// persistence, while preserving the http.Flusher that tts.SynthesizeStream uses
+// for progressive playback — a plain io.MultiWriter would erase the Flusher and
+// silently buffer the response.
+type teeFlushWriter struct {
+	w   http.ResponseWriter
+	buf *bytes.Buffer
+}
+
+func (t *teeFlushWriter) Write(p []byte) (int, error) {
+	n, err := t.w.Write(p)
+	if n > 0 {
+		t.buf.Write(p[:n])
+	}
+	return n, err
+}
+
+func (t *teeFlushWriter) Flush() {
+	if f, ok := t.w.(http.Flusher); ok {
+		f.Flush()
 	}
 }

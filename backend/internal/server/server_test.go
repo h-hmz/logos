@@ -37,7 +37,7 @@ func testServer(t *testing.T) (*Server, *debate.MemoryRepo, http.Handler) {
 		philMap:      philMap,
 		svc:          debate.NewService(repo, philMap),
 	}
-	router := New(phils, repo, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, nil)
+	router := New(phils, repo, nil, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, nil)
 	// Existing handler tests predate auth; inject a bearer so the noop verifier
 	// accepts them. Dedicated 401 coverage lives in auth_test.go.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -20,6 +20,7 @@ import (
 	"github.com/h-hmz/logos/internal/quota"
 	"github.com/h-hmz/logos/internal/server"
 	"github.com/h-hmz/logos/internal/telemetry"
+	"github.com/h-hmz/logos/internal/tts"
 )
 
 func main() {
@@ -130,6 +131,10 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("storage: %w", err)
 	}
+	narrations, err := buildNarrationStore(ctx)
+	if err != nil {
+		return fmt.Errorf("narration storage: %w", err)
+	}
 	verifier, err := buildVerifier(ctx)
 	if err != nil {
 		return fmt.Errorf("auth: %w", err)
@@ -161,7 +166,7 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("quota: %w", err)
 	}
-	router := server.New(philosophers, repo, verifier, allowlist, corsOrigins, quotaDeps)
+	router := server.New(philosophers, repo, narrations, verifier, allowlist, corsOrigins, quotaDeps)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -263,6 +268,37 @@ func buildRepo(ctx context.Context) (debate.Repository, error) {
 		}
 		slog.Info("storage: firestore", "project", projectID, "database", dbLabel, "collection", collection)
 		return repo, nil
+	default:
+		return nil, fmt.Errorf("unknown STORAGE_BACKEND=%q (want memory|firestore)", backend)
+	}
+}
+
+// buildNarrationStore selects the tts.NarrationStore implementation. It is gated
+// on TTS_ENABLED (returns nil when TTS is off — the /tts handler 503s before the
+// store is touched) and otherwise follows the same STORAGE_BACKEND as debates:
+// in-memory for dev, GCS for Cloud Run. STORAGE_BACKEND=firestore requires
+// TTS_BUCKET. See ADR 0012.
+func buildNarrationStore(ctx context.Context) (tts.NarrationStore, error) {
+	if !config.TTSEnabled() {
+		slog.Warn("narration storage: disabled (TTS_ENABLED not set)")
+		return nil, nil
+	}
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("STORAGE_BACKEND")))
+	switch backend {
+	case "", "memory":
+		slog.Info("narration storage: in-memory")
+		return tts.NewMemoryNarrationStore(), nil
+	case "firestore":
+		bucket := config.TTSBucket()
+		if bucket == "" {
+			return nil, fmt.Errorf("STORAGE_BACKEND=firestore with TTS_ENABLED requires TTS_BUCKET")
+		}
+		store, err := tts.NewGCSNarrationStore(ctx, bucket)
+		if err != nil {
+			return nil, err
+		}
+		slog.Info("narration storage: gcs", "bucket", bucket)
+		return store, nil
 	default:
 		return nil, fmt.Errorf("unknown STORAGE_BACKEND=%q (want memory|firestore)", backend)
 	}

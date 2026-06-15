@@ -13,6 +13,7 @@ import (
 var (
 	ttsEnabled      bool
 	ttsModel        string
+	ttsBucket       string // GCS bucket for persisted narrations (STORAGE_BACKEND=firestore)
 	llmAPIKey       string
 	llmBaseURL      string
 	gcpProject      string // runtime GCP project: Firestore + Cloud Logging trace links
@@ -57,6 +58,7 @@ func Load(envPath string) error {
 	if ttsModel == "" {
 		ttsModel = defaultTTSModel
 	}
+	ttsBucket = os.Getenv("TTS_BUCKET")
 	quotaEnabled = strings.EqualFold(os.Getenv("QUOTA_ENABLED"), "TRUE")
 	quotaLimitUSD = DefaultQuotaLimitUSD
 	if raw := strings.TrimSpace(os.Getenv("QUOTA_USD_LIMIT")); raw != "" {
@@ -72,6 +74,11 @@ func Load(envPath string) error {
 
 func TTSEnabled() bool { return ttsEnabled }
 func TTSModel() string { return ttsModel }
+
+// TTSBucket returns the GCS bucket name for persisted narrations (TTS_BUCKET).
+// Empty unless audio persistence is configured; required when
+// STORAGE_BACKEND=firestore and TTS is enabled (see main.buildNarrationStore).
+func TTSBucket() string { return ttsBucket }
 
 // LLMAPIKey returns the API key for the OpenAI-compatible LLM
 // provider configured via LLM_BASE_URL (OpenRouter by default).

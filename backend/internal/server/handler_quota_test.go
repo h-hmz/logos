@@ -37,7 +37,7 @@ func quotaTestServer(t *testing.T, limit float64) (*quota.MemoryStore, http.Hand
 		DefaultLimitUSD: limit,
 		InFlight:        quota.NewInFlight(),
 	}
-	router := New(phils, debate.NewMemoryRepo(), auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, deps)
+	router := New(phils, debate.NewMemoryRepo(), nil, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, deps)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" {
 			r.Header.Set("Authorization", "Bearer test")
@@ -101,7 +101,7 @@ func TestGetQuota_DisabledReportsUnlimited(t *testing.T) {
 	if err := config.Load(""); err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	router := New(phils, debate.NewMemoryRepo(), auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, nil)
+	router := New(phils, debate.NewMemoryRepo(), nil, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, nil)
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set("Authorization", "Bearer test")
 		router.ServeHTTP(w, r)

@@ -14,6 +14,7 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/quota"
+	"github.com/h-hmz/logos/internal/tts"
 )
 
 // Server holds the shared state for the HTTP handlers. Debate orchestration
@@ -23,6 +24,7 @@ type Server struct {
 	philosophers []philosopher.Data
 	philMap      map[string]philosopher.Data
 	svc          *debate.Service
+	narrations   tts.NarrationStore
 }
 
 // QuotaDeps carries the per-user quota dependencies. Pass nil to New to disable
@@ -41,8 +43,9 @@ type QuotaDeps struct {
 // allowlist (auth.ParseAllowlist("*")) for local dev/tests. corsOrigins is the
 // list of browser origins permitted by CORS; pass nil/empty to default to the
 // local Vite dev origin. quotaDeps enables per-user quota enforcement; pass nil
-// to disable it.
-func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.Verifier, allow auth.Allowlist, corsOrigins []string, quotaDeps *QuotaDeps) *chi.Mux {
+// to disable it. narrations persists synthesized audio for replay; it is only
+// reached after the TTS-enabled check, so pass nil when TTS is disabled.
+func New(philosophers []philosopher.Data, repo debate.Repository, narrations tts.NarrationStore, verifier auth.Verifier, allow auth.Allowlist, corsOrigins []string, quotaDeps *QuotaDeps) *chi.Mux {
 	philMap := make(map[string]philosopher.Data, len(philosophers))
 	for _, p := range philosophers {
 		philMap[p.Name] = p
@@ -52,6 +55,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, verifier auth.
 		philosophers: philosophers,
 		philMap:      philMap,
 		svc:          svc,
+		narrations:   narrations,
 	}
 	if quotaDeps != nil {
 		svc.WithQuota(debate.QuotaConfig{

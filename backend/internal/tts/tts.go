@@ -5,9 +5,7 @@
 package tts
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"sync"
 )
@@ -17,48 +15,26 @@ import (
 // does not return a MIME header, so we hardcode it (per ADR 0002 rev).
 const geminiTTSSampleRate = 24000
 
+// SampleRate is the PCM sample rate (Hz) of every narration: Gemini TTS emits
+// 24 kHz, 16-bit, mono. Stored narrations are raw PCM at this rate, so a caller
+// serving a cached narration sets Content-Type audio/L16;rate=SampleRate.
+const SampleRate = geminiTTSSampleRate
+
 var (
-	sharedMu sync.Mutex
-	shared   *openAICompatTTSClient
+	clientOnce sync.Once
+	shared     *openAICompatTTSClient
+	sharedErr  error
 )
 
-// client returns the process-wide TTS client, constructing it on first
-// use. The factory runs exactly once; subsequent calls return the
-// cached client.
-func client(ctx context.Context) (*openAICompatTTSClient, error) {
-	sharedMu.Lock()
-	defer sharedMu.Unlock()
-	if shared != nil {
-		return shared, nil
-	}
-	c, err := newOpenAICompatTTSClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("tts: init client: %w", err)
-	}
-	shared = c
-	return shared, nil
-}
-
-// wrapWAV builds a RIFF/WAVE header around signed little-endian PCM samples.
-func wrapWAV(pcm []byte, sampleRate, channels, bitsPerSample int) []byte {
-	var buf bytes.Buffer
-	byteRate := sampleRate * channels * bitsPerSample / 8
-	blockAlign := channels * bitsPerSample / 8
-	dataLen := len(pcm)
-
-	buf.WriteString("RIFF")
-	binary.Write(&buf, binary.LittleEndian, uint32(36+dataLen))
-	buf.WriteString("WAVE")
-	buf.WriteString("fmt ")
-	binary.Write(&buf, binary.LittleEndian, uint32(16))
-	binary.Write(&buf, binary.LittleEndian, uint16(1)) // PCM
-	binary.Write(&buf, binary.LittleEndian, uint16(channels))
-	binary.Write(&buf, binary.LittleEndian, uint32(sampleRate))
-	binary.Write(&buf, binary.LittleEndian, uint32(byteRate))
-	binary.Write(&buf, binary.LittleEndian, uint16(blockAlign))
-	binary.Write(&buf, binary.LittleEndian, uint16(bitsPerSample))
-	buf.WriteString("data")
-	binary.Write(&buf, binary.LittleEndian, uint32(dataLen))
-	buf.Write(pcm)
-	return buf.Bytes()
+// client returns the process-wide TTS client.
+func client(_ context.Context) (*openAICompatTTSClient, error) {
+	clientOnce.Do(func() {
+		c, err := newOpenAICompatTTSClient(context.Background())
+		if err != nil {
+			sharedErr = fmt.Errorf("tts: init client: %w", err)
+			return
+		}
+		shared = c
+	})
+	return shared, sharedErr
 }

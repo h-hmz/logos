@@ -37,16 +37,6 @@ func NewFirestoreRepo(ctx context.Context, projectID, databaseID, collection str
 	return &FirestoreRepo{client: client, coll: client.Collection(collection)}, nil
 }
 
-// Close releases the underlying Firestore client. Safe to call multiple times.
-func (r *FirestoreRepo) Close() error {
-	if r.client == nil {
-		return nil
-	}
-	err := r.client.Close()
-	r.client = nil
-	return err
-}
-
 func (r *FirestoreRepo) Get(ctx context.Context, id string) (*Persisted, error) {
 	snap, err := r.coll.Doc(id).Get(ctx)
 	if status.Code(err) == codes.NotFound {

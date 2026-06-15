@@ -37,16 +37,6 @@ func NewFirestoreStore(ctx context.Context, projectID, databaseID, collection st
 	return &FirestoreStore{client: client, coll: client.Collection(collection)}, nil
 }
 
-// Close releases the underlying Firestore client. Safe to call multiple times.
-func (s *FirestoreStore) Close() error {
-	if s.client == nil {
-		return nil
-	}
-	err := s.client.Close()
-	s.client = nil
-	return err
-}
-
 func (s *FirestoreStore) Get(ctx context.Context, uid string) (*Account, error) {
 	snap, err := s.coll.Doc(uid).Get(ctx)
 	if status.Code(err) == codes.NotFound {

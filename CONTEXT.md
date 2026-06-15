@@ -81,6 +81,16 @@ a generation but **not** a pipeline step, so it is never part of a debate's
 steps and is not retryable.
 _Avoid_: helper, assistant, guide
 
+**Narration**:
+The synthesized audio rendering of a [[step]]'s text — the spoken form of what a
+debater said. A narration is a model call that costs money, but it is **not** a
+[[generation]] or a [[step]]: it renders content that already exists rather than
+producing new content, so it sits outside the debate pipeline and a [[retry]]
+never re-rolls it. Only debater [[role]]s are narratable today. Two narrations
+are the same exactly when their text, voice, style, and model match; a [[retry]]
+that changes a step's text therefore yields a different narration.
+_Avoid_: generation (a narration is not the unit quota meters), clip, recording, audio
+
 ## Example dialogue
 
 > **Dev:** When the user hits retry, are we re-running the whole round?

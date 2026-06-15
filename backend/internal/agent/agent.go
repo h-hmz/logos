@@ -35,9 +35,6 @@ func New(cfg Config) (*Agent, error) {
 // Name returns the agent's identifier.
 func (a *Agent) Name() string { return a.cfg.Name }
 
-// OutputKey returns the state key the agent writes its output to.
-func (a *Agent) OutputKey() string { return a.cfg.OutputKey }
-
 // HasResponseFormat reports whether the agent is constrained to a JSON schema.
 // Callers use this to gate token-by-token forwarding: structured outputs are
 // delivered to the client as a single payload, not as partial JSON chunks.

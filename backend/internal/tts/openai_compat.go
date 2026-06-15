@@ -16,9 +16,6 @@ import (
 	"github.com/h-hmz/logos/internal/config"
 )
 
-// DefaultGeminiVoice is used when no per-speaker voice is configured.
-const DefaultGeminiVoice = "Kore"
-
 // maxTTSChars is the target maximum character count per /audio/speech
 // call. The underlying Gemini TTS model caps output at 3840 audio
 // tokens (~2 minutes of speech) per call. At ~150 wpm / ~750 chars
@@ -93,17 +90,6 @@ func newOpenAICompatTTSClient(_ context.Context) (*openAICompatTTSClient, error)
 	return &openAICompatTTSClient{client: c, model: config.TTSModel()}, nil
 }
 
-// Synthesize returns a self-contained WAV for the given text. voice
-// and style are optional: empty voice falls back to DefaultGeminiVoice;
-// empty style omits the leading directive in the prompt.
-func Synthesize(ctx context.Context, text, voice, style string) ([]byte, error) {
-	c, err := client(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return c.synthesize(ctx, text, voice, style)
-}
-
 // SynthesizeStream streams raw 16-bit little-endian mono PCM as bytes
 // arrive from the model. onStart fires exactly once with the sample
 // rate the moment we begin writing — use it to flush response headers
@@ -121,30 +107,12 @@ func SynthesizeStream(
 	return c.synthesizeStream(ctx, text, voice, style, onStart, w)
 }
 
-func (c *openAICompatTTSClient) synthesize(ctx context.Context, text, voice, style string) ([]byte, error) {
-	var pcm []byte
-	err := c.synthesizeStream(ctx, text, voice, style,
-		func(int) {},
-		writerFunc(func(p []byte) (int, error) {
-			pcm = append(pcm, p...)
-			return len(p), nil
-		}),
-	)
-	if err != nil {
-		return nil, err
-	}
-	return wrapWAV(pcm, geminiTTSSampleRate, 1, 16), nil
-}
-
 func (c *openAICompatTTSClient) synthesizeStream(
 	ctx context.Context,
 	text, voice, style string,
 	onStart func(sampleRate int),
 	w io.Writer,
 ) error {
-	if voice == "" {
-		voice = DefaultGeminiVoice
-	}
 	flusher, _ := w.(http.Flusher)
 	started := false
 	startT := time.Now()
@@ -206,8 +174,3 @@ func (c *openAICompatTTSClient) synthesizeStream(
 	}
 	return nil
 }
-
-// writerFunc adapts a func to io.Writer for the buffered Synthesize path.
-type writerFunc func(p []byte) (int, error)
-
-func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
