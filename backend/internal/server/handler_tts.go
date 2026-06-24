@@ -35,10 +35,11 @@ type ttsRequest struct {
 	Text    string `json:"text"`
 }
 
-// synthesizeStep turns the given text into speech using the voice and style
-// associated with the named step (resolved from the debate's debaters). The
-// text is taken from the request so the client can replay arbitrary content
-// it already has without the server storing turn outputs.
+// synthesizeStep turns the given text into speech using the voice and style for
+// the named step, resolved from the step key against the philosopher catalog —
+// no debate load, so a cache hit is a pure blob fetch (ADR 0012). The text is
+// taken from the request so the client can replay arbitrary content it already
+// has without the server storing turn outputs.
 func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	if !config.TTSEnabled() {
 		writeError(w, http.StatusServiceUnavailable, "TTS is disabled on this server")
@@ -46,21 +47,6 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	debateID := chi.URLParam(r, "debateID")
-	p, err := s.svc.Get(r.Context(), debateID)
-	if errors.Is(err, debate.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "Debate not found")
-		return
-	}
-	if err != nil {
-		slog.ErrorContext(r.Context(), "failed to load debate", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to load debate")
-		return
-	}
-	a, b, ok := s.debaters(p)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "unknown philosopher in debate")
-		return
-	}
 
 	defer r.Body.Close()
 	var req ttsRequest
@@ -78,8 +64,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := debate.RoleForStep(req.StepKey, a, b)
-	voice, style, ok := tts.VoiceForStep(role, a, b)
+	voice, style, ok := tts.VoiceForStepKey(req.StepKey, s.philosophers)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "step is not speakable")
 		return

@@ -22,7 +22,6 @@ import (
 // (catalog for responses, TTS resolution).
 type Server struct {
 	philosophers []philosopher.Data
-	philMap      map[string]philosopher.Data
 	svc          *debate.Service
 	narrations   tts.NarrationStore
 }
@@ -57,7 +56,6 @@ func New(philosophers []philosopher.Data, repo debate.Repository, narrations tts
 	})
 	s := &Server{
 		philosophers: philosophers,
-		philMap:      philMap,
 		svc:          svc,
 		narrations:   narrations,
 	}
@@ -107,14 +105,6 @@ func New(philosophers []philosopher.Data, repo debate.Repository, narrations tts
 // healthz is a liveness/readiness probe.
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-}
-
-// debaters resolves the philosopher.Data pair referenced by a Persisted record.
-func (s *Server) debaters(p *debate.Persisted) (a, b philosopher.Data, ok bool) {
-	var okA, okB bool
-	a, okA = s.philMap[p.DebaterAName]
-	b, okB = s.philMap[p.DebaterBName]
-	return a, b, okA && okB
 }
 
 // ── JSON helpers ────────────────────────────────────────────────────────────

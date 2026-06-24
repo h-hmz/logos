@@ -45,7 +45,6 @@ func testServer(t *testing.T) (*Server, *debate.MemoryRepo, http.Handler) {
 	deps := testQuotaDeps()
 	s := &Server{
 		philosophers: phils,
-		philMap:      philMap,
 		svc:          debate.NewService(repo, philMap, debate.QuotaConfig{Store: deps.Store, DefaultLimitUSD: deps.DefaultLimitUSD, InFlight: deps.InFlight}),
 	}
 	router := New(phils, repo, nil, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, deps)

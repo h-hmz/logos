@@ -116,6 +116,8 @@ shrinks this charge ~14×, recovering most of the "free replay" feel.)
 - Each unique narration is synthesized **once, ever** — no re-paying the provider
   on reload / second device / return visit.
 - Cross-session replay is **instant and seekable**, served from storage.
+- A cache **hit is a pure blob fetch** — voice/style resolve from the step key +
+  in-memory catalog (`VoiceForStepKey`), so a replay does zero Firestore reads.
 - ADR 0002's truncated-audio failure mode is moot for the persisted copy.
 - Phase 1 adds **no encoder and no frontend change**; local dev / CI gain **no**
   new dependency. ADR 0007's promise holds.
