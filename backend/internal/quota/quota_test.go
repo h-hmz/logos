@@ -34,9 +34,6 @@ func TestMemoryStore_AddAccumulates(t *testing.T) {
 	if !approxEqual(acct.SpentUSD, 0.15) {
 		t.Fatalf("SpentUSD = %v, want 0.15", acct.SpentUSD)
 	}
-	if acct.Version != 2 {
-		t.Fatalf("Version = %d, want 2", acct.Version)
-	}
 }
 
 func TestMemoryStore_AddSnapshotsLimitOnCreateOnly(t *testing.T) {
@@ -78,8 +75,8 @@ func TestMemoryStore_AddConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 	acct, _ := s.Get(ctx, "u1")
-	if acct.Version != n {
-		t.Fatalf("Version = %d, want %d (lost update under concurrency)", acct.Version, n)
+	if !approxEqual(acct.SpentUSD, float64(n)*0.01) {
+		t.Fatalf("SpentUSD = %v, want %v (lost update under concurrency)", acct.SpentUSD, float64(n)*0.01)
 	}
 }
 

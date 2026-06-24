@@ -6,7 +6,7 @@ import { firebaseEnabled } from './firebase'
 type QuotaStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 interface QuotaCtx {
-  // remaining/limit in USD. A negative value means unlimited (quota disabled).
+  // remaining/limit in USD.
   remaining: number | null
   limit: number | null
   status: QuotaStatus

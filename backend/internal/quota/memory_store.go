@@ -37,6 +37,24 @@ func (s *MemoryStore) Add(_ context.Context, uid string, costUSD, initialLimitUS
 		s.accounts[uid] = a
 	}
 	a.SpentUSD += costUSD
-	a.Version++
 	return nil
+}
+
+func (s *MemoryStore) Reserve(_ context.Context, uid string, amountUSD, initialLimitUSD float64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.accounts[uid]
+	spent, limit := 0.0, initialLimitUSD
+	if ok {
+		spent, limit = a.SpentUSD, a.SpendLimitUSD
+	}
+	if spent+amountUSD > limit {
+		return false, nil
+	}
+	if !ok {
+		a = &Account{UID: uid, SpendLimitUSD: initialLimitUSD}
+		s.accounts[uid] = a
+	}
+	a.SpentUSD += amountUSD
+	return true, nil
 }

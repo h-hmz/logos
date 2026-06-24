@@ -188,7 +188,6 @@ OpenAI's `stream_options.include_usage=true`.
 - [backend/internal/agent/agent.go](../backend/internal/agent/agent.go) — `Agent` + `Run`
 - [backend/internal/agent/openai_compat.go](../backend/internal/agent/openai_compat.go) — openai-go-backed `LLM` (any OpenAI-compatible endpoint)
 - [backend/internal/agent/registry.go](../backend/internal/agent/registry.go) — `Get(modelID)` cache
-- [backend/internal/gibberish/gibberish.go](../backend/internal/gibberish/gibberish.go) — reshaped to implement `agent.LLM`
 
 Cross-references: [ADR 0007](0007-llm-tts-via-openrouter-for-spend-caps.md)
 (provider rationale), [ADR 0003](0003-state-key-substitution.md)

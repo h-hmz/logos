@@ -73,11 +73,10 @@ Mistral, etc.) becomes a model-string change in the env. The agent
 layer ([ADR 0008](0008-in-house-agent-layer-replacing-adk.md)) is
 provider-agnostic by design.
 
-### 4. Local development uses `local-gibberish`
+### 4. Local development requires a real provider
 
-`MODEL=local-gibberish` skips OpenRouter entirely and runs a mock
-that requires no network and no API key. Default for local dev,
-test environments, and anyone running the project without billing.
+There is no in-process mock; local dev runs against a real
+OpenAI-compatible provider (`LLM_API_KEY` + a client-supplied model).
 
 ## Consequences
 
@@ -96,8 +95,8 @@ test environments, and anyone running the project without billing.
 
 - **5.5% premium on credit purchases.** The cost of the cap.
 - **Single point of failure.** OpenRouter outage = full LLM + TTS
-  outage. Mitigation: gibberish fallback for development; for
-  production, accept this until volume justifies a multi-router setup.
+  outage. Mitigation: for production, accept this until volume
+  justifies a multi-router setup.
 - **~50–150ms latency hop** through OpenRouter's edge.
 - **Manual refill operationally required.** Credits can run out;
   service degrades to 402 errors. We accept this as the price of

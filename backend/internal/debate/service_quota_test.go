@@ -19,20 +19,18 @@ func (f *failingStore) Add(context.Context, string, float64, float64) error {
 	f.addCalls++
 	return errors.New("boom")
 }
-
-func newQuotaService(store quota.Store, defaultLimitUSD float64) *Service {
-	s := NewService(nil, nil)
-	s.WithQuota(QuotaConfig{Store: store, DefaultLimitUSD: defaultLimitUSD, InFlight: quota.NewInFlight()})
-	return s
+func (f *failingStore) Reserve(context.Context, string, float64, float64) (bool, error) {
+	return false, errors.New("boom")
 }
 
-func TestAdmitGeneration_DisabledIsNoop(t *testing.T) {
-	s := NewService(nil, nil) // quota not enabled
-	release, err := s.admitGeneration(context.Background(), "u1")
-	if err != nil {
-		t.Fatalf("admitGeneration (disabled) err = %v, want nil", err)
-	}
-	release() // must be safe
+func newQuotaService(store quota.Store, defaultLimitUSD float64) *Service {
+	return NewService(nil, nil, QuotaConfig{Store: store, DefaultLimitUSD: defaultLimitUSD, InFlight: quota.NewInFlight()})
+}
+
+// unlimitedQuota returns a quota config with a fresh in-memory store and a budget
+// high enough that pipeline tests never hit the limit.
+func unlimitedQuota() QuotaConfig {
+	return QuotaConfig{Store: quota.NewMemoryStore(), DefaultLimitUSD: 1e9, InFlight: quota.NewInFlight()}
 }
 
 func TestAdmitGeneration_OverBudget(t *testing.T) {
@@ -185,23 +183,5 @@ func TestCharge_WriteFailureFailsOpen(t *testing.T) {
 	}
 	if fs.addCalls != 1 {
 		t.Fatalf("Add called %d times, want 1", fs.addCalls)
-	}
-}
-
-func TestCharge_DisabledIsNoop(t *testing.T) {
-	// With no quota store configured, quota is disabled: charge runs the
-	// generation and returns without metering (and without panicking on the
-	// nil store).
-	s := NewService(nil, nil)
-	var ran bool
-	err := s.charge(context.Background(), "u1", func() (float64, error) {
-		ran = true
-		return 0.25, nil
-	})
-	if err != nil {
-		t.Fatalf("charge err = %v", err)
-	}
-	if !ran {
-		t.Fatal("generation did not run while quota disabled")
 	}
 }

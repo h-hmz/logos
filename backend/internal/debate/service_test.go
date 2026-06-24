@@ -42,7 +42,7 @@ func TestNextTurn_OwnershipGate(t *testing.T) {
 		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
 	}
 	repo := NewMemoryRepo()
-	svc := NewService(repo, phils)
+	svc := NewService(repo, phils, unlimitedQuota())
 	ctx := context.Background()
 
 	// completed sets how many pipeline steps have run; progress is derived from
@@ -86,7 +86,7 @@ func TestNextTurn_InterjectionValidation(t *testing.T) {
 		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
 	}
 	repo := NewMemoryRepo()
-	svc := NewService(repo, phils)
+	svc := NewService(repo, phils, unlimitedQuota())
 	ctx := context.Background()
 
 	// A fresh debate owned by alice; step 0 (next to run) is the moderator intro.
@@ -127,7 +127,7 @@ func TestRetryTurn_Gates(t *testing.T) {
 		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
 	}
 	repo := NewMemoryRepo()
-	svc := NewService(repo, phils)
+	svc := NewService(repo, phils, unlimitedQuota())
 	ctx := context.Background()
 
 	seed := func(id, owner string, records ...StepRecord) {
@@ -209,7 +209,7 @@ func TestGetSession_SurfacesInterjection(t *testing.T) {
 		"Kant":     {Name: "Kant", School: "German Idealism", Identity: "id", KeyThinkers: "k"},
 	}
 	repo := NewMemoryRepo()
-	svc := NewService(repo, phils)
+	svc := NewService(repo, phils, unlimitedQuota())
 	ctx := context.Background()
 
 	const note = "Press him on whether that assumes free will."

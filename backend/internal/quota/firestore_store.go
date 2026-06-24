@@ -55,10 +55,8 @@ func (s *FirestoreStore) Get(ctx context.Context, uid string) (*Account, error) 
 // Add increments the user's spend by costUSD inside a transaction. A missing
 // document is created with its SpendLimitUSD set to initialLimitUSD; an existing
 // document keeps its stored limit (initialLimitUSD is ignored), so changing the
-// configured default never moves an existing user's ceiling. The version field
-// is advanced on every write to support optimistic concurrency (ADR 0004); the
-// transaction itself guarantees the read-modify-write is not lost under
-// contention.
+// configured default never moves an existing user's ceiling. The transaction
+// guarantees the read-modify-write is not lost under contention.
 func (s *FirestoreStore) Add(ctx context.Context, uid string, costUSD, initialLimitUSD float64) error {
 	docRef := s.coll.Doc(uid)
 	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
@@ -74,10 +72,45 @@ func (s *FirestoreStore) Add(ctx context.Context, uid string, costUSD, initialLi
 		}
 		acct.UID = uid
 		acct.SpentUSD += costUSD
-		acct.Version++
 		if err := tx.Set(docRef, acct); err != nil {
 			return fmt.Errorf("tx set: %w", err)
 		}
 		return nil
 	})
+}
+
+// Reserve atomically charges amountUSD only if it fits the budget. The
+// read-check-write runs in one transaction, so concurrent reservations across
+// instances cannot collectively overshoot the limit (ADR 0013). When the amount
+// does not fit, the transaction commits no write and ok is false.
+func (s *FirestoreStore) Reserve(ctx context.Context, uid string, amountUSD, initialLimitUSD float64) (bool, error) {
+	docRef := s.coll.Doc(uid)
+	reserved := false
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		reserved = false
+		snap, err := tx.Get(docRef)
+		if err != nil && status.Code(err) != codes.NotFound {
+			return fmt.Errorf("tx get: %w", err)
+		}
+		acct := Account{UID: uid, SpendLimitUSD: initialLimitUSD}
+		if snap.Exists() {
+			if err := snap.DataTo(&acct); err != nil {
+				return fmt.Errorf("tx decode: %w", err)
+			}
+		}
+		acct.UID = uid
+		if acct.SpentUSD+amountUSD > acct.SpendLimitUSD {
+			return nil // unaffordable: commit no write
+		}
+		acct.SpentUSD += amountUSD
+		if err := tx.Set(docRef, acct); err != nil {
+			return fmt.Errorf("tx set: %w", err)
+		}
+		reserved = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return reserved, nil
 }

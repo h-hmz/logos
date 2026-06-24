@@ -15,7 +15,15 @@ import (
 	"github.com/h-hmz/logos/internal/config"
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
+	"github.com/h-hmz/logos/internal/quota"
 )
+
+// testQuotaDeps returns quota deps with a fresh in-memory store and a budget high
+// enough that handler tests never hit the limit. Quota is always enforced now
+// (ADR 0009), so every server.New / debate.NewService caller must supply it.
+func testQuotaDeps() *QuotaDeps {
+	return &QuotaDeps{Store: quota.NewMemoryStore(), DefaultLimitUSD: 1e9, InFlight: quota.NewInFlight()}
+}
 
 // testServer builds a Server and chi router with a fixed philosopher roster,
 // suitable for handler-level tests that don't invoke the ADK runner. The repo
@@ -26,18 +34,21 @@ func testServer(t *testing.T) (*Server, *debate.MemoryRepo, http.Handler) {
 		{Name: "Socrates", School: "Classical", Identity: "id-a", KeyThinkers: "k"},
 		{Name: "Kant", School: "German Idealism", Identity: "id-b", KeyThinkers: "k"},
 	}
-	t.Setenv("MODEL", "test-model")
+	t.Setenv("QUOTA_USD_LIMIT", "1")
+	t.Setenv("TTS_USD_PER_1M_AUDIO_TOKENS", "20")
+	t.Setenv("TTS_USD_PER_GB_EGRESS", "0.12")
 	if err := config.Load(""); err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
 	repo := debate.NewMemoryRepo()
 	philMap := map[string]philosopher.Data{phils[0].Name: phils[0], phils[1].Name: phils[1]}
+	deps := testQuotaDeps()
 	s := &Server{
 		philosophers: phils,
 		philMap:      philMap,
-		svc:          debate.NewService(repo, philMap),
+		svc:          debate.NewService(repo, philMap, debate.QuotaConfig{Store: deps.Store, DefaultLimitUSD: deps.DefaultLimitUSD, InFlight: deps.InFlight}),
 	}
-	router := New(phils, repo, nil, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, nil)
+	router := New(phils, repo, nil, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, deps)
 	// Existing handler tests predate auth; inject a bearer so the noop verifier
 	// accepts them. Dedicated 401 coverage lives in auth_test.go.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

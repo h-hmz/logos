@@ -86,6 +86,26 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	uid := UIDFromContext(ctx)
+	pricing := tts.Pricing{
+		USDPer1MAudioTokens: config.USDPer1MAudioTokens(),
+		USDPerGBEgress:      config.USDPerGBEgress(),
+	}
+
+	// Reserve the estimated cost up front so concurrent narrations cannot
+	// collectively overshoot the budget; reconcile to the exact byte count after
+	// streaming (ADR 0013). Over budget → 402 before any bytes flow.
+	reserved, err := s.svc.ReserveNarration(ctx, uid, pricing.EstimateUSD(len(text)))
+	if errors.Is(err, debate.ErrOverBudget) {
+		writeError(w, http.StatusPaymentRequired, "Your purse is empty.")
+		return
+	}
+	var deliveredBytes int
+	var synthesized bool
+	defer func() {
+		s.svc.SettleNarration(ctx, uid, reserved, pricing.ActualUSD(deliveredBytes, synthesized))
+	}()
+
 	key := tts.NarrationKey(debateID, text, voice, style, config.TTSModel())
 
 	// Serve a persisted narration if one exists. Fail-open: a store read error
@@ -99,7 +119,9 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-TTS-Voice", voice)
 		w.Header().Set("X-TTS-Cache", "hit")
 		w.WriteHeader(http.StatusOK)
-		if _, err := io.Copy(w, rc); err != nil {
+		n, err := io.Copy(w, rc)
+		deliveredBytes = int(n) // a hit is egress only (synthesized stays false)
+		if err != nil {
 			slog.ErrorContext(ctx, "tts: cached narration stream interrupted", "key", key, "error", err)
 		}
 		return
@@ -119,12 +141,16 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		headerSent = true
 	}
-	if err := tts.SynthesizeStream(ctx, text, voice, style, onStart, tee); err != nil {
+	serr := tts.SynthesizeStream(ctx, text, voice, style, onStart, tee)
+	// Charge for the bytes actually synthesized and delivered, even on a
+	// mid-stream failure — the provider already billed them (ADR 0013).
+	deliveredBytes, synthesized = buf.Len(), true
+	if serr != nil {
 		if !headerSent {
-			slog.ErrorContext(ctx, "tts stream step failed", "step_key", req.StepKey, "error", err)
+			slog.ErrorContext(ctx, "tts stream step failed", "step_key", req.StepKey, "error", serr)
 			writeError(w, http.StatusBadGateway, "TTS synthesis failed")
 		} else {
-			slog.ErrorContext(ctx, "tts stream step interrupted mid-stream", "step_key", req.StepKey, "error", err)
+			slog.ErrorContext(ctx, "tts stream step interrupted mid-stream", "step_key", req.StepKey, "error", serr)
 		}
 		return
 	}

@@ -2,7 +2,7 @@
 package config
 
 import (
-	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -21,13 +21,11 @@ var (
 	authAllowlist   string // comma-separated emails/domains permitted past auth
 	corsOrigins     string // comma-separated browser origins permitted by CORS
 
-	quotaEnabled  bool    // gate per-user generation quotas (ADR 0009)
-	quotaLimitUSD float64 // lifetime USD budget per user
-)
+	quotaLimitUSD float64 // per-user lifetime USD budget; mandatory (ADR 0009)
 
-// DefaultQuotaLimitUSD is the per-user lifetime budget when QUOTA_USD_LIMIT is
-// unset. See ADR 0009.
-const DefaultQuotaLimitUSD = 1.0
+	ttsUSDPer1MAudioTokens float64 // synthesis price (ADR 0013); Gemini bills 25 audio tokens/s
+	ttsUSDPerGBEgress      float64 // egress price for serving narration bytes (ADR 0013)
+)
 
 // DefaultLLMBaseURL is the default OpenAI-compatible endpoint when
 // LLM_BASE_URL is unset. OpenRouter is the recommended provider
@@ -59,17 +57,32 @@ func Load(envPath string) error {
 		ttsModel = defaultTTSModel
 	}
 	ttsBucket = os.Getenv("TTS_BUCKET")
-	quotaEnabled = strings.EqualFold(os.Getenv("QUOTA_ENABLED"), "TRUE")
-	quotaLimitUSD = DefaultQuotaLimitUSD
-	if raw := strings.TrimSpace(os.Getenv("QUOTA_USD_LIMIT")); raw != "" {
-		v, err := strconv.ParseFloat(raw, 64)
-		if err != nil || v < 0 {
-			return errors.New("config: QUOTA_USD_LIMIT must be a non-negative number")
-		}
-		quotaLimitUSD = v
+	var err error
+	if quotaLimitUSD, err = parseNonNegFloat("QUOTA_USD_LIMIT"); err != nil {
+		return err
+	}
+	if ttsUSDPer1MAudioTokens, err = parseNonNegFloat("TTS_USD_PER_1M_AUDIO_TOKENS"); err != nil {
+		return err
+	}
+	if ttsUSDPerGBEgress, err = parseNonNegFloat("TTS_USD_PER_GB_EGRESS"); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+// parseNonNegFloat reads a required non-negative float env var, erroring when
+// unset, unparseable, or negative.
+func parseNonNegFloat(name string) (float64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, fmt.Errorf("config: %s is required", name)
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("config: %s must be a non-negative number", name)
+	}
+	return v, nil
 }
 
 func TTSEnabled() bool { return ttsEnabled }
@@ -108,10 +121,15 @@ func AuthAllowlist() string { return authAllowlist }
 // list of browser origins permitted by CORS. Empty falls back to the local dev origin.
 func CORSAllowedOrigins() string { return corsOrigins }
 
-// QuotaEnabled reports whether per-user generation quotas are enforced
-// (QUOTA_ENABLED=true). Defaults to false so local dev and tests run unmetered.
-func QuotaEnabled() bool { return quotaEnabled }
-
-// QuotaLimitUSD returns the per-user lifetime budget in USD (QUOTA_USD_LIMIT),
-// defaulting to DefaultQuotaLimitUSD.
+// QuotaLimitUSD returns the required per-user lifetime budget in USD
+// (QUOTA_USD_LIMIT).
 func QuotaLimitUSD() float64 { return quotaLimitUSD }
+
+// USDPer1MAudioTokens returns the required TTS synthesis price per 1,000,000
+// audio tokens (TTS_USD_PER_1M_AUDIO_TOKENS), used to meter narration synthesis
+// from the byte count (ADR 0013).
+func USDPer1MAudioTokens() float64 { return ttsUSDPer1MAudioTokens }
+
+// USDPerGBEgress returns the required price per GB for serving narration bytes
+// (TTS_USD_PER_GB_EGRESS), used to meter egress on every narration call (ADR 0013).
+func USDPerGBEgress() float64 { return ttsUSDPerGBEgress }

@@ -36,7 +36,7 @@ func authRouter(t *testing.T, v auth.Verifier) http.Handler {
 		{Name: "Socrates", School: "Classical"},
 		{Name: "Kant", School: "German Idealism"},
 	}
-	return New(phils, debate.NewMemoryRepo(), nil, v, auth.ParseAllowlist("*"), nil, nil)
+	return New(phils, debate.NewMemoryRepo(), nil, v, auth.ParseAllowlist("*"), nil, testQuotaDeps())
 }
 
 func TestAuthMiddleware_MissingHeader(t *testing.T) {

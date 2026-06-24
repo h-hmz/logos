@@ -34,10 +34,12 @@ backend/
     │                repository.go       # Repository interface + sentinel errors
     │                memory_repo.go      # in-process Repository
     │                firestore_repo.go   # Firestore-backed Repository
-    ├── tts/         tts.go              # synthesis entry point + WAV header helper
+    ├── tts/         tts.go              # lazy TTS client + sample rate
     │                openai_compat.go    # OpenAI-format /audio/speech client
     │                voices.go           # voice/style resolution per step
-    ├── gibberish/   gibberish.go        # local-gibberish mock LLM (no network)
+    │                store.go            # NarrationStore + in-memory impl (ADR 0012)
+    │                gcs_store.go        # GCS-backed NarrationStore
+    │                pricing.go          # narration cost model (ADR 0013)
     └── server/      routes.go           # Chi router + auth middleware + JSON helpers
                      handler_debate.go   # /debates, /next
                      handler_tutor.go    # /tutor
@@ -300,7 +302,7 @@ Inline parentheticals (e.g. `asabiyya (social solidarity)`) are stripped server-
 |---|---|---|
 | LLM provider | `LLM_BASE_URL` env var | OpenAI-compatible base URL; defaults to OpenRouter |
 | LLM key | `LLM_API_KEY` env var | API key for the chosen provider |
-| Model | `MODEL` env var | Provider's model identifier; defaults to `local-gibberish` (no network) |
+| Model | per generation request | Client-supplied on each call, checked against the allowlist (ADR 0011); no server-side default |
 | Philosopher pool | `backend/agents/philosophers/*.yaml` | Add / remove / edit — restart to pick up changes |
 | Max rounds | `POST /debates` — `num_rounds` | 1–5 |
 | Word limit | `POST /debates` — `max_words` | Philosopher turns; critic gets `2×`, moderator is fixed at 40 words |
@@ -318,7 +320,6 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 |---|---|---|
 | `LLM_API_KEY` | When using a real model | API key for the OpenAI-compatible provider. |
 | `LLM_BASE_URL` | No | OpenAI-compatible base URL. Defaults to `https://openrouter.ai/api/v1`. Works with OpenAI, Together AI, Groq, Azure OpenAI, vLLM, Ollama, LM Studio, etc. |
-| `MODEL` | No | Provider's model identifier (e.g. `google/gemini-3-flash-preview` on OpenRouter, `gpt-4o-mini` on OpenAI). Defaults to `local-gibberish` — an in-process mock that needs no key and no network. |
 
 **Text-to-speech (all optional)**
 
@@ -357,13 +358,13 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 
 ## Running
 
-### Backend — local, no API key required
+### Backend — local
 
 ```bash
 cd backend && go run .
 ```
 
-With no `MODEL` set the server uses `local-gibberish`, which fabricates plausible-shaped output without a network call. Set `AUTH_BACKEND=none` in `backend/.env` to skip Firebase init.
+Requires `LLM_API_KEY` and the other mandatory env vars (see [`backend/.env.example`](backend/.env.example)). Set `AUTH_BACKEND=none` in `backend/.env` to skip Firebase init.
 
 ### Backend — against a real model
 
@@ -371,8 +372,12 @@ Configure `backend/.env`:
 
 ```ini
 LLM_API_KEY="sk-or-v1-..."
-MODEL="google/gemini-3-flash-preview"
 # LLM_BASE_URL defaults to https://openrouter.ai/api/v1; override to use a different provider.
+
+# Required: per-user budget + narration pricing (ADR 0009, 0013)
+QUOTA_USD_LIMIT=1.0
+TTS_USD_PER_1M_AUDIO_TOKENS=20
+TTS_USD_PER_GB_EGRESS=0.12
 
 # Optional: enable Firebase auth + Firestore persistence
 # AUTH_BACKEND=firebase

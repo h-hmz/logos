@@ -222,7 +222,7 @@ The tutor is **not** a pipeline step. It does not advance `Current`, does not wr
 
 ### LLM registry
 
-[`agent.Get(ctx, modelID)`](backend/internal/agent/registry.go) returns a cached `LLM`, constructing one against the OpenAI-compatible client on first call and caching it process-wide. `MODEL` must be set at startup — `config.Load` errors out otherwise.
+[`agent.Get(ctx, modelID)`](backend/internal/agent/registry.go) returns a cached `LLM`, constructing one against the OpenAI-compatible client on first call and caching it process-wide. The `modelID` is supplied on each client request (ADR 0011).
 
 ### Error mapping
 

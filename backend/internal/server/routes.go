@@ -27,10 +27,9 @@ type Server struct {
 	narrations   tts.NarrationStore
 }
 
-// QuotaDeps carries the per-user quota dependencies. Pass nil to New to disable
-// quota enforcement (the service runs unmetered and GET /me/quota reports an
-// unlimited budget). DefaultLimitUSD is the ceiling seeded onto a brand-new
-// account.
+// QuotaDeps carries the per-user quota dependencies, required by New (quota is
+// always enforced; ADR 0009). DefaultLimitUSD is the ceiling seeded onto a
+// brand-new account.
 type QuotaDeps struct {
 	Store           quota.Store
 	DefaultLimitUSD float64
@@ -42,27 +41,25 @@ type QuotaDeps struct {
 // whitelisted emails/domains; pass auth.NewNoopVerifier() and an allow-all
 // allowlist (auth.ParseAllowlist("*")) for local dev/tests. corsOrigins is the
 // list of browser origins permitted by CORS; pass nil/empty to default to the
-// local Vite dev origin. quotaDeps enables per-user quota enforcement; pass nil
-// to disable it. narrations persists synthesized audio for replay; it is only
-// reached after the TTS-enabled check, so pass nil when TTS is disabled.
+// local Vite dev origin. quotaDeps carries the required per-user quota
+// dependencies (quota is always enforced). narrations persists synthesized audio
+// for replay; it is only reached after the TTS-enabled check, so pass nil when
+// TTS is disabled.
 func New(philosophers []philosopher.Data, repo debate.Repository, narrations tts.NarrationStore, verifier auth.Verifier, allow auth.Allowlist, corsOrigins []string, quotaDeps *QuotaDeps) *chi.Mux {
 	philMap := make(map[string]philosopher.Data, len(philosophers))
 	for _, p := range philosophers {
 		philMap[p.Name] = p
 	}
-	svc := debate.NewService(repo, philMap)
+	svc := debate.NewService(repo, philMap, debate.QuotaConfig{
+		Store:           quotaDeps.Store,
+		DefaultLimitUSD: quotaDeps.DefaultLimitUSD,
+		InFlight:        quotaDeps.InFlight,
+	})
 	s := &Server{
 		philosophers: philosophers,
 		philMap:      philMap,
 		svc:          svc,
 		narrations:   narrations,
-	}
-	if quotaDeps != nil {
-		svc.WithQuota(debate.QuotaConfig{
-			Store:           quotaDeps.Store,
-			DefaultLimitUSD: quotaDeps.DefaultLimitUSD,
-			InFlight:        quotaDeps.InFlight,
-		})
 	}
 
 	r := chi.NewRouter()

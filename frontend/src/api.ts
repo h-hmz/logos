@@ -210,8 +210,8 @@ async function getAuthHeader(): Promise<Record<string, string>> {
   return { Authorization: 'Bearer local-dev-token' }
 }
 
-// Quota is the authenticated user's lifetime dollar budget. A negative
-// limit_usd/remaining_usd means unlimited (enforcement disabled); see ADR 0009.
+// Quota is the authenticated user's lifetime dollar budget (always enforced;
+// see ADR 0009).
 export interface Quota {
   limit_usd: number
   spent_usd: number

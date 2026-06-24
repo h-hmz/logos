@@ -27,7 +27,9 @@ func quotaTestServer(t *testing.T, limit float64) (*quota.MemoryStore, http.Hand
 		{Name: "Socrates", School: "Classical", Identity: "id-a", KeyThinkers: "k"},
 		{Name: "Kant", School: "German Idealism", Identity: "id-b", KeyThinkers: "k"},
 	}
-	t.Setenv("MODEL", "test-model")
+	t.Setenv("QUOTA_USD_LIMIT", "1")
+	t.Setenv("TTS_USD_PER_1M_AUDIO_TOKENS", "20")
+	t.Setenv("TTS_USD_PER_GB_EGRESS", "0.12")
 	if err := config.Load(""); err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
@@ -92,30 +94,6 @@ func TestGetQuota_RemainingClampedAtZero(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &got)
 	if got.RemainingUSD != 0 {
 		t.Fatalf("RemainingUSD = %v, want 0 (clamped)", got.RemainingUSD)
-	}
-}
-
-func TestGetQuota_DisabledReportsUnlimited(t *testing.T) {
-	phils := []philosopher.Data{{Name: "Socrates", School: "Classical", Identity: "x", KeyThinkers: "k"}}
-	t.Setenv("MODEL", "test-model")
-	if err := config.Load(""); err != nil {
-		t.Fatalf("config.Load: %v", err)
-	}
-	router := New(phils, debate.NewMemoryRepo(), nil, auth.NewNoopVerifier(), auth.ParseAllowlist("*"), nil, nil)
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Header.Set("Authorization", "Bearer test")
-		router.ServeHTTP(w, r)
-	})
-	req := httptest.NewRequest(http.MethodGet, "/me/quota", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	var got quotaResponse
-	_ = json.Unmarshal(rr.Body.Bytes(), &got)
-	if got.LimitUSD >= 0 {
-		t.Fatalf("LimitUSD = %v, want negative (unlimited sentinel)", got.LimitUSD)
 	}
 }
 

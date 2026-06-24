@@ -304,16 +304,9 @@ func buildNarrationStore(ctx context.Context) (tts.NarrationStore, error) {
 	}
 }
 
-// buildQuota constructs the per-user quota dependencies when QUOTA_ENABLED is
-// set, returning nil (quota disabled) otherwise. The spend store follows the
-// same STORAGE_BACKEND as debates: in-memory for dev, Firestore for Cloud Run
-// (collection overridable via QUOTA_COLLECTION, default "quotas"). See ADR 0009.
+// buildQuota constructs the per-user quota dependencies.The spend store follows the same STORAGE_BACKEND as
+// debates: in-memory for dev, Firestore for Cloud Run.
 func buildQuota(ctx context.Context) (*server.QuotaDeps, error) {
-	if !config.QuotaEnabled() {
-		slog.Warn("quota: disabled (set QUOTA_ENABLED=true to enforce per-user budgets)")
-		return nil, nil
-	}
-
 	backend := strings.ToLower(strings.TrimSpace(os.Getenv("STORAGE_BACKEND")))
 	var store quota.Store
 	switch backend {

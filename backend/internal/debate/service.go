@@ -49,53 +49,45 @@ type Service struct {
 	repo    Repository
 	philMap map[string]philosopher.Data
 
-	// Quota enforcement (ADR 0009). A nil quotaStore means quota is disabled:
-	// generations are not metered and defaultLimitUSD/inflight are unused. Set
-	// as a unit via WithQuota. defaultLimitUSD is the ceiling seeded onto a
-	// brand-new account; an existing account's own stored limit governs.
+	// Quota enforcement (ADR 0009), always present — set at construction via
+	// NewService. defaultLimitUSD is the ceiling seeded onto a brand-new account;
+	// an existing account's own stored limit governs.
 	quotaStore      quota.Store
 	defaultLimitUSD float64
 	inflight        *quota.InFlight
 }
 
-// NewService constructs a Service backed by the given repository and
-// philosopher catalog, with quota enforcement disabled.
-func NewService(repo Repository, philMap map[string]philosopher.Data) *Service {
-	return &Service{repo: repo, philMap: philMap}
-}
-
-// QuotaConfig bundles the dependencies that enable per-user quota enforcement.
-// DefaultLimitUSD is the ceiling seeded onto a brand-new account.
+// QuotaConfig bundles the per-user quota dependencies, required by every
+// Service. DefaultLimitUSD is the ceiling seeded onto a brand-new account.
 type QuotaConfig struct {
 	Store           quota.Store
 	DefaultLimitUSD float64
 	InFlight        *quota.InFlight
 }
 
-// WithQuota enables per-user quota enforcement on the service using the given
-// dependencies. Call once at construction; returns the same *Service for
-// chaining.
-func (s *Service) WithQuota(cfg QuotaConfig) *Service {
-	s.quotaStore = cfg.Store
-	s.defaultLimitUSD = cfg.DefaultLimitUSD
-	s.inflight = cfg.InFlight
-	return s
+// NewService constructs a Service backed by the given repository and philosopher
+// catalog. Quota enforcement is mandatory (ADR 0009) — there is no unmetered
+// mode.
+func NewService(repo Repository, philMap map[string]philosopher.Data, q QuotaConfig) *Service {
+	return &Service{
+		repo:            repo,
+		philMap:         philMap,
+		quotaStore:      q.Store,
+		defaultLimitUSD: q.DefaultLimitUSD,
+		inflight:        q.InFlight,
+	}
 }
 
 // admitGeneration enforces the per-user gates that must pass before a
 // generation runs: it acquires the in-memory per-UID lock (refusing with
 // ErrGenerationInFlight if one is already held) and then checks the budget
 // (refusing with ErrOverBudget if spend has reached the limit). The returned
-// release function clears the lock and must be deferred by the caller. When
-// quota is disabled it is a no-op returning a no-op release.
+// release function clears the lock and must be deferred by the caller.
 //
 // Budget reads fail open: if the store can't be read, the generation is allowed
 // and the error logged (ADR 0009) — a real store outage already breaks
 // generations because debate state lives in the same Firestore.
 func (s *Service) admitGeneration(ctx context.Context, uid string) (release func(), err error) {
-	if s.quotaStore == nil {
-		return func() {}, nil
-	}
 	if !s.inflight.TryAcquire(uid) {
 		return func() {}, ErrGenerationInFlight
 	}
@@ -132,9 +124,6 @@ func (s *Service) charge(ctx context.Context, uid string, gen func() (float64, e
 	if err != nil {
 		return err
 	}
-	if s.quotaStore == nil {
-		return nil
-	}
 	if addErr := s.quotaStore.Add(ctx, uid, cost, s.defaultLimitUSD); addErr != nil {
 		slog.ErrorContext(ctx, "quota: lost deduction (fail-open)",
 			"uid", uid, "cost_usd", cost, "error", addErr)
@@ -142,14 +131,43 @@ func (s *Service) charge(ctx context.Context, uid string, gen func() (float64, e
 	return nil
 }
 
-// QuotaUsage reports a user's current quota standing in USD. Enabled is false
-// when quota enforcement is off, in which case the budget figures are
-// meaningless and callers should treat the user as unlimited. For a user with
-// no account yet, Limit is the configured seed and Spent is zero; an existing
+// ReserveNarration atomically reserves estimateUSD against the caller's budget
+// before a narration is served, returning the amount actually reserved (pass it
+// to SettleNarration) and ErrOverBudget when the estimate does not fit. A store
+// error fails open: the narration is allowed and nothing is reserved (ADR 0013).
+// Unlike the generation path this takes no in-flight lock — atomic reservation
+// alone bounds concurrent spend.
+func (s *Service) ReserveNarration(ctx context.Context, uid string, estimateUSD float64) (reserved float64, err error) {
+	ok, rerr := s.quotaStore.Reserve(ctx, uid, estimateUSD, s.defaultLimitUSD)
+	if rerr != nil {
+		slog.WarnContext(ctx, "quota: narration reserve failed, allowing (fail-open)", "uid", uid, "error", rerr)
+		return 0, nil
+	}
+	if !ok {
+		return 0, ErrOverBudget
+	}
+	return estimateUSD, nil
+}
+
+// SettleNarration reconciles a prior reservation to the exact byte-derived cost
+// by recording (actualUSD - reserved); a negative delta refunds the unused
+// reservation. Recording failures fail open — the cost is already incurred
+// (ADR 0013).
+func (s *Service) SettleNarration(ctx context.Context, uid string, reserved, actualUSD float64) {
+	delta := actualUSD - reserved
+	if delta == 0 {
+		return
+	}
+	if err := s.quotaStore.Add(ctx, uid, delta, s.defaultLimitUSD); err != nil {
+		slog.ErrorContext(ctx, "quota: narration settle failed (fail-open)", "uid", uid, "delta_usd", delta, "error", err)
+	}
+}
+
+// QuotaUsage reports a user's current quota standing in USD. For a user with no
+// account yet, Limit is the configured seed and Spent is zero; an existing
 // account reports its own stored limit. Remaining is clamped at zero so a
 // bounded overshoot never surfaces as a negative balance (ADR 0009).
 type QuotaUsage struct {
-	Enabled   bool
 	LimitUSD  float64
 	SpentUSD  float64
 	Remaining float64
@@ -159,9 +177,6 @@ type QuotaUsage struct {
 // read failure is surfaced as an error (unlike the enforcement path, a readout
 // has no generation to fail open for).
 func (s *Service) QuotaUsage(ctx context.Context, uid string) (QuotaUsage, error) {
-	if s.quotaStore == nil {
-		return QuotaUsage{Enabled: false}, nil
-	}
 	limit, spent := s.defaultLimitUSD, 0.0
 	acct, err := s.quotaStore.Get(ctx, uid)
 	switch {
@@ -173,7 +188,6 @@ func (s *Service) QuotaUsage(ctx context.Context, uid string) (QuotaUsage, error
 		limit, spent = acct.SpendLimitUSD, acct.SpentUSD
 	}
 	return QuotaUsage{
-		Enabled:   true,
 		LimitUSD:  limit,
 		SpentUSD:  spent,
 		Remaining: max(0, limit-spent),

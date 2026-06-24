@@ -26,13 +26,15 @@ var ErrNotFound = errors.New("quota account not found")
 // SpendLimitUSD is the user's ceiling, snapshotted from configuration when the
 // account is first created and authoritative thereafter — the config default
 // only seeds new accounts, so raising or lowering it later leaves existing
-// users untouched. Version backs the optimistic, version-checked write used to
-// avoid lost updates under concurrency (same approach as debate state, ADR 0004).
+// users untouched. Lost updates under concurrency are prevented by the store's
+// transactional read-modify-write, not a version field on this struct: unlike
+// debate state — whose read precedes a multi-second LLM call and so needs
+// application-level OCC (ADR 0004) — the quota read-modify-write happens wholly
+// inside the transaction, which Firestore's own concurrency control covers.
 type Account struct {
 	UID           string  `firestore:"uid"`
 	SpentUSD      float64 `firestore:"spent_usd"`
 	SpendLimitUSD float64 `firestore:"spend_limit_usd"`
-	Version       int64   `firestore:"version"`
 }
 
 // Store persists per-user quota accounts. Implementations: MemoryStore
@@ -46,6 +48,13 @@ type Store interface {
 	// initialLimitUSD (the caller's configured ceiling for a new user); the
 	// limit is only applied on creation and ignored for existing accounts.
 	// Implementations must be safe against concurrent writers (version-checked
-	// transaction or equivalent).
+	// transaction or equivalent). costUSD may be negative to refund (ADR 0013).
 	Add(ctx context.Context, uid string, costUSD, initialLimitUSD float64) error
+	// Reserve atomically charges amountUSD only if it fits the budget, returning
+	// ok=true when reserved and ok=false (no write) when spend+amount would
+	// exceed the limit. Like Add it seeds a missing account with initialLimitUSD.
+	// The check-and-increment is one atomic operation so concurrent callers
+	// cannot collectively overshoot the limit (ADR 0013). err is a store failure
+	// (callers fail open), distinct from the ok=false budget refusal.
+	Reserve(ctx context.Context, uid string, amountUSD, initialLimitUSD float64) (ok bool, err error)
 }

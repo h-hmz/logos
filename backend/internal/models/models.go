@@ -1,7 +1,6 @@
 // Package models defines the hardcoded allowlist of LLM models a caller may
-// choose as a Debater Model (see CONTEXT.md). It governs only caller-supplied
-// per-debater models; the operator-set default model (config.MODEL) is trusted
-// and not gated by this list.
+// choose as a Debater Model (see CONTEXT.md). Every model is caller-supplied and
+// must be in this list; there is no operator-set default outside it (ADR 0011).
 package models
 
 // allowed is the set of model IDs permitted as Debater Models. IDs are
