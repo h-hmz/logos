@@ -523,7 +523,7 @@ func (s *Service) runStep(ctx context.Context, base *Persisted, interjection, mo
 	if ag.HasResponseFormat() {
 		cb = nil
 	}
-	result, err := ag.Run(ctx, rt.State, "continue", cb)
+	result, err := ag.Run(ctx, rt.State, kickoffMessage(role), cb)
 	if err != nil {
 		if agent.IsProviderAuthError(err) {
 			return nil, 0, fmt.Errorf("%w: %v", ErrProviderAuth, err)
@@ -573,6 +573,21 @@ func (s *Service) runStep(ctx context.Context, base *Persisted, interjection, mo
 }
 
 // ── Shared domain helpers ──────────────────────────────────────────────────
+
+// kickoffMessage returns the user-turn imperative that triggers a step's
+// generation, keyed off the step's role (see RoleForStep).
+func kickoffMessage(role string) string {
+	switch role {
+	case "moderator":
+		return "Open the debate now."
+	case "critic":
+		return "Deliver your analysis now."
+	case "judge":
+		return "Deliver your verdict now."
+	default: // "a" or "b" — a debater's turn
+		return "Take the floor now."
+	}
+}
 
 // RoleForStep maps a pipeline step key to the frontend-facing role label.
 // Mirrors the derivation in frontend/src/step-role.ts.

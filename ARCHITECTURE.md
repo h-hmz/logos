@@ -190,9 +190,9 @@ Handler → [`Service.NextTurn`](backend/internal/debate/service.go).
 1. **Load.** `repo.Get(debateID)` returns a `*Persisted`.
 2. **Bounds check.** If `Current >= TotalSteps(NumRounds)`, return a validation error.
 3. **Hydrate.** [`Hydrate(ctx, p, philMap)`](backend/internal/debate/debate.go) builds the full `Runtime`: rebuilds the entire pipeline via `BuildSteps`, seeds `State` with `topic` and every entry from `StepOutputs`.
-4. **Run the agent.** `step.Agent.Run(ctx, rt.State, "continue")`. Inside, this:
+4. **Run the agent.** `step.Agent.Run(ctx, rt.State, kickoffMessage(role))`. Inside, this:
    - Substitutes `{key}` placeholders against `State`.
-   - Builds a 2-message request (system + a literal `"continue"` user message).
+   - Builds a 2-message request (system + a role-specific kickoff user message, e.g. `"Open the debate now."`).
    - Calls `LLM.Generate`, which returns the full completion text and token usage.
    - Returns `RunResult{Text, Usage}`. Side effect: `state[OutputKey]` is updated.
 5. **Persist the turn.** Write `result.Text` into `p.StepOutputs[step.Key]`, accumulate token totals, increment `Current`, `repo.Update`.
