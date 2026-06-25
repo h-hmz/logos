@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -46,6 +47,7 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	debateID := chi.URLParam(r, "debateID")
 
 	defer r.Body.Close()
@@ -88,7 +90,23 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	var deliveredBytes int
 	var synthesized bool
 	defer func() {
-		s.svc.SettleNarration(ctx, uid, reserved, pricing.ActualUSD(deliveredBytes, synthesized))
+		actual := pricing.ActualUSD(deliveredBytes, synthesized)
+		s.svc.SettleNarration(ctx, uid, reserved, actual)
+		cache := "hit"
+		if synthesized {
+			cache = "miss"
+		}
+		slog.LogAttrs(ctx, slog.LevelInfo, "tts_usage",
+			slog.String("event", "tts_usage"),
+			slog.String("cache", cache),
+			slog.String("debate_id", debateID),
+			slog.String("step_key", req.StepKey),
+			slog.String("uid", uid),
+			slog.Int("bytes", deliveredBytes),
+			slog.Float64("cost_usd", actual),
+			slog.Float64("reserved_usd", reserved),
+			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+		)
 	}()
 
 	key := tts.NarrationKey(debateID, text, voice, style, config.TTSModel())
