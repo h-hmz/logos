@@ -16,6 +16,7 @@ import (
 	"github.com/h-hmz/logos/internal/debate"
 	"github.com/h-hmz/logos/internal/philosopher"
 	"github.com/h-hmz/logos/internal/quota"
+	"github.com/h-hmz/logos/internal/tts"
 )
 
 // testQuotaDeps returns quota deps with a fresh in-memory store and a budget high
@@ -349,3 +350,59 @@ type trackedBody struct {
 }
 
 func (t *trackedBody) Close() error { t.closed = true; return nil }
+
+// TestNarrationsStatus verifies GET /debates/{id}/narrations reports cached=true
+// for a debater step whose narration is already stored and cached=false for one
+// that is not, while omitting non-narratable steps (the moderator). It confirms
+// the probe derives the same key the synthesis path stores under, via the shared
+// narrationKey helper.
+func TestNarrationsStatus(t *testing.T) {
+	t.Setenv("TTS_ENABLED", "TRUE")
+	s, repo, _ := testServer(t)
+	narr := tts.NewMemoryNarrationStore()
+	s.narrations = narr
+
+	const kantText = "The categorical imperative binds us."
+	err := repo.Create(context.Background(), &debate.Persisted{
+		ID: "d1", OwnerUID: "dev-local",
+		DebaterAName: "Socrates", DebaterBName: "Kant",
+		NumRounds: 1, MaxWords: 100,
+		StepRecords: []debate.StepRecord{
+			{Key: "moderator_intro", Content: "Welcome."},     // not narratable
+			{Key: "socrates_r1", Content: "I know nothing."},   // narratable, uncached
+			{Key: "kant_r1", Content: kantText},                // narratable, cached below
+		},
+	})
+	if err != nil {
+		t.Fatalf("repo.Create: %v", err)
+	}
+
+	// Pre-synthesize the Kant turn: store a narration under the exact key the
+	// handler will derive for it.
+	voice, style, _ := tts.VoiceForStepKey("kant_r1", s.philosophers)
+	key := tts.NarrationKey("d1", stripParentheticals(kantText), voice, style, config.TTSModel())
+	if err := narr.Put(context.Background(), key, []byte("pcm")); err != nil {
+		t.Fatalf("narr.Put: %v", err)
+	}
+
+	req := chiReq(http.MethodGet, "/debates/d1/narrations", nil, map[string]string{"debateID": "d1"})
+	rr := httptest.NewRecorder()
+	s.narrationsStatus(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var got narrationsStatusResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Cached["kant_r1"] {
+		t.Errorf("kant_r1 cached = false, want true (narration was stored) — got: %v", got.Cached)
+	}
+	if cached, ok := got.Cached["socrates_r1"]; !ok || cached {
+		t.Errorf("socrates_r1 = (%v, present=%v), want (false, true)", cached, ok)
+	}
+	if _, ok := got.Cached["moderator_intro"]; ok {
+		t.Errorf("moderator_intro should be omitted (not narratable) — got: %v", got.Cached)
+	}
+}

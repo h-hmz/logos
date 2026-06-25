@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import {
   DEFAULT_MODEL,
   MODELS,
+  fetchNarrationsCached,
   formatCostUSD,
   formatDuration,
   parseStructured,
@@ -100,6 +101,22 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
 
   const { idx, buffers, turnResults, totalIn, totalOut, advance, retry } =
     useDebatePlayback(debate, initialTurns, onTurnCompleted, auto, roleModels)
+
+  // Per-step narration cache status, fetched once on load: true means an instant
+  // replay, false/absent means playing will synthesize (a charge applies). It's a
+  // snapshot — a freshly generated turn has never been narrated, so it defaults to
+  // uncached, and we optimistically flip a step to cached once it synthesizes.
+  const [narrationCached, setNarrationCached] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    let cancelled = false
+    void fetchNarrationsCached(debate.id).then((m) => {
+      if (!cancelled) setNarrationCached(m)
+    })
+    return () => { cancelled = true }
+  }, [debate.id])
+  const markSynthesized = useCallback((stepKey: string) => {
+    setNarrationCached((prev) => (prev[stepKey] ? prev : { ...prev, [stepKey]: true }))
+  }, [])
 
   // A generation is in flight when any buffer is streaming. The retry control is
   // disabled while busy (the backend allows one generation at a time).
@@ -303,6 +320,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 stepKey={step.key}
                 coordinator={coordinatorRef.current}
                 interjection={buf.interjection}
+                narrationCached={narrationCached[step.key]}
+                onSynthesized={() => markSynthesized(step.key)}
               />
             )
           }

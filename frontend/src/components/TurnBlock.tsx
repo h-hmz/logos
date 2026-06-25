@@ -38,6 +38,12 @@ interface TurnBlockProps {
   coordinator?: AudioCoordinator
   // The owner's interjection that steered this turn, rendered as an aside.
   interjection?: string
+  // Whether a narration for this step already exists server-side. true → instant
+  // replay; false/undefined → playing will synthesize (a charge applies).
+  narrationCached?: boolean
+  // Invoked once this step's audio has been synthesized, so the parent can flip
+  // its cache status to "cached".
+  onSynthesized?: () => void
 }
 
 export function TurnBlock({
@@ -58,6 +64,8 @@ export function TurnBlock({
   stepKey,
   coordinator,
   interjection,
+  narrationCached,
+  onSynthesized,
 }: TurnBlockProps) {
   const { zen } = useZen()
   const selectable = !streaming && !!text && !!stepKey
@@ -127,6 +135,8 @@ export function TurnBlock({
                   stepKey={stepKey}
                   text={audioText}
                   coordinator={coordinator}
+                  cached={narrationCached}
+                  onSynthesized={onSynthesized}
                   onTime={setPos}
                   onFinalDuration={setFinalDur}
                   onStateChange={setPlaying}

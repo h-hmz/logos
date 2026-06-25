@@ -251,6 +251,26 @@ export async function getDebate(debateId: string): Promise<DebateSnapshot> {
   return { session, turns: turns ?? {} }
 }
 
+// fetchNarrationsCached reports, per narratable step key, whether a narration
+// already exists server-side. A true value means playback is an instant replay
+// (no synthesis charge); false (or a missing entry) means playing will
+// synthesize and incur a charge. It's a load-time snapshot — narrations only
+// accrue within a session, so the client optimistically flips a step to cached
+// once it synthesizes one. Returns an empty map when TTS is disabled or the
+// probe fails, so the caller degrades to showing no markers.
+export async function fetchNarrationsCached(debateId: string): Promise<Record<string, boolean>> {
+  try {
+    const res = await fetch(`${API_BASE}/debates/${debateId}/narrations`, {
+      headers: await getAuthHeader(),
+    })
+    if (!res.ok) return {}
+    const body = await res.json() as { cached?: Record<string, boolean> }
+    return body.cached ?? {}
+  } catch {
+    return {}
+  }
+}
+
 export async function createDebate(params: CreateDebateParams): Promise<DebateSession> {
   const res = await fetch(`${API_BASE}/debates`, {
     method: 'POST',

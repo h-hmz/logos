@@ -97,6 +97,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, narrations tts
 		dr.Post("/debates/{debateID}/retry", s.retryTurn)
 		dr.Post("/debates/{debateID}/tutor", s.tutorExplain)
 		dr.Post("/debates/{debateID}/tts", s.synthesizeStep)
+		dr.Get("/debates/{debateID}/narrations", s.narrationsStatus)
 	})
 
 	return r

@@ -43,6 +43,13 @@ interface PlayButtonProps {
   // over onDuration, which reports partial values during streaming.
   onFinalDuration?: (dur: number) => void
   onStateChange?: (playing: boolean) => void
+  // Whether a narration for this step already exists server-side. When true, a
+  // passive badge signals an instant, free replay; false/undefined shows no
+  // badge (playing will synthesize, which is the default expectation).
+  cached?: boolean
+  // Fires once a stream completes, i.e. the narration is now synthesized and
+  // cached, so the parent can show the "already generated" badge.
+  onSynthesized?: () => void
 }
 
 function fmtTime(s: number): string {
@@ -62,6 +69,8 @@ export function PlayButton({
   onDuration,
   onFinalDuration,
   onStateChange,
+  cached,
+  onSynthesized,
 }: PlayButtonProps) {
   const [state, setState] = useState<
     'idle' | 'loading' | 'streaming' | 'playing' | 'paused' | 'error'
@@ -297,6 +306,9 @@ export function PlayButton({
 
       // Stream complete: build the unified buffer for replay/seek.
       doneRef.current = true
+      // The clip is now synthesized (and persisted best-effort), so it will
+      // replay free next time — clear any "will synthesize" marker.
+      onSynthesized?.()
       onFinalDuration?.(totalSamplesRef.current / sampleRate)
       const totalLen = totalSamplesRef.current
       const unified = new Float32Array(totalLen)
@@ -335,6 +347,7 @@ export function PlayButton({
     onTime,
     ownerId,
     pauseSelf,
+    onSynthesized,
   ])
 
   const onSeek = useCallback(
@@ -411,6 +424,15 @@ export function PlayButton({
       >
         {icon} {state === 'loading' ? '' : '🔊'}
       </button>
+      {cached === true && (
+        <span
+          title="Already generated. Replays instantly with no synthesis charge."
+          aria-label="Already generated; replays free"
+          style={{ fontSize: 11, color: 'var(--ink-soft)', cursor: 'help' }}
+        >
+          ✓ saved
+        </span>
+      )}
       {hasAudio && maxSeek > 0 && (
         <>
           <input

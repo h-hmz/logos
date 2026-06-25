@@ -56,3 +56,16 @@ func (s *GCSNarrationStore) Put(ctx context.Context, key string, data []byte) er
 	}
 	return nil
 }
+
+// Exists reports whether an object is stored at key, fetching only its metadata
+// (Attrs). Cheaper than Open for a pure presence check.
+func (s *GCSNarrationStore) Exists(ctx context.Context, key string) (bool, error) {
+	_, err := s.bucket.Object(key).Attrs(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("tts: exists %q: %w", key, err)
+	}
+	return true, nil
+}

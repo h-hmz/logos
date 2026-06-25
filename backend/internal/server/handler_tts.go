@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -163,6 +164,63 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	if err := s.narrations.Put(ctx, key, buf.Bytes()); err != nil {
 		slog.WarnContext(ctx, "tts: failed to persist narration", "key", key, "error", err)
 	}
+}
+
+// ── GET /debates/{debateID}/narrations ───────────────────────────────────────
+
+type narrationsStatusResponse struct {
+	// Cached maps a narratable step key to whether its narration already exists
+	// in the store. A true value means playback is an instant replay (egress
+	// only); false means playback will synthesize and incur the synthesis charge.
+	Cached map[string]bool `json:"cached"`
+}
+
+// narrationsStatus reports, per narratable step, whether a narration already
+// exists — so the client can warn before a play that will synthesize (a cache
+// miss) versus an instant replay (a hit).
+func (s *Server) narrationsStatus(w http.ResponseWriter, r *http.Request) {
+	if !config.TTSEnabled() {
+		writeError(w, http.StatusServiceUnavailable, "TTS is disabled on this server")
+		return
+	}
+
+	debateID := chi.URLParam(r, "debateID")
+	res, err := s.svc.GetSession(r.Context(), debateID)
+	if err != nil {
+		writeServiceError(r.Context(), w, err)
+		return
+	}
+
+	ctx := r.Context()
+	cached := make(map[string]bool, len(res.Turns))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, t := range res.Turns {
+		voice, style, ok := tts.VoiceForStepKey(t.Step.Key, s.philosophers)
+		text := stripParentheticals(t.Content)
+		if !ok || text == "" {
+			continue // not a narratable step
+		}
+		// Key over the stripped text and the TTS model, exactly as synthesizeStep
+		// does, so this presence check matches the key a real play would store under.
+		key := tts.NarrationKey(debateID, text, voice, style, config.TTSModel())
+		stepKey := t.Step.Key
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			exists, eerr := s.narrations.Exists(ctx, key)
+			if eerr != nil {
+				slog.WarnContext(ctx, "tts: narration exists check failed; reporting not cached", "key", key, "error", eerr)
+				exists = false
+			}
+			mu.Lock()
+			cached[stepKey] = exists
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	writeJSON(w, http.StatusOK, narrationsStatusResponse{Cached: cached})
 }
 
 // teeFlushWriter writes streamed PCM to the client and mirrors it into buf for
