@@ -531,6 +531,60 @@ button { font-family: inherit; }
 .retry-menu-item:hover { background: var(--bg-2); color: var(--accent-ink); }
 .retry-menu-item .cur { color: var(--ink-soft); }
 
+/* ============ Read-aloud (TTS) control ============
+   "Recite": a small-caps verb button led by a speaker glyph — idle shows the
+   speaker, playback swaps it for two pause bars. Once audio exists a hairline
+   progress rule + mono timecode follow. The filled portion of the rule is
+   painted via an inline linear-gradient that references --tts-track for its
+   unfilled remainder. */
+:root { --tts-track: rgba(26, 22, 18, 0.12); }
+[data-theme="dark"] { --tts-track: rgba(239, 224, 194, 0.14); }
+
+.tts { display: inline-flex; align-items: center; gap: 10px; vertical-align: middle; }
+
+.tts-recite {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--sc); letter-spacing: 0.18em; text-transform: uppercase; font-size: 11px;
+  padding: 5px 13px; border: 1px solid var(--rule); background: transparent; color: var(--ink-2);
+  cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.tts-recite:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
+.tts-recite.is-active { border-color: var(--accent); color: var(--accent-ink); background: rgba(176, 74, 42, 0.06); }
+.tts-recite.is-error { border-color: var(--accent); color: var(--accent-ink); }
+.tts-recite:disabled { opacity: 0.4; cursor: not-allowed; }
+.tts-recite svg { display: block; flex-shrink: 0; }
+
+.tts-track {
+  -webkit-appearance: none; appearance: none;
+  width: 110px; height: 3px; margin: 0; border-radius: 999px; cursor: pointer;
+  background: var(--tts-track); outline: none;
+}
+.tts-track::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 10px; height: 10px; border: none; border-radius: 50%; background: var(--accent); cursor: pointer;
+}
+.tts-track::-moz-range-thumb {
+  width: 10px; height: 10px; border: none; border-radius: 50%; background: var(--accent); cursor: pointer;
+}
+.tts-track:disabled { cursor: default; opacity: 0.6; }
+.tts-track:disabled::-webkit-slider-thumb { background: var(--ink-soft); }
+.tts-track:disabled::-moz-range-thumb { background: var(--ink-soft); }
+
+.tts-tc {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+  color: var(--ink-soft); min-width: 64px;
+}
+
+.tts-saved {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--sc); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--accent-ink); cursor: help;
+}
+.tts-saved .dot {
+  width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--accent);
+  display: grid; place-items: center; font-size: 8px; line-height: 1;
+}
+
 /* ============ Verdict ============ */
 .verdict-hero {
   padding: 72px 0 40px;

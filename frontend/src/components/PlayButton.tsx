@@ -379,64 +379,109 @@ export function PlayButton({
     [onStateChange, onTime, startTicker, stopAll],
   )
 
-  const icon =
+  const isPlaying = state === 'playing' || state === 'streaming'
+  const title =
+    state === 'error'
+      ? (errorMsg ?? 'Could not read aloud — click to retry')
+      : isPlaying
+        ? 'Pause'
+        : state === 'paused'
+          ? 'Resume'
+          : 'Read aloud'
+  // Small-caps verb that names the action; the speaker is the resting identity.
+  const label =
+    state === 'loading'
+      ? 'Reciting'
+      : state === 'error'
+        ? 'Retry'
+        : isPlaying
+          ? 'Pause'
+          : state === 'paused'
+            ? 'Resume'
+            : 'Recite'
+  const hasAudio = totalSamplesRef.current > 0
+  const maxSeek = dur > 0 ? dur : 0
+  const seekDisabled = !doneRef.current
+  const filledPct = maxSeek > 0 ? (Math.min(pos, maxSeek) / maxSeek) * 100 : 0
+
+  const speaker = (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 9v6h4l5 4V5L8 9H4z" />
+      <path d="M16.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M19.8 6a9 9 0 0 1 0 12" />
+    </svg>
+  )
+  const leadingIcon =
     state === 'loading' ? (
       <svg
         className="spin"
-        width="12"
-        height="12"
+        width="11"
+        height="11"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
         strokeWidth="3"
         strokeLinecap="round"
-        style={{ verticalAlign: '-1px' }}
+        aria-hidden="true"
       >
         <path d="M21 12a9 9 0 1 1-6.219-8.56" />
       </svg>
-    ) : state === 'playing' || state === 'streaming' ? (
-      '⏸'
+    ) : isPlaying ? (
+      // Two bars — pause/stop while the voice is sounding.
+      <svg width="9" height="11" viewBox="0 0 11 13" fill="currentColor" aria-hidden="true">
+        <rect x="1" width="3" height="13" rx="1" />
+        <rect x="7" width="3" height="13" rx="1" />
+      </svg>
+    ) : state === 'paused' ? (
+      <svg width="9" height="11" viewBox="0 0 9 11" fill="currentColor" aria-hidden="true">
+        <path d="M0 0l9 5.5L0 11z" />
+      </svg>
     ) : (
-      '▶'
+      speaker
     )
-  const title =
-    state === 'error'
-      ? (errorMsg ?? 'error')
-      : state === 'playing' || state === 'streaming'
-        ? 'Pause'
-        : state === 'paused'
-          ? 'Resume'
-          : 'Read aloud'
-  const hasAudio = totalSamplesRef.current > 0
-  const maxSeek = dur > 0 ? dur : 0
-  const seekDisabled = !doneRef.current
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span className="tts">
       <button
         type="button"
-        className="btn ghost small"
+        className={`tts-recite${isPlaying ? ' is-active' : ''}${
+          state === 'error' ? ' is-error' : ''
+        }`}
         onClick={onToggle}
         disabled={disabled || state === 'loading' || !text}
         title={title}
         aria-label={title}
-        style={{ padding: '2px 8px', fontSize: 12, lineHeight: 1.4 }}
       >
-        {icon} {state === 'loading' ? '' : '🔊'}
+        {leadingIcon}
+        {label}
       </button>
       {cached === true && (
         <span
+          className="tts-saved"
           title="Already generated. Replays instantly with no synthesis charge."
           aria-label="Already generated; replays free"
-          style={{ fontSize: 11, color: 'var(--ink-soft)', cursor: 'help' }}
         >
-          ✓ saved
+          <span className="dot" aria-hidden="true">
+            ✓
+          </span>{' '}
+          saved
         </span>
       )}
       {hasAudio && maxSeek > 0 && (
         <>
           <input
             type="range"
+            className="tts-track"
             min={0}
             max={maxSeek}
             step={0.1}
@@ -444,12 +489,11 @@ export function PlayButton({
             onChange={onSeek}
             disabled={seekDisabled}
             aria-label="Seek"
-            style={{ width: 120, verticalAlign: 'middle' }}
+            style={{
+              background: `linear-gradient(to right, var(--accent) 0 ${filledPct}%, var(--tts-track) ${filledPct}% 100%)`,
+            }}
           />
-          <span
-            className="t-mono"
-            style={{ fontSize: 11, color: 'var(--ink-soft)', minWidth: 64 }}
-          >
+          <span className="tts-tc">
             {fmtTime(pos)} / {fmtTime(maxSeek)}
           </span>
         </>
