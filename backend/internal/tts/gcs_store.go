@@ -57,15 +57,16 @@ func (s *GCSNarrationStore) Put(ctx context.Context, key string, data []byte) er
 	return nil
 }
 
-// Exists reports whether an object is stored at key, fetching only its metadata
-// (Attrs). Cheaper than Open for a pure presence check.
-func (s *GCSNarrationStore) Exists(ctx context.Context, key string) (bool, error) {
-	_, err := s.bucket.Object(key).Attrs(ctx)
+// Stat reports whether an object is stored at key and, when it is, its byte
+// size, fetching only its metadata (Attrs) — never the bytes. The size feeds the
+// derived-on-read synthesis cost (ADR 0013 §6).
+func (s *GCSNarrationStore) Stat(ctx context.Context, key string) (int64, bool, error) {
+	attrs, err := s.bucket.Object(key).Attrs(ctx)
 	if errors.Is(err, storage.ErrObjectNotExist) {
-		return false, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("tts: exists %q: %w", key, err)
+		return 0, false, fmt.Errorf("tts: stat %q: %w", key, err)
 	}
-	return true, nil
+	return attrs.Size, true, nil
 }

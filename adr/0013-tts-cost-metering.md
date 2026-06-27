@@ -1,6 +1,6 @@
 # ADR 0013: Meter TTS by reserve-then-settle on a byte-derived cost
 
-Date: 2026-06-15
+Date: 2026-06-15 (amended 2026-06-27 — §6 added: surfacing the synthesis cost)
 Status: Accepted (extends [ADR 0009](0009-cost-based-per-user-quota.md); depends on [ADR 0012](0012-narration-persistence.md))
 
 ## Context
@@ -91,6 +91,32 @@ reserve/settle pair over the quota store.
 pricing baked into code. `charsPerSec` and `margin` are internal constants — they
 bound, they don't price.
 
+### 6. Surfacing the synthesis cost: derived on read, never persisted
+
+The frontend shows, per narration, the **synthesis** component of §1 only —
+egress is a per-play billing concern that never surfaces. Because synthesis cost
+is a pure function of the stored clip's byte count — the same property that makes
+the key content-addressed ([ADR 0012](0012-narration-persistence.md)) — it is
+**derived on read from the blob's size, never persisted.** The
+`GET /debates/{debateID}/narrations` status endpoint, which already fans out a
+per-step presence check, now returns each cached step's synthesis cost beside
+`cached`, computed from the object's byte length; `NarrationStore` gains a
+size-returning `Stat` in place of the bare `Exists` (GCS `Attrs`, memory `len` —
+still no download). An unsynthesized step has nothing in the store to measure, so
+it shows no cost; the frontend never estimates.
+
+This is a **deliberate asymmetry** with LLM cost, which is persisted frozen in
+`debate.StepRecord`. Narration synthesis cost is recomputed from bytes at current
+rates (§5), so a later rate change retroactively shifts the *displayed* figure —
+accepted because it is informational, the real charge was already settled to the
+purse (§2), and the magnitude is sub-cent. Persisting the cost into `StepRecord`
+at synthesis was rejected: it would store a value already derivable from bytes we
+keep regardless, force a debate-state write onto the stateless narration path
+(§4, ADR 0012), and pull a TTS concept into the `debate` package the API surface
+keeps separate. So the `debate` package stays free of TTS, and the figure is
+owner-agnostic — what the narration cost to *make*, shown identically to owner
+and guest, never a per-viewer "what this play cost you".
+
 ## Consequences
 
 ### Positive
@@ -101,6 +127,9 @@ bound, they don't price.
   estimation survives into the recorded spend.
 - Closes both holes ADR 0012 left open (unmetered synthesis + free-replay
   egress) with one mechanism.
+- **The `debate` package stays free of TTS.** Surfacing reuses §1's byte-derived
+  synthesis cost on the read path and persists nothing, so the debate↔tts
+  boundary holds (§6).
 
 ### Negative
 
@@ -123,6 +152,10 @@ bound, they don't price.
 - **Deliberate divergence from ADR 0009.** The debate path allow-then-charges and
   tolerates N-instance overshoot; TTS reserves-then-settles for zero. Two
   metering models, justified by TTS being estimable (§Context).
+- **Displayed synthesis cost drifts with rates.** The surfaced per-narration
+  figure is derived on read at current rates (§6), not frozen like LLM cost in
+  `StepRecord`; a rate change retroactively moves old narrations' *shown* cost.
+  Informational only — the settled charge is untouched — and sub-cent.
 
 ## Implementation
 
@@ -135,3 +168,12 @@ bound, they don't price.
   stream → deferred settle on the exact byte count.
 - [backend/internal/config/config.go](../backend/internal/config/config.go) —
   `USD_PER_AUDIO_TOKEN` and `USD_PER_EGRESS_GB` accessors, validated.
+- [backend/internal/tts/store.go](../backend/internal/tts/store.go) —
+  `NarrationStore.Stat` (byte size + presence) replacing the `Exists` call site;
+  GCS `Attrs`, memory `len`.
+- [backend/internal/server/handler_tts.go](../backend/internal/server/handler_tts.go)
+  — `narrationsStatus` returns per-step `{cached, synthesis_cost_usd}`, the cost
+  being §1's synthesis component over the stored byte count.
+- `frontend/` — narrations endpoint becomes per-step objects; the `PlayButton`
+  "saved" badge shows the cost; `onSynthesized` refetches the status to fill a
+  freshly synthesized step.

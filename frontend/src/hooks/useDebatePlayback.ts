@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, streamTurn, streamRetry, type DebateModels, type DebateSession, type TurnResult } from '../api'
 import { roleForLabel } from '../step-role'
-import { useQuota } from '../QuotaContext'
 
 const STORAGE_KEY = (id: string) => `logos_step_${id}`
 const AUTO_ADVANCE_DELAY_MS = 1400
@@ -103,7 +102,6 @@ export function useDebatePlayback(
   // on buffers and churn on every token.
   const buffersRef = useRef(buffers)
   useEffect(() => { buffersRef.current = buffers }, [buffers])
-  const { refresh: refreshQuota } = useQuota()
 
   useEffect(() => {
     try {
@@ -115,7 +113,7 @@ export function useDebatePlayback(
 
   // runStep drives one generation for stepIndex: it flips the step's buffer to
   // streaming, appends tokens as they arrive, and on success records the final
-  // TurnResult, updates totals, and refreshes the budget. advancePlayhead moves
+  // TurnResult and updates totals. advancePlayhead moves
   // the playhead to the next step (a forward turn); a retry leaves it put and
   // replaces the step in place. A failed retry restores the prior buffer, since
   // the server leaves the original generation untouched on failure.
@@ -165,15 +163,12 @@ export function useDebatePlayback(
         setTotalIn(result.total_input_tokens)
         setTotalOut(result.total_output_tokens)
         if (advancePlayhead) setIdx(stepIndex + 1)
-        // A generation just spent from the budget; pull the new balance.
-        void refreshQuota()
       } catch (e) {
         // 402 means the budget is exhausted. Show a plain message naming the
-        // limit (the pill already knows it) and refresh so the balance reads $0.
+        // limit; the balance refreshes the next time the profile menu opens.
         let msg = e instanceof Error ? e.message : 'stream failed'
         if (e instanceof ApiError && e.status === 402) {
           msg = 'Your purse is empty.'
-          void refreshQuota()
         }
         setBuffers((prev) => {
           // A failed retry leaves the stored answer intact server-side, so put
@@ -202,7 +197,7 @@ export function useDebatePlayback(
         inFlight.current = false
       }
     },
-    [onTurnCompleted, refreshQuota],
+    [onTurnCompleted],
   )
 
   const advance = useCallback(

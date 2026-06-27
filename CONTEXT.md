@@ -91,6 +91,21 @@ are the same exactly when their text, voice, style, and model match; a [[retry]]
 that changes a step's text therefore yields a different narration.
 _Avoid_: generation (a narration is not the unit quota meters), clip, recording, audio
 
+**Synthesis cost**:
+What it cost to *produce* a [[narration]] once — a function of the audio's byte
+count, paid by whoever first synthesizes it. An intrinsic, owner-agnostic
+property of the narration's content: the same number no matter who later replays
+it, and the figure surfaced to the reader as "what this narration cost to make".
+Distinct from the **egress charge**.
+_Avoid_: TTS cost, audio cost, narration cost (all ambiguous as to which component)
+
+**Egress charge**:
+The per-play cost of *delivering* a [[narration]]'s bytes, billed on every play
+(hit or miss) to whoever is playing. A per-request billing/quota concern that
+stays in the logs and the purse — never surfaced as a debate metric, unlike
+**synthesis cost**.
+_Avoid_: replay cost, bandwidth cost
+
 ## Example dialogue
 
 > **Dev:** When the user hits retry, are we re-running the whole round?

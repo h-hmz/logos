@@ -251,21 +251,35 @@ export async function getDebate(debateId: string): Promise<DebateSnapshot> {
   return { session, turns: turns ?? {} }
 }
 
-// fetchNarrationsCached reports, per narratable step key, whether a narration
-// already exists server-side. A true value means playback is an instant replay
-// (no synthesis charge); false (or a missing entry) means playing will
-// synthesize and incur a charge. It's a load-time snapshot — narrations only
-// accrue within a session, so the client optimistically flips a step to cached
-// once it synthesizes one. Returns an empty map when TTS is disabled or the
-// probe fails, so the caller degrades to showing no markers.
-export async function fetchNarrationsCached(debateId: string): Promise<Record<string, boolean>> {
+// NarrationStatus is a step's narration state: whether a narration already
+// exists server-side (an instant, free replay) and, when it does, the one-time
+// synthesis cost of producing it (ADR 0013 §6) — what it cost to make, the same
+// figure for owner and guest. costUsd is absent until a narration exists, and on
+// an unmetered deployment.
+export interface NarrationStatus {
+  cached: boolean
+  costUsd?: number
+}
+
+// fetchNarrations reports, per narratable step key, its narration status. It's a
+// load-time snapshot — narrations only accrue within a session, so the client
+// refetches once a step synthesizes to pick up its new cost. Returns an empty
+// map when TTS is disabled or the probe fails, so the caller degrades to showing
+// no markers.
+export async function fetchNarrations(debateId: string): Promise<Record<string, NarrationStatus>> {
   try {
     const res = await fetch(`${API_BASE}/debates/${debateId}/narrations`, {
       headers: await getAuthHeader(),
     })
     if (!res.ok) return {}
-    const body = await res.json() as { cached?: Record<string, boolean> }
-    return body.cached ?? {}
+    const body = (await res.json()) as {
+      narrations?: Record<string, { cached?: boolean; synthesis_cost_usd?: number }>
+    }
+    const out: Record<string, NarrationStatus> = {}
+    for (const [key, info] of Object.entries(body.narrations ?? {})) {
+      out[key] = { cached: info.cached ?? false, costUsd: info.synthesis_cost_usd }
+    }
+    return out
   } catch {
     return {}
   }

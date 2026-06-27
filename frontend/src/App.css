@@ -584,6 +584,8 @@ button { font-family: inherit; }
   width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--accent);
   display: grid; place-items: center; font-size: 8px; line-height: 1;
 }
+/* The synthesis cost reads as a dimmed numeric, not uppercased small-caps. */
+.tts-saved-cost { opacity: 0.72; letter-spacing: 0.04em; text-transform: none; }
 
 /* ============ Verdict ============ */
 .verdict-hero {
@@ -784,23 +786,6 @@ button { font-family: inherit; }
   /* One line, always — the dropdown sizes to fit it so the row count can't
      flip between the ON and OFF states. */
   white-space: nowrap;
-}
-
-/* Lifetime dollar budget remaining — distinct from the per-debate token pills. */
-.quota-pill {
-  display: inline-flex; align-items: center;
-  font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em;
-  padding: 3px 10px; border: 1px solid var(--rule);
-  background: var(--panel); color: var(--ink-2);
-  border-radius: 999px; white-space: nowrap;
-}
-.quota-pill.depleted {
-  color: var(--accent-ink); border-color: var(--accent);
-  background: rgba(176, 74, 42, 0.08);
-}
-.quota-pill.skeleton {
-  min-width: 64px; height: 22px; color: transparent; border-color: transparent;
-  background: var(--rule); opacity: 0.4; animation: pulse 1.2s ease-in-out infinite;
 }
 
 /* ============ Theme toggle ============ */

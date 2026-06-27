@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import {
   DEFAULT_MODEL,
   MODELS,
-  fetchNarrationsCached,
+  fetchNarrations,
   formatCostUSD,
   formatDuration,
   parseStructured,
@@ -10,6 +10,7 @@ import {
   type DebateModels,
   type DebateSession,
   type JudgeVerdict,
+  type NarrationStatus,
   type TurnResult,
 } from '../api'
 import type { TurnBuffer } from '../hooks/useDebatePlayback'
@@ -102,21 +103,27 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
   const { idx, buffers, turnResults, totalIn, totalOut, advance, retry } =
     useDebatePlayback(debate, initialTurns, onTurnCompleted, auto, roleModels)
 
-  // Per-step narration cache status, fetched once on load: true means an instant
-  // replay, false/absent means playing will synthesize (a charge applies). It's a
-  // snapshot — a freshly generated turn has never been narrated, so it defaults to
-  // uncached, and we optimistically flip a step to cached once it synthesizes.
-  const [narrationCached, setNarrationCached] = useState<Record<string, boolean>>({})
+  // Per-step narration status, fetched once on load: cached means an instant
+  // replay (and carries the synthesis cost), uncached/absent means playing will
+  // synthesize (a charge applies). It's a snapshot — a freshly generated turn has
+  // never been narrated, so it defaults to uncached.
+  const [narrations, setNarrations] = useState<Record<string, NarrationStatus>>({})
   useEffect(() => {
     let cancelled = false
-    void fetchNarrationsCached(debate.id).then((m) => {
-      if (!cancelled) setNarrationCached(m)
+    void fetchNarrations(debate.id).then((m) => {
+      if (!cancelled) setNarrations(m)
     })
     return () => { cancelled = true }
   }, [debate.id])
+  // Once a step synthesizes, optimistically show its "saved" badge, then refetch
+  // the status so the step picks up its exact synthesis cost (ADR 0013 §6) — and
+  // reconciles if the best-effort persist actually failed.
   const markSynthesized = useCallback((stepKey: string) => {
-    setNarrationCached((prev) => (prev[stepKey] ? prev : { ...prev, [stepKey]: true }))
-  }, [])
+    setNarrations((prev) =>
+      prev[stepKey]?.cached ? prev : { ...prev, [stepKey]: { ...prev[stepKey], cached: true } },
+    )
+    void fetchNarrations(debate.id).then(setNarrations)
+  }, [debate.id])
 
   // A generation is in flight when any buffer is streaming. The retry control is
   // disabled while busy (the backend allows one generation at a time).
@@ -320,7 +327,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
                 stepKey={step.key}
                 coordinator={coordinatorRef.current}
                 interjection={buf.interjection}
-                narrationCached={narrationCached[step.key]}
+                narrationCached={narrations[step.key]?.cached}
+                narrationCostUSD={narrations[step.key]?.costUsd}
                 onSynthesized={() => markSynthesized(step.key)}
               />
             )

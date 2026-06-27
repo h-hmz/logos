@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { ApiError, formatCostUSD, streamTutor, type TutorMessage } from '../api'
-import { useQuota } from '../QuotaContext'
 import { useZen } from '../ZenContext'
 import { InlineMd } from './InlineMd'
 import { NoctuaIcon } from './NoctuaIcon'
@@ -44,7 +43,6 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose, mod
   // closing over stale state.
   const entriesRef = useRef<ChatEntry[]>([])
   useEffect(() => { entriesRef.current = entries }, [entries])
-  const { refresh: refreshQuota } = useQuota()
   const { zen } = useZen()
 
   const toHistory = (list: ChatEntry[]): TutorMessage[] =>
@@ -95,13 +93,10 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose, mod
           }
           return copy
         })
-        // A tutor reply just spent from the budget; pull the new balance.
-        void refreshQuota()
       } catch (e) {
         let msg = e instanceof Error ? e.message : 'Tutor request failed'
         if (e instanceof ApiError && e.status === 402) {
           msg = 'Your purse is empty.'
-          void refreshQuota()
         }
         setEntries((prev) => {
           const copy = prev.slice()
@@ -115,7 +110,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose, mod
         setBusy(false)
       }
     },
-    [busy, debateId, selection, turnKey, refreshQuota, model],
+    [busy, debateId, selection, turnKey, model],
   )
 
   // Focus the composer on open (mount or reopen) and preselect the default so

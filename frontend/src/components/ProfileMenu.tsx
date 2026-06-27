@@ -3,7 +3,37 @@ import { useAuth } from '../AuthContext'
 import { useQuota } from '../QuotaContext'
 import { useZen } from '../ZenContext'
 import { firebaseEnabled } from '../firebase'
-import { formatRemaining } from './QuotaPill'
+
+// formatRemaining renders the balance shown in the menu's Budget row:
+//  - 0         -> "$0.00 left" (truly depleted)
+//  - (0, 0.01) -> "<$0.01 left" (never floor a real balance to $0.00)
+//  - otherwise -> floored to cents, e.g. "$0.63 left" (never overstate)
+function formatRemaining(remaining: number): string {
+  if (remaining === 0) return '$0.00 left'
+  if (remaining < 0.01) return '<$0.01 left'
+  const floored = Math.floor(remaining * 100) / 100
+  return `$${floored.toFixed(2)} left`
+}
+
+// BudgetSpinner — the same rotating arc the Recite button uses, sized for the
+// Budget row while the first /me/quota read is in flight.
+function BudgetSpinner() {
+  return (
+    <svg
+      className="spin"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  )
+}
 
 // Line icons drawn with currentColor so they inherit the menu item's text
 // color (matches the NoctuaIcon convention). 24×24 viewBox, feather-style.
@@ -80,7 +110,7 @@ interface ProfileMenuProps {
 // light/dark theme toggle, and sign-out.
 export function ProfileMenu({ theme, onToggleTheme }: ProfileMenuProps) {
   const { user, signOut } = useAuth()
-  const { remaining, status } = useQuota()
+  const { remaining, status, refresh } = useQuota()
   const { zen, toggleZen } = useZen()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -120,7 +150,13 @@ export function ProfileMenu({ theme, onToggleTheme }: ProfileMenuProps) {
       <button
         type="button"
         className="profile-trigger"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() =>
+          setOpen((v) => {
+            // Read the balance lazily: fetch /me/quota only as the menu opens.
+            if (!v) void refresh()
+            return !v
+          })
+        }
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Account menu"
@@ -144,10 +180,10 @@ export function ProfileMenu({ theme, onToggleTheme }: ProfileMenuProps) {
             {email && <div className="profile-email">{email}</div>}
           </div>
 
-          {budget && (
+          {(budget || status === 'loading') && (
             <div className="profile-row" role="presentation">
               <span className="profile-row-label">Budget</span>
-              <span className="profile-row-value">{budget}</span>
+              <span className="profile-row-value">{budget ?? <BudgetSpinner />}</span>
             </div>
           )}
 

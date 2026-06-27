@@ -48,6 +48,13 @@ func (p Pricing) ActualUSD(bytes int, synthesized bool) float64 {
 	return c
 }
 
+// SynthesisUSD is the one-time cost of producing a narration of the given byte
+// count — the synthesis component of ActualUSD, with no egress. This is the
+// figure surfaced per narration on the read path (ADR 0013 §6): because it is a
+// pure function of the stored clip's bytes, it is derived on demand from the
+// stored size rather than persisted alongside the debate's LLM metrics.
+func (p Pricing) SynthesisUSD(bytes int) float64 { return p.synthUSD(bytes) }
+
 // EstimateUSD is the conservative pre-flight reservation for an input of chars
 // characters: it assumes a cache miss (synthesis + egress) and applies estMargin
 // so the reservation exceeds the eventual ActualUSD (ADR 0013).

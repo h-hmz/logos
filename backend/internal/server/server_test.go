@@ -358,7 +358,7 @@ func (t *trackedBody) Close() error { t.closed = true; return nil }
 // narrationKey helper.
 func TestNarrationsStatus(t *testing.T) {
 	t.Setenv("TTS_ENABLED", "TRUE")
-	s, repo, _ := testServer(t)
+	s, repo, _ := testServer(t) // sets a non-zero TTS synthesis rate, so cached steps report a cost
 	narr := tts.NewMemoryNarrationStore()
 	s.narrations = narr
 
@@ -396,13 +396,23 @@ func TestNarrationsStatus(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !got.Cached["kant_r1"] {
-		t.Errorf("kant_r1 cached = false, want true (narration was stored) — got: %v", got.Cached)
+	if !got.Narrations["kant_r1"].Cached {
+		t.Errorf("kant_r1 cached = false, want true (narration was stored) — got: %v", got.Narrations)
 	}
-	if cached, ok := got.Cached["socrates_r1"]; !ok || cached {
-		t.Errorf("socrates_r1 = (%v, present=%v), want (false, true)", cached, ok)
+	if info, ok := got.Narrations["socrates_r1"]; !ok || info.Cached {
+		t.Errorf("socrates_r1 = (%+v, present=%v), want (cached=false, present=true)", info, ok)
 	}
-	if _, ok := got.Cached["moderator_intro"]; ok {
-		t.Errorf("moderator_intro should be omitted (not narratable) — got: %v", got.Cached)
+	if _, ok := got.Narrations["moderator_intro"]; ok {
+		t.Errorf("moderator_intro should be omitted (not narratable) — got: %v", got.Narrations)
+	}
+	// kant_r1's narration is 3 bytes ("pcm"); its surfaced cost must be the
+	// byte-derived synthesis figure (ADR 0013 §6), not zero or persisted.
+	wantCost := tts.Pricing{USDPer1MAudioTokens: config.USDPer1MAudioTokens()}.SynthesisUSD(len("pcm"))
+	if got := got.Narrations["kant_r1"].SynthesisCostUSD; got != wantCost {
+		t.Errorf("kant_r1 synthesis_cost_usd = %v, want %v (derived from 3 stored bytes)", got, wantCost)
+	}
+	// An uncached step carries no cost — nothing is stored to measure.
+	if got := got.Narrations["socrates_r1"].SynthesisCostUSD; got != 0 {
+		t.Errorf("socrates_r1 synthesis_cost_usd = %v, want 0 (uncached)", got)
 	}
 }

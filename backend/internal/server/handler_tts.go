@@ -168,16 +168,29 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /debates/{debateID}/narrations ───────────────────────────────────────
 
+// narrationInfo is the per-step narration status: whether a narration exists and,
+// when it does, its synthesis cost — the one-time cost of producing the clip
+// (ADR 0013 §6), derived on read from the stored byte count and never persisted.
+// SynthesisCostUSD is omitted for an uncached step (nothing is stored to measure)
+// and for an unmetered deployment (zero rate), so the client shows no figure in
+// either case.
+type narrationInfo struct {
+	Cached           bool    `json:"cached"`
+	SynthesisCostUSD float64 `json:"synthesis_cost_usd,omitempty"`
+}
+
 type narrationsStatusResponse struct {
-	// Cached maps a narratable step key to whether its narration already exists
-	// in the store. A true value means playback is an instant replay (egress
-	// only); false means playback will synthesize and incur the synthesis charge.
-	Cached map[string]bool `json:"cached"`
+	// Narrations maps each narratable step key to its status. A cached step
+	// replays instantly (egress only) and carries its synthesis cost; an uncached
+	// step will synthesize (and be charged) on play and carries no cost.
+	Narrations map[string]narrationInfo `json:"narrations"`
 }
 
 // narrationsStatus reports, per narratable step, whether a narration already
-// exists — so the client can warn before a play that will synthesize (a cache
-// miss) versus an instant replay (a hit).
+// exists and — when it does — its synthesis cost (ADR 0013 §6, derived on read
+// from the stored byte count). The client uses presence to warn before a play
+// that will synthesize (a miss) versus an instant replay (a hit), and shows the
+// cost as what the narration cost to make.
 func (s *Server) narrationsStatus(w http.ResponseWriter, r *http.Request) {
 	if !config.TTSEnabled() {
 		writeError(w, http.StatusServiceUnavailable, "TTS is disabled on this server")
@@ -192,7 +205,10 @@ func (s *Server) narrationsStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	cached := make(map[string]bool, len(res.Turns))
+	// Only the synthesis rate is needed — egress is a per-play charge, not a
+	// property of a stored narration, so it never surfaces here (ADR 0013 §6).
+	pricing := tts.Pricing{USDPer1MAudioTokens: config.USDPer1MAudioTokens()}
+	narrations := make(map[string]narrationInfo, len(res.Turns))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, t := range res.Turns {
@@ -208,19 +224,25 @@ func (s *Server) narrationsStatus(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			exists, eerr := s.narrations.Exists(ctx, key)
-			if eerr != nil {
-				slog.WarnContext(ctx, "tts: narration exists check failed; reporting not cached", "key", key, "error", eerr)
+			size, exists, serr := s.narrations.Stat(ctx, key)
+			if serr != nil {
+				slog.WarnContext(ctx, "tts: narration stat failed; reporting not cached", "key", key, "error", serr)
 				exists = false
 			}
+			info := narrationInfo{Cached: exists}
+			if exists {
+				// Synthesis cost is a pure function of the stored bytes (ADR 0013 §6):
+				// derived here from the size, never persisted next to the LLM metrics.
+				info.SynthesisCostUSD = pricing.SynthesisUSD(int(size))
+			}
 			mu.Lock()
-			cached[stepKey] = exists
+			narrations[stepKey] = info
 			mu.Unlock()
 		}()
 	}
 	wg.Wait()
 
-	writeJSON(w, http.StatusOK, narrationsStatusResponse{Cached: cached})
+	writeJSON(w, http.StatusOK, narrationsStatusResponse{Narrations: narrations})
 }
 
 // teeFlushWriter writes streamed PCM to the client and mirrors it into buf for

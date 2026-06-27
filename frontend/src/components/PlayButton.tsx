@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type ChangeEvent } from 'react'
-import { streamTTS } from '../api'
+import { formatCostUSD, streamTTS } from '../api'
 
 // Single-active-audio coordinator: only one PlayButton may play at a time.
 // Scoped to a LivePage instance via useRef so state doesn't bleed between
@@ -47,6 +47,10 @@ interface PlayButtonProps {
   // passive badge signals an instant, free replay; false/undefined shows no
   // badge (playing will synthesize, which is the default expectation).
   cached?: boolean
+  // The one-time synthesis cost of this narration (ADR 0013 §6), shown beside the
+  // "saved" badge as what it cost to make. Present only alongside cached; omitted
+  // in zen mode and on an unmetered deployment.
+  synthesisCostUSD?: number
   // Fires once a stream completes, i.e. the narration is now synthesized and
   // cached, so the parent can show the "already generated" badge.
   onSynthesized?: () => void
@@ -70,6 +74,7 @@ export function PlayButton({
   onFinalDuration,
   onStateChange,
   cached,
+  synthesisCostUSD,
   onSynthesized,
 }: PlayButtonProps) {
   const [state, setState] = useState<
@@ -468,13 +473,20 @@ export function PlayButton({
       {cached === true && (
         <span
           className="tts-saved"
-          title="Already generated. Replays instantly with no synthesis charge."
+          title={
+            synthesisCostUSD !== undefined
+              ? `Cost ${formatCostUSD(synthesisCostUSD)} to synthesize; replays are free.`
+              : 'Already generated. Replays instantly with no synthesis charge.'
+          }
           aria-label="Already generated; replays free"
         >
           <span className="dot" aria-hidden="true">
             ✓
           </span>{' '}
           saved
+          {synthesisCostUSD !== undefined && (
+            <span className="tts-saved-cost"> · {formatCostUSD(synthesisCostUSD)}</span>
+          )}
         </span>
       )}
       {hasAudio && maxSeek > 0 && (

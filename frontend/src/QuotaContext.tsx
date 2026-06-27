@@ -10,9 +10,9 @@ interface QuotaCtx {
   remaining: number | null
   limit: number | null
   status: QuotaStatus
-  // Re-read /me/quota. Call after each generation (turn / tutor) so the balance
-  // stays fresh; spend only changes server-side and isn't carried on those
-  // responses.
+  // Re-read /me/quota. Called lazily when the profile menu opens — the balance's
+  // only display site — so spend from turns, tutor, and TTS is reflected the
+  // next time the menu opens rather than re-fetched after every generation.
   refresh: () => Promise<void>
 }
 
@@ -48,18 +48,14 @@ export function QuotaProvider({ children }: { children: ReactNode }) {
   }, [user])
 
   useEffect(() => {
-    if (firebaseEnabled) {
-      if (loading) return
-      if (!user) {
-        // Signed out: drop any stale balance.
-        setRemaining(null)
-        setLimit(null)
-        setStatus('idle')
-        return
-      }
-    }
-    void refresh()
-  }, [user, loading, refresh])
+    // The balance is read lazily when the profile menu opens, so we never fetch
+    // proactively here — we only react to sign-out by dropping any stale value.
+    if (!firebaseEnabled) return
+    if (loading || user) return
+    setRemaining(null)
+    setLimit(null)
+    setStatus('idle')
+  }, [user, loading])
 
   return (
     <QuotaContext.Provider value={{ remaining, limit, status, refresh }}>

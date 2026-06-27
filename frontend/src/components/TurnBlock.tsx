@@ -41,6 +41,10 @@ interface TurnBlockProps {
   // Whether a narration for this step already exists server-side. true → instant
   // replay; false/undefined → playing will synthesize (a charge applies).
   narrationCached?: boolean
+  // The one-time synthesis cost of this step's narration (ADR 0013 §6) — what it
+  // cost to make, shown beside the "saved" badge. Present only once a narration
+  // exists; hidden in zen mode by the parent (a metric, like the usage panel).
+  narrationCostUSD?: number
   // Invoked once this step's audio has been synthesized, so the parent can flip
   // its cache status to "cached".
   onSynthesized?: () => void
@@ -65,6 +69,7 @@ export function TurnBlock({
   coordinator,
   interjection,
   narrationCached,
+  narrationCostUSD,
   onSynthesized,
 }: TurnBlockProps) {
   const { zen } = useZen()
@@ -136,6 +141,7 @@ export function TurnBlock({
                   text={audioText}
                   coordinator={coordinator}
                   cached={narrationCached}
+                  synthesisCostUSD={zen ? undefined : narrationCostUSD}
                   onSynthesized={onSynthesized}
                   onTime={setPos}
                   onFinalDuration={setFinalDur}

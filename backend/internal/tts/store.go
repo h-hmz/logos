@@ -22,10 +22,12 @@ type NarrationStore interface {
 	// Put stores data under key, overwriting. Atomic: a key holds the complete
 	// object or nothing.
 	Put(ctx context.Context, key string, data []byte) error
-	// Exists reports whether a narration is stored at key without fetching its
-	// bytes. A non-nil error is a real store failure; callers fail open and
-	// treat it as absent (ADR 0012).
-	Exists(ctx context.Context, key string) (bool, error)
+	// Stat reports whether a narration is stored at key and, when it is, its byte
+	// size — the basis for the derived-on-read synthesis cost (ADR 0013 §6). It
+	// fetches metadata only, never the bytes. ok is false (size 0, nil error) when
+	// no object exists; a non-nil error is a real store failure that callers fail
+	// open on, treating it as absent (ADR 0012).
+	Stat(ctx context.Context, key string) (size int64, ok bool, err error)
 }
 
 // NarrationKey returns the content-addressed object key for a narration. The
@@ -74,9 +76,12 @@ func (s *MemoryNarrationStore) Put(_ context.Context, key string, data []byte) e
 	return nil
 }
 
-func (s *MemoryNarrationStore) Exists(_ context.Context, key string) (bool, error) {
+func (s *MemoryNarrationStore) Stat(_ context.Context, key string) (int64, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	_, ok := s.objects[key]
-	return ok, nil
+	b, ok := s.objects[key]
+	if !ok {
+		return 0, false, nil
+	}
+	return int64(len(b)), true, nil
 }
