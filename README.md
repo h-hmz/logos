@@ -2,15 +2,17 @@
 
 A structured debate system in Go. Two philosophers debate a topic head-to-head across configurable rounds. A critic intervenes with a logical analysis, each philosopher responds, and a judge delivers a structured verdict.
 
-LLM and TTS calls go through any OpenAI-compatible endpoint — OpenRouter by default for its prepaid hard spend cap (see [ADR 0007](adr/0007-llm-tts-via-openrouter-for-spend-caps.md)). The agent layer is in-house (see [ADR 0008](adr/0008-in-house-agent-layer-replacing-adk.md)) — no framework dependency.
+LLM and TTS calls go through any OpenAI-compatible endpoint — OpenRouter by default for its prepaid hard spend cap (see [ADR 0007](adr/0007-llm-tts-via-openrouter-for-spend-caps.md)). The agent layer is in-house (see [ADR 0008](adr/0008-in-house-agent-layer-replacing-adk.md)) — no framework dependency. Every generation runs on a client-selected, allowlisted model (see [ADR 0011](adr/0011-client-supplied-models.md)) and is metered against a per-user USD budget (see [ADR 0009](adr/0009-cost-based-per-user-quota.md)).
+
+**This README is the reference** — setup, configuration, the HTTP API, and the file-by-file map. For how the moving parts fit together and how a request flows, see [ARCHITECTURE.md](ARCHITECTURE.md); for the domain vocabulary, [CONTEXT.md](CONTEXT.md); for the rationale behind specific decisions, the [ADRs](adr/).
 
 ---
 
-## Architecture
+## Project layout
 
 ```
 backend/
-├── main.go                              # entry point — config, repo + auth wiring, server startup
+├── main.go                              # entry point — config, repo/quota/narration/auth wiring, startup
 ├── go.mod
 ├── Dockerfile
 ├── .env                                 # credentials (gitignored)
@@ -22,36 +24,51 @@ backend/
     │                llm.go              # LLM interface + Tool/ToolCall types
     │                agent.go            # Agent struct + Run
     │                openai_compat.go    # openai-go-backed LLM (any OpenAI-compatible endpoint)
+    │                instrumented.go     # OTel-instrumented LLM wrapper
+    │                metrics.go          # LLM metric instruments
     │                registry.go         # process-wide LLM cache + factory hook
+    ├── models/      models.go           # the model allowlist — models.Allowed, sole authority (ADR 0011)
     ├── auth/        auth.go             # Firebase + noop verifiers for protected routes
+    │                allowlist.go        # email/domain allowlist, fail-closed (AUTH_ALLOWLIST)
     ├── philosopher/ philosopher.go      # YAML loader, Key() normalizer, MakePhilosopher() factory
     │                moderator.go        # MakeModerator() factory
     │                critic.go           # fallacy taxonomy, MakeCritic() factory
     │                judge.go            # MakeJudge() factory
-    ├── tutor/       tutor.go            # tutor agent factory (used by /tutor handler)
-    ├── debate/      debate.go           # Step, Persisted, Runtime, BuildSteps(), Hydrate()
-    │                service.go          # CreateDebate, NextTurn, TutorExplain
+    │                render.go           # text/template prompt rendering helper
+    ├── tutor/       tutor.go            # tutor agent factory + BuildUserMessage
+    ├── debate/      debate.go           # StepRecord, Persisted, Runtime, pipeline(), Hydrate()
+    │                service.go          # CreateDebate, NextTurn, RetryTurn, quota gating
+    │                tutor.go            # TutorExplain (side channel — not a pipeline step)
     │                repository.go       # Repository interface + sentinel errors
     │                memory_repo.go      # in-process Repository
     │                firestore_repo.go   # Firestore-backed Repository
+    ├── quota/       quota.go            # Store interface + ErrOverBudget (ADR 0009/0013)
+    │                inflight.go         # per-UID in-flight lock
+    │                memory_store.go     # in-process spend store
+    │                firestore_store.go  # Firestore-backed spend store (Reserve / Add)
     ├── tts/         tts.go              # lazy TTS client + sample rate
     │                openai_compat.go    # OpenAI-format /audio/speech client
     │                voices.go           # voice/style resolution per step
     │                store.go            # NarrationStore + in-memory impl (ADR 0012)
     │                gcs_store.go        # GCS-backed NarrationStore
-    │                pricing.go          # narration cost model (ADR 0013)
-    └── server/      routes.go           # Chi router + auth middleware + JSON helpers
-                     handler_debate.go   # /debates, /next
+    │                pricing.go          # narration cost model — reserve/settle (ADR 0013)
+    ├── telemetry/   telemetry.go        # OpenTelemetry SDK init (no-op when unset)
+    └── server/      routes.go           # Chi router + middleware + JSON helpers
+                     auth.go             # auth middleware + UID context
+                     handler_debate.go   # POST /debates, /next, /retry; GET /debates/{id}
                      handler_tutor.go    # /tutor
-                     handler_tts.go      # /tts (audio streaming)
+                     handler_tts.go      # /tts + /narrations (audio streaming, caching)
+                     handler_quota.go    # /me/quota
                      handler_philosophers.go
                      middleware.go       # request-id, access log, recover
+                     session.go          # session-id middleware
+                     trace.go            # trace-context middleware
                      sse.go              # SSE streaming helper
 
 frontend/                                # React + Vite (proxies to backend:8000)
 ```
 
-All agent prompts live in their respective package; routing wires them together.
+All agent prompts live in their respective package; routing wires them together. For the conceptual model behind these packages — stateless hydration, the `{key}` protocol, and how a request flows end-to-end — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -82,12 +99,9 @@ Total steps = `2N + 5` (1 moderator + 2N rounds + 1 critic + 2 critic responses 
 
 ## State and Hydration
 
-The runtime is **stateless across requests**. Each `/debates/{id}/next` call:
+The runtime is **stateless across requests**: each `/debates/{id}/next` loads the `Persisted` snapshot, calls [`debate.Hydrate`](backend/internal/debate/debate.go) to rebuild a throwaway `Runtime` (resolved debater data plus an [`agent.State`](backend/internal/agent/state.go) map seeded with `topic` and the content of every prior `StepRecord`), runs one step's `Agent.Run`, then appends a new `StepRecord` and advances via an optimistic-locked `repo.Update`. The full mechanism — the `{key}` ↔ `OutputKey` protocol and the two-request inter-step flow — is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-1. Loads the `Persisted` snapshot from the repository (Firestore in prod, in-memory in dev / tests).
-2. Calls `debate.Hydrate` to rebuild a `Runtime`: resolves debater data from the catalog, constructs the pipeline agents for the current model, and seeds an [`agent.State`](backend/internal/agent/state.go) map with `topic` and all prior `StepOutputs`.
-3. Runs the next step's `Agent.Run` against that state. The agent resolves `{key}` placeholders in its instruction via `agent.Substitute`, calls the LLM, and writes its output back to `state[OutputKey]`.
-4. Persists the new step output and advances `Current` via an optimistic-locked `repo.Update`.
+Agents communicate only through `agent.State` slots:
 
 | Key | Written by | Read by |
 |---|---|---|
@@ -95,9 +109,10 @@ The runtime is **stateless across requests**. Each `/debates/{id}/next` call:
 | `{name_key}_r{n}` | philosopher turn (e.g. `karl_marx_r2`) | next philosopher, critic, judge |
 | `critic_feedback` | Critic | both critic-response turns, judge |
 | `{name_key}_critic_response` | philosopher critic-response turn | judge |
+| `{step_key}_interjection` | seeded at hydrate when the owner steered that turn | that debater turn only |
 | `final_verdict` | Judge | (terminal) |
 
-A per-debate optimistic version on `Persisted.Version` serializes concurrent writes; conflicting updates surface as HTTP 409.
+Each completed step is stored as a `StepRecord` carrying its content, the `model` it ran on, the owner's `interjection` (if any), token counts, and provider cost. The debate's `OwnerUID` is stamped at creation — only the owner may advance or retry it. A per-debate optimistic `Version` serializes concurrent writes; conflicting updates surface as HTTP 409.
 
 ---
 
@@ -168,47 +183,58 @@ Produces a structured verdict:
 6. **Confidence assessment** — score 1–10 with explanation
 7. **Open questions** — unresolved threads for further inquiry
 
-Writes to `final_verdict`. The handler attempts to extract a JSON object from the output and returns it on the `structured` field of the response.
+Writes to `final_verdict`. The verdict is emitted as a structured JSON object — the model is constrained to the schema — and returned as the step's `content` for the frontend to render section by section.
 
 ### Tutor — `tutor.MakeTutor()`
 Defined in [`internal/tutor/tutor.go`](backend/internal/tutor/tutor.go). Out-of-band agent invoked from `/debates/{id}/tutor` to explain a passage the user highlighted. Receives the selected text plus the surrounding turn context and a short conversation history so the user can ask follow-ups.
 
 ---
 
+## Models
+
+Every generation — a debate turn, a retry, or a tutor reply — names the model it runs on; there is **no server-side default**. The backend validates that model against `models.Allowed` ([`internal/models/models.go`](backend/internal/models/models.go)), the sole authority over which models may run, and records it on the step. A non-allowlisted or empty model is rejected with **400**. The frontend keeps its own hardcoded mirror of the allowlist to populate its pickers (one model per debater, one referee model shared by the moderator, critic, and judge) and sends the right one on each request. See [ADR 0011](adr/0011-client-supplied-models.md) and the *Model* / *Allowlist* terms in [CONTEXT.md](CONTEXT.md).
+
+---
+
 ## Adding a Philosopher
 
-Drop a new `.yaml` file in [`backend/agents/philosophers/`](backend/agents/philosophers/). Name the file after `philosopher.Key(name)` (e.g. `friedrich_nietzsche.yaml`). No code changes required — the loader scans the directory at startup.
+Drop a new `.yaml` file in [`backend/agents/philosophers/`](backend/agents/philosophers/). Name the file after `philosopher.Key(name)` (e.g. `socrates.yaml`). No code changes required — the loader scans the directory at startup.
 
 Required fields:
 
 ```yaml
-name: Friedrich Nietzsche
-school: Existentialism / Perspectivism
+name: Socrates
+school: Socratic Philosophy
 identity: |
-  You believe God is dead and with him the foundations of Western morality...
-key_thinkers: Nietzsche, Schopenhauer, Heraclitus, Dostoevsky
+  You believe that virtue is knowledge — that wrongdoing is always a form of ignorance,
+  never a deliberate choice by someone who truly understands the good. Your task is the
+  elenchus — the cross-examination that exposes contradictions and clears the ground for
+  genuine understanding...
+key_thinkers: Socrates, Plato, Xenophon, Alcibiades, Chaerephon
 ```
 
 Optional fields:
 
 ```yaml
-era: Modern
-dates: 1844–1900
-one_liner: God is dead, and we have killed him.
-epistemic_sources: |
-  The Quran is the direct and literal word of God, transmitted through the Prophet Muhammad...
-tts_voice: Rasalgethi
-tts_style: "Aphoristic, biting, performative — vary tempo sharply."
+era: Ancient
+dates: c. 470–399 BCE
+one_liner: The unexamined life is not worth living.
+tts_voice: Sadaltager
+tts_style: "Speak with curious cunning — probing, ironic, feigning ignorance while leading. Speak with a sly Ancient Greek cadence."
 ```
+
+Theological traditions can also set `epistemic_sources` — a multi-line block of foundational scripture the agent grounds its claims in (e.g. the Quran, Bible, or Upanishads). Socrates has none.
 
 ---
 
 ## API
 
-All `/debates/*` routes are protected — clients must send `Authorization: Bearer <id_token>`. Verifier is `firebase` by default; set `AUTH_BACKEND=none` for local dev (any non-empty bearer token is accepted).
+Every route except the health probes is **protected**. A request must carry `Authorization: Bearer <id_token>` and pass two gates: the **verifier** (`AUTH_BACKEND` — `firebase` validates a Firebase ID token, `none` accepts any non-empty token for local dev) authenticates the caller, then the **allowlist** (`AUTH_ALLOWLIST` — emails and/or domains; empty denies everyone, `*` allows every verified caller) authorizes them.
+
+**Per-debate ownership.** A debate's `OwnerUID` is stamped at creation. Reads stay open to anyone holding the (unguessable) debate ID, but only the owner may advance or retry it — a non-owner write is **403**. See the *Owner* term in [CONTEXT.md](CONTEXT.md).
 
 ### `GET /healthz` · `GET /readyz`
-Liveness / readiness — `200 OK`, no body.
+Liveness / readiness — `200 OK`, no body. The only public routes.
 
 ### `GET /philosophers`
 Returns all loaded philosophers (catalog metadata only — `tts_voice`/`tts_style` are not exposed).
@@ -220,8 +246,15 @@ Returns all loaded philosophers (catalog metadata only — `tts_voice`/`tts_styl
 ]
 ```
 
+### `GET /me/quota`
+Returns the authenticated caller's lifetime generation budget in USD. `remaining_usd` is clamped at zero.
+
+```json
+{"limit_usd": 1.0, "spent_usd": 0.0123, "remaining_usd": 0.9877}
+```
+
 ### `POST /debates`
-Creates a new debate session. Returns the full step manifest.
+Creates a debate (the caller becomes its owner) and returns the step manifest. No model is supplied here — the model is chosen per generation on `/next` and `/retry`.
 
 Request:
 ```json
@@ -246,8 +279,16 @@ Response:
 }
 ```
 
+### `GET /debates/{id}`
+Rehydrates a debate for a returning client: the same manifest as create, plus a `turns` map (step index → turn payload) holding every completed step's content, model, interjection, token counts, cost, and timing. Open to any caller with the ID.
+
 ### `POST /debates/{id}/next`
-Executes the next step in the pipeline. Supports both JSON and SSE streaming (`Accept: text/event-stream`).
+Advances the debate by one step (owner only). The body names the `model` to run on and, optionally, an `interjection` — a one-time steering note honored by debater turns and ignored by referee steps. Supports JSON and SSE streaming (`Accept: text/event-stream`).
+
+Request:
+```json
+{"model": "google/gemini-3-flash-preview", "interjection": "Press him on the labor theory of value."}
+```
 
 JSON response:
 ```json
@@ -257,25 +298,36 @@ JSON response:
   "author": "karl_marx_r1",
   "role": "a",
   "content": "...",
-  "structured": null,
   "step_index": 1,
   "total_steps": 9,
   "done": false,
+  "model": "google/gemini-3-flash-preview",
+  "interjection": "Press him on the labor theory of value.",
   "turn_input_tokens": 812,
   "turn_output_tokens": 243,
+  "turn_cost_usd": 0.0009,
   "total_input_tokens": 812,
-  "total_output_tokens": 243
+  "total_output_tokens": 243,
+  "turn_ttft_ms": 410,
+  "turn_duration_ms": 5200
 }
 ```
 
-`structured` is populated for `critic_feedback` and `final_verdict` when a JSON object can be extracted from the model output.
+For `critic_feedback` and `final_verdict`, `content` is a JSON object — those agents emit structured output the frontend renders section by section; every other step returns prose. `role` is one of `a`, `b`, `moderator`, `critic`, `judge`. Token counts and cost are reported per-turn (`turn_*`) and cumulative (`total_*`).
 
-SSE response (when `Accept: text/event-stream`): streams `event: token` chunks during generation, then closes with `event: done` carrying the same JSON payload. Errors emerge as `event: error`.
+SSE response (when `Accept: text/event-stream`): streams `event: token` chunks during generation, then closes with `event: done` carrying the same JSON payload; errors emerge as `event: error`. The quota gate (in-flight lock + budget check) runs **before** any token is streamed, so over-budget and in-flight rejections return a real HTTP status rather than an SSE error.
 
-Token counts are tracked cumulatively on the debate record and returned on every response.
+Statuses: **400** (unknown/empty model or invalid input), **402** (generation quota exhausted), **403** (not the owner), **409** (a generation is already in flight, or the debate changed concurrently), **502** (the model provider rejected the server's API key).
+
+### `POST /debates/{id}/retry`
+Re-rolls the **last** completed step in place (owner only), discarding its generation and replacing it with a fresh one — this is how the judge's verdict gets re-rolled, and it is allowed even when the debate is complete. `step_key` must name the current last step (anything else is **409**); `model` is the model to re-roll on, which may differ from the original. Same lock, budget gate, SSE behavior, and statuses as `/next`. The discarded generation's cost stays charged to the owner's quota even though the debate's displayed total only counts the kept one (see [ADR 0010](adr/0010-retry-last-step.md)).
+
+```json
+{"step_key": "final_verdict", "model": "google/gemini-3-flash-preview"}
+```
 
 ### `POST /debates/{id}/tutor`
-Asks a tutor agent to explain a passage from a previous turn. Supports SSE streaming on the same `Accept` header rule.
+Asks a tutor agent to explain a passage from a previous turn (open to any caller with the ID; the tutor is not a pipeline step and persists nothing, but it is a metered generation). Supports SSE streaming on the same `Accept` header rule. The reply carries `content`, an optional `suggestions` list of follow-up questions, and `cost_usd`.
 
 ```json
 {
@@ -286,13 +338,20 @@ Asks a tutor agent to explain a passage from a previous turn. Supports SSE strea
 ```
 
 ### `POST /debates/{id}/tts`
-Streams a `audio/L16;rate=24000;channels=1` PCM stream synthesized from `text`, using the voice/style resolved from the named step's role and the debate's debaters. Returns 503 when `TTS_ENABLED` is unset. The `X-TTS-Voice` response header reports the chosen voice.
+Synthesizes the given `text` for the named step and streams it as an `audio/L16;rate=24000;channels=1` PCM stream, using the voice/style resolved from the step's role. Returns **503** when `TTS_ENABLED` is unset.
 
 ```json
 {"step_key": "karl_marx_r1", "text": "..."}
 ```
 
-Inline parentheticals (e.g. `asabiyya (social solidarity)`) are stripped server-side before synthesis to avoid awkward read-aloud asides.
+A completed narration is **persisted and content-addressed** ([ADR 0012](adr/0012-narration-persistence.md)): a later replay of identical text/voice/style/model is served straight from storage instead of re-synthesizing. The `X-TTS-Cache` response header reports `hit` (served from storage) or `miss` (freshly synthesized); `X-TTS-Voice` reports the chosen voice. Each call is metered with a reserve-then-settle charge — synthesis + egress on a miss, egress only on a hit ([ADR 0013](adr/0013-tts-cost-metering.md)) — so a call the caller can't afford returns **402** before any bytes flow. Inline parentheticals (e.g. `asabiyya (social solidarity)`) are stripped server-side before synthesis to avoid awkward read-aloud asides.
+
+### `GET /debates/{id}/narrations`
+Reports, per narratable step, whether a narration already exists in storage — so the client can warn before a play that will synthesize (a miss, which incurs the synthesis charge) versus an instant replay (a hit). Returns **503** when `TTS_ENABLED` is unset.
+
+```json
+{"cached": {"karl_marx_r1": true, "friedrich_hayek_r1": false}}
+```
 
 ---
 
@@ -306,38 +365,51 @@ Inline parentheticals (e.g. `asabiyya (social solidarity)`) are stripped server-
 | Philosopher pool | `backend/agents/philosophers/*.yaml` | Add / remove / edit — restart to pick up changes |
 | Max rounds | `POST /debates` — `num_rounds` | 1–5 |
 | Word limit | `POST /debates` — `max_words` | Philosopher turns; critic gets `2×`, moderator is fixed at 40 words |
-| Storage backend | `STORAGE_BACKEND` env var | `memory` (default) or `firestore` |
+| Storage backend | `STORAGE_BACKEND` env var | `memory` (default) or `firestore`; covers debates, quota spend, and narrations alike |
 | Auth backend | `AUTH_BACKEND` env var | `firebase` (default) or `none` (local dev only) |
+| Auth allowlist | `AUTH_ALLOWLIST` env var | Emails/domains allowed past auth; empty denies all, `*` allows all (dev only) |
+| Per-user budget | `QUOTA_USD_LIMIT` env var | Lifetime USD generation budget per Firebase UID; always enforced (ADR 0009) |
 | Data directory | `DATA_DIR` env var | Override path to `agents/` (default: binary directory) |
 
 ### Environment Variables
 
 All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/.env.example)).
 
-**LLM + TTS — single OpenAI-compatible endpoint**
+**LLM + TTS provider — a single OpenAI-compatible endpoint** (both surfaces share it; TTS-specific knobs are in the next table)
 
 | Variable | Required? | Purpose |
 |---|---|---|
 | `LLM_API_KEY` | When using a real model | API key for the OpenAI-compatible provider. |
 | `LLM_BASE_URL` | No | OpenAI-compatible base URL. Defaults to `https://openrouter.ai/api/v1`. Works with OpenAI, Together AI, Groq, Azure OpenAI, vLLM, Ollama, LM Studio, etc. |
 
-**Text-to-speech (all optional)**
+**Text-to-speech**
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TTS_ENABLED` | unset (disabled) | Set to `TRUE` to expose `POST /debates/{id}/tts`. Routes through the same `LLM_BASE_URL`. |
+| `TTS_ENABLED` | unset (disabled) | Set to `TRUE` to expose `POST /debates/{id}/tts` and `GET /debates/{id}/narrations`. Routes through the same `LLM_BASE_URL`. |
 | `TTS_MODEL` | `google/gemini-3.1-flash-tts-preview` | TTS model identifier in provider form. |
+| `TTS_BUCKET` | *(none)* | GCS bucket for persisted narrations (ADR 0012). **Required** when `STORAGE_BACKEND=firestore` and TTS is enabled; unused with the in-memory store. |
+
+**Quota + metering — required** (the server refuses to start if any is unset or negative)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `QUOTA_USD_LIMIT` | *(required)* | Per-user (Firebase UID) lifetime generation budget in USD, seeded onto each new account and enforced across debate turns, retries, and tutor replies (ADR 0009). |
+| `TTS_USD_PER_1M_AUDIO_TOKENS` | *(required)* | TTS synthesis price per 1,000,000 audio tokens; meters narration synthesis from the byte count (ADR 0013). |
+| `TTS_USD_PER_GB_EGRESS` | *(required)* | Price per GB for serving narration bytes; metered on every narration call, miss and hit (ADR 0013). |
+| `QUOTA_COLLECTION` | `quotas` | Firestore collection for per-user spend (only when `STORAGE_BACKEND=firestore`). |
 
 **Auth + storage** (Google Cloud only — LLM/TTS no longer use GCP)
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `AUTH_BACKEND` | `firebase` | `firebase` validates Firebase ID tokens; `none` accepts any non-empty Bearer token (local dev only). |
+| `AUTH_ALLOWLIST` | *(empty → deny all)* | Comma-separated emails and/or domains permitted past auth. A bare domain (`example.com`) admits every verified address at that domain; a full address (`alice@other.com`) admits just that user. `*` admits all verified callers (local dev only). Empty denies everyone — **fail-closed**. |
 | `GOOGLE_CLOUD_PROJECT` | *(none)* | The GCP project this backend runs in. Used for `STORAGE_BACKEND=firestore` and Cloud Logging trace-clickthrough links. Required when `STORAGE_BACKEND=firestore`. Uses Application Default Credentials (`gcloud auth application-default login`). |
 | `FIREBASE_PROJECT` | *(none)* | The project that issues the Firebase ID tokens the auth verifier validates — i.e. the project your frontend signs in against. **Required** when `AUTH_BACKEND=firebase`. May equal `GOOGLE_CLOUD_PROJECT` (single project) or differ from it when Firebase Hosting/Auth live in a separate project (e.g. a free Spark-plan project) than the backend's Cloud Run + Firestore. |
-| `STORAGE_BACKEND` | `memory` | `memory` (in-process) or `firestore` (Cloud Run). |
+| `STORAGE_BACKEND` | `memory` | `memory` (in-process) or `firestore` (Cloud Run). Selects the backend for debates, per-user quota spend, and persisted narrations alike. |
 | `FIRESTORE_DATABASE` | `(default)` | Firestore database id. |
-| `FIRESTORE_COLLECTION` | `debates` | Firestore collection name. |
+| `FIRESTORE_COLLECTION` | `debates` | Firestore collection name for debates (quota uses `QUOTA_COLLECTION`). |
 
 **Server**
 
@@ -364,7 +436,7 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 cd backend && go run .
 ```
 
-Requires `LLM_API_KEY` and the other mandatory env vars (see [`backend/.env.example`](backend/.env.example)). Set `AUTH_BACKEND=none` in `backend/.env` to skip Firebase init.
+Requires `LLM_API_KEY` and the other mandatory env vars — `QUOTA_USD_LIMIT`, `TTS_USD_PER_1M_AUDIO_TOKENS`, `TTS_USD_PER_GB_EGRESS` (the server won't start without them; see [`backend/.env.example`](backend/.env.example)). Set `AUTH_BACKEND=none` in `backend/.env` to skip Firebase init — that also bypasses the email/domain allowlist so dev callers aren't locked out.
 
 ### Backend — against a real model
 
