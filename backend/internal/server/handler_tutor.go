@@ -36,7 +36,7 @@ func (s *Server) tutorExplain(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req tutorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		writeDecodeError(w, err)
 		return
 	}
 

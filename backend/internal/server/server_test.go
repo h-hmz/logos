@@ -1,14 +1,18 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/h-hmz/logos/internal/auth"
@@ -101,6 +105,68 @@ func TestCreateDebate_InvalidJSON(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestCreateDebate_BodyTooLarge(t *testing.T) {
+	_, _, h := testServer(t)
+	// Valid JSON just over the 1 MiB cap: the decode must fail on size, not syntax.
+	body := `{"topic":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/debates", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rr.Code)
+	}
+}
+
+func TestSynthesizeStep_TextTooLong(t *testing.T) {
+	t.Setenv("TTS_ENABLED", "true")
+	_, _, h := testServer(t)
+	body, _ := json.Marshal(map[string]string{
+		"step_key": "socrates_r1",
+		"text":     strings.Repeat("a", maxTTSTextLen+1),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/debates/d1/tts", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestGuardBody_SlowBodyTimesOut drips a partial body over a real TCP
+// connection and asserts the server responds 408 rather than waiting
+// indefinitely. guardBody runs under recoverMiddleware, as in routes.go, so
+// the read deadline must reach the connection through the statusRecorder
+// wrapper.
+func TestGuardBody_SlowBodyTimesOut(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(recoverMiddleware(guardBody(1024, 150*time.Millisecond)(inner)))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Promise 100 bytes, deliver 3, then stall.
+	if _, err := fmt.Fprint(conn, "POST / HTTP/1.1\r\nHost: t\r\nContent-Length: 100\r\n\r\nabc"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) // fail fast instead of hanging the test
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestTimeout {
+		t.Fatalf("status = %d, want 408", resp.StatusCode)
 	}
 }
 

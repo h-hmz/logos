@@ -1,15 +1,73 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"runtime/debug"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const requestIDHeader = "X-Request-Id"
+
+// maxRequestBodyBytes caps the request body size any handler will read. The
+// largest legitimate payload (a full tutor request) is well under 256 KiB;
+// 1 MiB leaves generous headroom.
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
+
+// bodyReadTimeout is the maximum time a client may take to deliver its entire
+// request body. Bodies are capped at maxRequestBodyBytes, so any legitimate
+// upload finishes well within it.
+const bodyReadTimeout = 30 * time.Second
+
+// guardBody bounds request bodies in size and time: the body is read up front
+// (capped by http.MaxBytesReader) under a connection read deadline, then
+// handed to the handler as an in-memory buffer. The deadline is cleared before
+// the handler runs, so long-lived streaming responses (SSE, TTS) are
+// unaffected — unlike a server-wide ReadTimeout, which would expire
+// mid-response. Overflow returns 413, a stalled upload 408; bodiless requests
+// pass through untouched.
+func guardBody(limit int64, timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body == nil || r.Body == http.NoBody {
+				next.ServeHTTP(w, r)
+				return
+			}
+			rc := http.NewResponseController(w)
+			// Best-effort: a transport without read-deadline support (e.g.
+			// httptest.ResponseRecorder) still gets the size cap.
+			_ = rc.SetReadDeadline(time.Now().Add(timeout))
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+			if err != nil {
+				// Keep the deadline in place: clearing it would let the server's
+				// end-of-request body drain block on the same stalled upload.
+				var mbe *http.MaxBytesError
+				switch {
+				case errors.As(err, &mbe):
+					writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+				case os.IsTimeout(err):
+					writeError(w, http.StatusRequestTimeout, "timed out reading request body")
+				default:
+					writeError(w, http.StatusBadRequest, "could not read request body")
+				}
+				return
+			}
+			// Body fully consumed: clear the deadline so a streaming response is
+			// not cut off, and close the original body (handlers close the buffer).
+			_ = rc.SetReadDeadline(time.Time{})
+			r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 type ctxKey int
 
@@ -73,6 +131,10 @@ func (s *statusRecorder) Flush() {
 		f.Flush()
 	}
 }
+
+// Unwrap exposes the underlying ResponseWriter so http.NewResponseController
+// can reach the connection's deadline methods through this wrapper.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // recoverMiddleware converts panics into 500 responses and logs the stack.
 func recoverMiddleware(next http.Handler) http.Handler {

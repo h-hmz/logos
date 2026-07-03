@@ -5,6 +5,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -64,6 +65,7 @@ func New(philosophers []philosopher.Data, repo debate.Repository, narrations tts
 	r.Use(requestIDMiddleware)
 	r.Use(traceContextMiddleware)
 	r.Use(recoverMiddleware)
+	r.Use(guardBody(maxRequestBodyBytes, bodyReadTimeout))
 	// Default to the local Vite dev origin when no origins are configured so
 	// local dev and tests work without setting CORS_ALLOWED_ORIGINS.
 	if len(corsOrigins) == 0 {
@@ -120,4 +122,15 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"detail": msg})
+}
+
+// writeDecodeError maps a request-body decode failure to its HTTP response:
+// 413 when the maxBodyBytes cap was hit, 400 for malformed JSON.
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var mbe *http.MaxBytesError
+	if errors.As(err, &mbe) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid JSON")
 }

@@ -32,6 +32,12 @@ func stripParentheticals(s string) string {
 
 // ── POST /debates/{debateID}/tts ────────────────────────────────────────────
 
+// maxTTSTextLen caps the text a single narration request may synthesize,
+// bounding the number of upstream synthesis calls (one per ~800-char segment)
+// a request can fan out into. The longest narratable turn is a few thousand
+// characters, so 20k leaves generous headroom.
+const maxTTSTextLen = 20000
+
 type ttsRequest struct {
 	StepKey string `json:"step_key"`
 	Text    string `json:"text"`
@@ -54,7 +60,11 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req ttsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		writeDecodeError(w, err)
+		return
+	}
+	if len(req.Text) > maxTTSTextLen {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("text exceeds %d characters", maxTTSTextLen))
 		return
 	}
 	text := stripParentheticals(req.Text)

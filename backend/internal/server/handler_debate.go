@@ -85,7 +85,7 @@ func (s *Server) createDebate(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	var req createDebateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -219,7 +219,7 @@ func (s *Server) nextTurn(w http.ResponseWriter, r *http.Request) {
 
 	interjection, model, err := decodeNextTurn(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		writeDecodeError(w, err)
 		return
 	}
 
@@ -305,7 +305,7 @@ func (s *Server) retryTurn(w http.ResponseWriter, r *http.Request) {
 
 	stepKey, model, err := decodeRetryRequest(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
+		writeDecodeError(w, err)
 		return
 	}
 

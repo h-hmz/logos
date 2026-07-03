@@ -173,9 +173,16 @@ func run(ctx context.Context, w io.Writer, _ []string) error {
 		port = "8000"
 	}
 
+	// SSE turns and TTS narrations stream for minutes, so ReadTimeout and
+	// WriteTimeout stay unset — expiry would cancel the request context under
+	// an in-flight generation. ReadHeaderTimeout covers slow-header
+	// connections, IdleTimeout reaps idle keep-alives, and the router's
+	// guardBody middleware bounds body reads in size and time.
 	httpServer := &http.Server{
-		Addr:    ":" + port,
-		Handler: router,
+		Addr:              ":" + port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	srvErr := make(chan error, 1)
