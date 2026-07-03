@@ -18,6 +18,9 @@ interface Props {
   selection: string
   visible: boolean
   onClose: () => void
+  // Fired the first time the reader sends a question, so the parent can retire
+  // the "Ask Noctua" invitation in favour of "Resume with Noctua".
+  onFirstQuestion?: () => void
   model: string
 }
 
@@ -33,7 +36,7 @@ interface ChatEntry {
 
 const MAX_SELECTION_PREVIEW = 320
 
-export function TutorPanel({ debateId, turnKey, selection, visible, onClose, model }: Props) {
+export function TutorPanel({ debateId, turnKey, selection, visible, onClose, onFirstQuestion, model }: Props) {
   const [entries, setEntries] = useState<ChatEntry[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -53,6 +56,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose, mod
   const ask = useCallback(
     async (userText: string) => {
       if (busy) return
+      onFirstQuestion?.()
       const userEntry: ChatEntry = { role: 'user', content: userText }
       const tutorEntry: ChatEntry = { role: 'tutor', content: '', streaming: true }
 
@@ -110,7 +114,7 @@ export function TutorPanel({ debateId, turnKey, selection, visible, onClose, mod
         setBusy(false)
       }
     },
-    [busy, debateId, selection, turnKey, model],
+    [busy, debateId, selection, turnKey, model, onFirstQuestion],
   )
 
   // Focus the composer on open (mount or reopen) and preselect the default so

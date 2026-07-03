@@ -98,7 +98,15 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     null,
   )
   const [tutorPanelOpen, setTutorPanelOpen] = useState(false)
+  // Whether the reader has ever asked Noctua a question. Flips the permanent
+  // pill's label from "Ask Noctua" (an invitation) to "Resume with Noctua".
+  const [tutorEngaged, setTutorEngaged] = useState(false)
+  // Transient nudge shown when the pill is clicked with nothing selected:
+  // a bubble plus a pulse on the selectable turn bodies.
+  const [tutorHint, setTutorHint] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  const markTutorEngaged = useCallback(() => setTutorEngaged(true), [])
 
   const { idx, buffers, turnResults, totalIn, totalOut, advance, retry } =
     useDebatePlayback(debate, initialTurns, onTurnCompleted, auto, roleModels)
@@ -206,6 +214,8 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
       }
       const rect = sel.getRangeAt(0).getBoundingClientRect()
       setSelPopover({ x: rect.left + rect.width / 2, y: rect.top, text, turnKey })
+      // The reader found the selection affordance — retire the nudge.
+      setTutorHint(false)
     }
     const onSelectionChange = () => {
       const sel = window.getSelection()
@@ -219,6 +229,14 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     }
   }, [])
 
+  // The select-text nudge is a one-shot hint, not a mode — fade it out on its
+  // own if the reader doesn't act on it.
+  useEffect(() => {
+    if (!tutorHint) return
+    const t = setTimeout(() => setTutorHint(false), 5000)
+    return () => clearTimeout(t)
+  }, [tutorHint])
+
   // Which steps should be visible? All steps with a buffer (started or finished).
   const visibleIndexes = useMemo(() => {
     const indexes: number[] = []
@@ -227,6 +245,17 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
     }
     return indexes
   }, [buffers, debate.total_steps])
+
+  // The "Ask Noctua" pill only makes sense once there's a finished philosopher
+  // turn to highlight — before that, its select-text hint would be a dead end.
+  const hasExplorableTurn = useMemo(
+    () =>
+      visibleIndexes.some((i) => {
+        const role = roleForLabel(debate.steps[i].label, nameA, nameB)
+        return (role === 'a' || role === 'b') && buffers[i]?.done
+      }),
+    [visibleIndexes, buffers, debate.steps, nameA, nameB],
+  )
 
   return (
     <main className={tutorTarget && tutorPanelOpen ? 'noctua-open' : undefined}>
@@ -244,7 +273,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         modelB={roleModels.b}
       />
 
-      <section className="container-narrow transcript">
+      <section className={`container-narrow transcript${tutorHint ? ' noctua-hint' : ''}`}>
         {visibleIndexes.length === 0 && (
           <div
             style={{ textAlign: 'center', padding: '80px 0 40px', color: 'var(--ink-soft)' }}
@@ -391,16 +420,32 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
         </button>
       )}
 
-      {tutorTarget && !tutorPanelOpen && (
-        <button
-          type="button"
-          className="tutor-resume-btn"
-          onClick={() => setTutorPanelOpen(true)}
-          title="Reopen Noctua with the latest exchange"
-        >
-          <NoctuaIcon size={18} />
-          <span>Resume with Noctua</span>
-        </button>
+      {hasExplorableTurn && !tutorPanelOpen && (
+        <div className="tutor-pill">
+          {tutorHint && !tutorTarget && (
+            <div className="tutor-pill-hint" role="status">
+              Highlight any line in a turn to explore it with Noctua.
+            </div>
+          )}
+          <button
+            type="button"
+            className="tutor-resume-btn"
+            onClick={() => {
+              // With a passage already chosen, reopen the panel; otherwise
+              // teach the selection gesture rather than open an unscoped panel.
+              if (tutorTarget) setTutorPanelOpen(true)
+              else setTutorHint(true)
+            }}
+            title={
+              tutorTarget
+                ? 'Reopen Noctua with the latest exchange'
+                : 'Highlight a passage to ask Noctua'
+            }
+          >
+            <NoctuaIcon size={18} />
+            <span>{tutorEngaged ? 'Resume with Noctua' : 'Ask Noctua'}</span>
+          </button>
+        </div>
       )}
 
       {tutorTarget && (
@@ -411,6 +456,7 @@ export function LivePage({ debate, navigate, initialTurns, onTurnCompleted }: Pr
           selection={tutorTarget.selection}
           visible={tutorPanelOpen}
           onClose={() => setTutorPanelOpen(false)}
+          onFirstQuestion={markTutorEngaged}
           model={roleModels.referee}
         />
       )}

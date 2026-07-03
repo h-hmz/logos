@@ -132,7 +132,7 @@ export const MODELS = [
 
 // DEFAULT_MODEL is the client-side default a debate starts every role on, until
 // the user picks otherwise.
-export const DEFAULT_MODEL: string = MODELS[2]
+export const DEFAULT_MODEL: string = MODELS[3]
 
 // DebateModels is the client's per-role model choice for a debate: the two
 // debaters (which may differ) and a single model for the referee steps
