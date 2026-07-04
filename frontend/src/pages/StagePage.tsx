@@ -196,19 +196,19 @@ export function StagePage({ onDebateCreated }: Props) {
 
   return (
     <main>
-      {/* Hero */}
+      {/* Hero — playbill band above a full-width setup panel */}
       <section className="container stage">
-        <div>
-          <div className="t-eyebrow overline">An arena for arguments</div>
-          <h1 className="t-display title">
-            Pick two.<br />
-            <em className="accent">Give them something to argue about.</em>
-          </h1>
-          <p className="t-lead lede">
-            Logos is a multi-agent debate stage. Two thinkers face each other across
-            several rounds; a critic intervenes; a judge delivers a verdict. You are
-            the impresario.
-          </p>
+        <div className="stage-band">
+          <div>
+            <div className="t-eyebrow overline">An arena for arguments</div>
+            <h1 className="title">
+              Pick two. <em className="accent">Give them something to argue about.</em>
+            </h1>
+            <p className="t-body lede">
+              Pose a question, seat two great thinkers, and let them argue to a verdict.
+              You are the impresario.
+            </p>
+          </div>
           <div className="stage-stats">
             <div className="s">
               <div className="n">{philosophers.length || 12}</div>
@@ -225,11 +225,17 @@ export function StagePage({ onDebateCreated }: Props) {
           </div>
         </div>
 
-        {/* Topic + corners */}
-        <div>
-          <div className="panel" style={{ padding: '24px 26px' }}>
-            <div className="t-eyebrow" style={{ marginBottom: 10 }}>
-              The question on the table
+        {/* Topic + corners + settings rail */}
+          <div className="panel setup-panel">
+            <div className="setup-top">
+              <div className="t-eyebrow">The question on the table</div>
+              <button
+                type="button"
+                className="chip inspire"
+                onClick={() => setShowSuggestions((s) => !s)}
+              >
+                {showSuggestions ? 'hide suggestions ×' : 'need inspiration? →'}
+              </button>
             </div>
             <input
               className="topic-input"
@@ -238,58 +244,25 @@ export function StagePage({ onDebateCreated }: Props) {
               placeholder="e.g. Is capitalism inevitable?"
               autoFocus
             />
-            {showSuggestions ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 6, marginTop: 10 }}>
+            {showSuggestions && (
+              <div className="topic-suggestions">
                 {suggestedTopics.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    className="chip"
-                    onClick={() => setTopic(t)}
-                    style={{ textAlign: 'center', padding: '8px 12px' }}
-                  >
+                  <button key={t} type="button" className="chip" onClick={() => setTopic(t)}>
                     {t}
                   </button>
                 ))}
                 <button
                   type="button"
-                  className="chip"
+                  className="chip inspire"
                   onClick={handleShuffleTopics}
-                  style={{
-                    fontStyle: 'italic',
-                    textTransform: 'none',
-                    letterSpacing: '0.02em',
-                    color: 'var(--accent-ink)',
-                    borderStyle: 'dashed',
-                    textAlign: 'center',
-                    padding: '8px 12px',
-                    marginTop: 4,
-                  }}
                   title="Show different topics"
                 >
                   shuffle →
                 </button>
               </div>
-            ) : (
-              <button
-                type="button"
-                className="chip"
-                onClick={() => setShowSuggestions(true)}
-                style={{
-                  marginTop: 10,
-                  fontStyle: 'italic',
-                  textTransform: 'none',
-                  letterSpacing: '0.02em',
-                  color: 'var(--accent-ink)',
-                  borderStyle: 'dashed',
-                  padding: '8px 12px',
-                }}
-              >
-                need inspiration? →
-              </button>
             )}
 
-            <div className="corners" style={{ marginTop: 22 }}>
+            <div className="setup-grid">
               <CornerSlot
                 picked={pickA}
                 label="Corner A"
@@ -311,73 +284,73 @@ export function StagePage({ onDebateCreated }: Props) {
                 model={modelB}
                 onModelChange={setModelB}
               />
-            </div>
 
-            <div className="referee-model">
-              <label>Referees run on</label>
-              <select value={modelRef} onChange={(e) => setModelRef(e.target.value)}>
-                {MODELS.map((m) => (
-                  <option key={m} value={m}>{modelLabel(m)}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="setup-row">
-              <div className="field">
-                <label>Rounds</label>
-                <div className="segmented">
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      className={rounds === n ? 'on' : ''}
-                      onClick={() => setRounds(n)}
-                    >
-                      {n}
-                    </button>
-                  ))}
+              <div className="setup-rail">
+                <div className="field">
+                  <label>Referees run on</label>
+                  <select
+                    className="rail-select"
+                    value={modelRef}
+                    onChange={(e) => setModelRef(e.target.value)}
+                  >
+                    {MODELS.map((m) => (
+                      <option key={m} value={m}>{modelLabel(m)}</option>
+                    ))}
+                  </select>
                 </div>
-              </div>
-              <div className="field">
-                <label>Word limit · per turn</label>
-                <div className="val">
-                  {words}{' '}
-                  <span className="soft" style={{ fontSize: 12, fontFamily: 'var(--mono)' }}>
-                    words
-                  </span>
+                <div className="field">
+                  <label>Rounds</label>
+                  <div className="segmented">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        className={rounds === n ? 'on' : ''}
+                        onClick={() => setRounds(n)}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <input
-                  type="range"
-                  min={120}
-                  max={500}
-                  step={10}
-                  value={words}
-                  onChange={(e) => setWords(+e.target.value)}
-                />
+                <div className="field words">
+                  <label>Word limit · per turn</label>
+                  <div className="val">
+                    {words}{' '}
+                    <span className="soft" style={{ fontSize: 12, fontFamily: 'var(--mono)' }}>
+                      words
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={120}
+                    max={500}
+                    step={10}
+                    value={words}
+                    onChange={(e) => setWords(+e.target.value)}
+                  />
+                </div>
+                <button type="button" className="btn accent" disabled={!canBegin} onClick={handleBegin}>
+                  {loading ? 'Ringing…' : 'Ring the bell →'}
+                </button>
               </div>
             </div>
 
-            <div className="setup-footer">
-              <div className="t-small t-italic">
-                {canBegin ? (
-                  <>
-                    Total turns: <b>{2 * rounds + 5}</b> — one moderator, {2 * rounds} rounds,
-                    one critic, two responses, one judge.
-                  </>
-                ) : (
-                  <span>Pick two speakers and pose a question to begin.</span>
-                )}
-              </div>
-              <button type="button" className="btn accent" disabled={!canBegin} onClick={handleBegin}>
-                {loading ? 'Ringing…' : 'Ring the bell →'}
-              </button>
+            <div className="setup-footnote t-small t-italic">
+              {canBegin ? (
+                <>
+                  Total turns: <b>{2 * rounds + 5}</b> — one moderator, {2 * rounds} rounds,
+                  one critic, two responses, one judge.
+                </>
+              ) : (
+                <span>Pick two speakers and pose a question to begin.</span>
+              )}
             </div>
 
             {error && (
               <div className="live-error" style={{ marginTop: 16 }}>{error}</div>
             )}
           </div>
-        </div>
       </section>
 
       <div className="container">
