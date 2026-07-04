@@ -24,7 +24,6 @@ const META: Record<string, PhilosopherMeta> = {
   'Socrates':           { era: 'Ancient',      dates: 'c. 470',  hatch: 'h-dots',  oneliner: 'The unexamined life is not worth living.' },
   'Aristotle':          { era: 'Ancient',      dates: '384',     hatch: 'h-diag',  oneliner: 'We are what we repeatedly do; excellence is a habit, not an act.' },
   'Epicurus':           { era: 'Ancient',      dates: '341',     hatch: 'h-horz',  oneliner: 'The highest pleasure is tranquility, not indulgence.' },
-  'Diogenes of Sinope': { era: 'Ancient',      dates: 'c. 412',  hatch: 'h-cross', oneliner: 'I am a citizen of the world — and convention is the enemy of virtue.' },
   'Marcus Aurelius':    { era: 'Ancient',      dates: 'c. 121',  hatch: 'h-horz',  oneliner: 'Virtue is the sole good; accept what you cannot govern.' },
   'Nagarjuna':          { era: 'Ancient',      dates: 'c. 150',  hatch: 'h-dots',  oneliner: 'Emptiness is not nothing — it is interdependence.' },
   'Thomas Aquinas':     { era: 'Medieval',     dates: '1225',    hatch: 'h-diag',  oneliner: 'Faith and reason, rightly understood, cannot conflict.' },
@@ -40,6 +39,7 @@ const META: Record<string, PhilosopherMeta> = {
   'Karl Marx':          { era: 'Modern',       dates: '1818',    hatch: 'h-horz',  oneliner: 'All history is the history of class struggle.' },
   'John Stuart Mill':   { era: 'Modern',       dates: '1806',    hatch: 'h-dots',  oneliner: 'Over himself, over his own body and mind, the individual is sovereign.' },
   'Simone de Beauvoir': { era: 'Modern',       dates: '1908',    hatch: 'h-diag',  oneliner: 'One is not born, but becomes, a woman.' },
+  'Simone Weil':        { era: 'Modern',       dates: '1909',    hatch: 'h-cross', oneliner: 'Attention is the rarest and purest form of generosity.' },
   'Frantz Fanon':       { era: 'Contemporary', dates: '1925',    hatch: 'h-diag',  oneliner: 'The colonised man liberates himself by any means necessary.' },
   'Friedrich Hayek':    { era: 'Contemporary', dates: '1899',    hatch: 'h-dots',  oneliner: 'The curious task of economics is to demonstrate how little we know of what we imagine we can design.' },
 }
