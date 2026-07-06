@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -33,10 +34,18 @@ func stripParentheticals(s string) string {
 // ── POST /debates/{debateID}/tts ────────────────────────────────────────────
 
 // maxTTSTextLen caps the text a single narration request may synthesize,
-// bounding the number of upstream synthesis calls (one per ~800-char segment)
-// a request can fan out into. The longest narratable turn is a few thousand
-// characters, so 20k leaves generous headroom.
+// bounding the prompt sent on the single upstream synthesis call. The longest
+// narratable turn is a few thousand characters, so 20k leaves generous
+// headroom. Audio beyond Gemini's ~2-minute per-call output cap is silently
+// truncated and accepted as-is (ADR 0002 rev 2026-07-06).
 const maxTTSTextLen = 20000
+
+// maxPlausibleCharsPerSec is the fastest speech rate a genuine full read could
+// imply (normal delivery measures ~13 chars/sec). A clip whose text length
+// divided by audio duration exceeds this cannot contain the whole text — the
+// synthesis ended early — and must not be persisted. Mirrors the frontend's
+// MAX_PLAUSIBLE_CPS highlight guard (SpokenText.tsx).
+const maxPlausibleCharsPerSec = 20
 
 type ttsRequest struct {
 	StepKey string `json:"step_key"`
@@ -166,6 +175,19 @@ func (s *Server) synthesizeStep(w http.ResponseWriter, r *http.Request) {
 		} else {
 			slog.ErrorContext(ctx, "tts stream step interrupted mid-stream", "step_key", req.StepKey, "error", serr)
 		}
+		return
+	}
+
+	// Gemini sometimes ends synthesis silently before reading the whole text —
+	// early EOS at a discourse boundary or the per-call output cap, neither
+	// visible through /audio/speech (ADR 0002 rev 2026-07-06). A clip whose
+	// implied speaking rate is implausibly fast cannot contain its text;
+	// persisting it would make the truncation permanent, so skip the store and
+	// let a replay re-roll the synthesis.
+	secs := float64(buf.Len()) / float64(2*tts.SampleRate)
+	if chars := utf8.RuneCountInString(text); secs*maxPlausibleCharsPerSec < float64(chars) {
+		slog.WarnContext(ctx, "tts: clip too short for its text; not persisting",
+			"step_key", req.StepKey, "chars", chars, "audio_seconds", secs)
 		return
 	}
 

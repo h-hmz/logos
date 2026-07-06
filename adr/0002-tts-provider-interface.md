@@ -1,6 +1,7 @@
 # ADR 0002: Single-provider TTS on Gemini, with progressive PCM streaming
 
 Date: 2026-06-15
+Revised: 2026-07-06
 Status: Accepted
 
 ## Context
@@ -88,23 +89,25 @@ frontend ([frontend/src/components/PlayButton.tsx](../frontend/src/components/Pl
 - on completion, concatenate all chunks into one `AudioBuffer` so seeking and
   replay use a single source node.
 
-### 6. Long-text splitting to stay under the 2-minute cap
+### 6. One API call per narration; the 2-minute cap is accepted (rev 2026-07-06)
 
-`SynthesizeStream` splits its input into segments of at most `maxTTSChars`
-characters (currently 800, ≈ 60 s at 150 wpm), preferring breaks at
-sentence-ending punctuation. Each segment is a separate API call; the PCM is
-written to `w` sequentially, producing one uninterrupted byte stream from the
-client's perspective.
+`SynthesizeStream` sends the whole text as a single `/audio/speech` call.
+Audio beyond the model's ~2-minute per-call output cap is silently truncated,
+and we accept that truncation: most narratable turns fit comfortably, and a
+long one loses its tail rather than arbitrary middles.
 
-Voice consistency across segments is best-effort: the OpenAI-format
-`/audio/speech` endpoint accepts no `seed` parameter, so the model's prosody
-random-walk can't be pinned between calls; audible timbre shifts at segment
-boundaries are possible and accepted as the tradeoff for routing through
-OpenRouter's hard spend cap.
-
-Gap risk: the first chunk of segment N arrives ~13 s after its API call starts,
-but each segment produces ~60 s of audio and calls are sequential, so the audio
-queue stays ≈ 47 s ahead of each boundary — no audible gap in practice.
+The original decision split the text into segments of at most 800 characters
+(≈ 60 s at 150 wpm) and issued one call per segment, concatenating the PCM.
+In practice this **skipped whole chunks of text at segment boundaries**: the
+character count only proxies the audio-token cap, and slow style directives
+plus inline delivery tags (`[dramatic pause]`, `[sighs]` — seconds of audio
+from a handful of characters) pushed segments past it. The truncation is
+invisible through the OpenAI-format endpoint (raw bytes, no `finish_reason`),
+so the truncated segment was concatenated with the next and — worse —
+persisted to the narration store (ADR 0012), making the skip permanent.
+Splitting also produced best-effort voice consistency at boundaries (no `seed`
+parameter through OpenRouter). One call removes the boundary artifacts
+entirely at the cost of capping narration length at the model's limit.
 
 ## Consequences
 
@@ -116,8 +119,8 @@ queue stays ≈ 47 s ahead of each boundary — no audible gap in practice.
   part of `text`; future Gemini-specific parameters can be added to
   `SynthesizeStream` without a lowest-common-denominator constraint.
 - **Time-to-first-audio is 1–3 s** for multi-paragraph turns.
-- **Arbitrarily long turns are fully narrated.** The per-call cap is a model
-  constraint, not a product constraint.
+- **No segment-boundary artifacts.** A narration is one model call: no skipped
+  chunks, no timbre shifts mid-clip.
 
 ### Negative
 
@@ -126,8 +129,10 @@ queue stays ≈ 47 s ahead of each boundary — no audible gap in practice.
 - **Mid-stream errors are unrecoverable.** Once `onStart` has fired, the status
   is 200 and headers are flushed; a later upstream failure can only be logged,
   and the client hears truncated audio.
-- **No seed parameter**, so prosody at segment boundaries varies slightly
-  between otherwise-identical runs.
+- **Narrations cap at ~2 minutes of audio.** A turn whose speech exceeds the
+  model's 3840-audio-token cap is truncated at the tail, silently — the
+  endpoint surfaces no `finish_reason`. Accepted (rev 2026-07-06): losing a
+  long turn's tail beats losing arbitrary chunks at segment boundaries.
 
 ## Implementation
 
@@ -135,7 +140,7 @@ queue stays ≈ 47 s ahead of each boundary — no audible gap in practice.
   process-wide client singleton; the hardcoded 24 kHz `SampleRate`.
 - [backend/internal/tts/openai_compat.go](../backend/internal/tts/openai_compat.go)
   — `SynthesizeStream`, the private `openAICompatTTSClient` (openai-go against
-  the configured base URL), `splitText`, and the Gemini prompt/style helper.
+  the configured base URL), and the Gemini prompt/style helper.
 - [backend/internal/tts/voices.go](../backend/internal/tts/voices.go) —
   per-philosopher voice resolution.
 - [backend/internal/server/handler_tts.go](../backend/internal/server/handler_tts.go)
@@ -144,3 +149,13 @@ queue stays ≈ 47 s ahead of each boundary — no audible gap in practice.
 - [frontend/src/components/PlayButton.tsx](../frontend/src/components/PlayButton.tsx),
   [frontend/src/api.ts](../frontend/src/api.ts) — Web Audio chunk scheduling and
   post-stream buffer unification.
+
+## Revision history
+
+- 2026-06-15 — original. Decision 6 split long text into ≤800-char segments,
+  one API call each, to narrate arbitrarily long turns under the per-call cap.
+- 2026-07-06 — decision 6 replaced: one API call per narration, cap accepted.
+  Character-based splitting under-estimated audio time (style directives,
+  delivery tags), so segments sometimes hit the cap and were silently
+  truncated mid-segment — heard as skipped text at segment boundaries and
+  cached that way permanently.

@@ -16,43 +16,6 @@ import (
 	"github.com/h-hmz/logos/internal/config"
 )
 
-// maxTTSChars is the target maximum character count per /audio/speech
-// call. The underlying Gemini TTS model caps output at 3840 audio
-// tokens (~2 minutes of speech) per call. At ~150 wpm / ~750 chars
-// per minute, 800 chars ≈ 60 s — well under the cap with room for
-// slower passages. See ADR 0002.
-const maxTTSChars = 800
-
-// splitText splits text into segments no longer than maxChars,
-// preferring breaks at sentence-ending punctuation (. ! ?) followed
-// by whitespace.
-func splitText(text string, maxChars int) []string {
-	if len(text) <= maxChars {
-		return []string{text}
-	}
-	var segments []string
-	for len(text) > 0 {
-		if len(text) <= maxChars {
-			segments = append(segments, text)
-			break
-		}
-		cut := maxChars
-		for i := maxChars - 1; i > maxChars/2; i-- {
-			if text[i] == '.' || text[i] == '!' || text[i] == '?' {
-				if i+1 >= len(text) || text[i+1] == ' ' || text[i+1] == '\n' {
-					cut = i + 1
-					break
-				}
-			}
-		}
-		if seg := strings.TrimSpace(text[:cut]); seg != "" {
-			segments = append(segments, seg)
-		}
-		text = strings.TrimSpace(text[cut:])
-	}
-	return segments
-}
-
 // buildGeminiPrompt combines a style directive with the text using
 // the colon-delimited pattern from Google's TTS docs (e.g.
 // `Say cheerfully: Have a wonderful day!`). Gemini TTS treats
@@ -114,63 +77,48 @@ func (c *openAICompatTTSClient) synthesizeStream(
 	w io.Writer,
 ) error {
 	flusher, _ := w.(http.Flusher)
-	started := false
 	startT := time.Now()
-	totalBytes := 0
 
-	segments := splitText(text, maxTTSChars)
-	for segIdx, seg := range segments {
-		prompt := buildGeminiPrompt(seg, style)
-		params := openai.AudioSpeechNewParams{
-			Model:          c.model,
-			Input:          prompt,
-			Voice:          openai.AudioSpeechNewParamsVoice(voice),
-			ResponseFormat: openai.AudioSpeechNewParamsResponseFormatPCM,
-		}
-		resp, err := c.client.Audio.Speech.New(ctx, params)
-		if err != nil {
-			return fmt.Errorf("tts: %w", err)
-		}
-		if !started {
-			onStart(geminiTTSSampleRate)
-			started = true
-		}
-		segBytes := 0
-		buf := make([]byte, 8192)
-		for {
-			n, rerr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, werr := w.Write(buf[:n]); werr != nil {
-					resp.Body.Close()
-					return fmt.Errorf("tts: write: %w", werr)
-				}
-				segBytes += n
-				totalBytes += n
-				if flusher != nil {
-					flusher.Flush()
-				}
+	// One /audio/speech call for the whole text. Gemini TTS caps output at
+	// 3840 audio tokens (~2 minutes) per call and truncates silently beyond
+	// it (ADR 0002 rev 2026-07-06); we accept the truncation rather than
+	// splitting into segments, which skipped chunks at segment boundaries.
+	prompt := buildGeminiPrompt(text, style)
+	params := openai.AudioSpeechNewParams{
+		Model:          c.model,
+		Input:          prompt,
+		Voice:          openai.AudioSpeechNewParamsVoice(voice),
+		ResponseFormat: openai.AudioSpeechNewParamsResponseFormatPCM,
+	}
+	resp, err := c.client.Audio.Speech.New(ctx, params)
+	if err != nil {
+		return fmt.Errorf("tts: %w", err)
+	}
+	defer resp.Body.Close()
+	onStart(geminiTTSSampleRate)
+
+	totalBytes := 0
+	buf := make([]byte, 8192)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return fmt.Errorf("tts: write: %w", werr)
 			}
-			if errors.Is(rerr, io.EOF) {
-				break
-			}
-			if rerr != nil {
-				resp.Body.Close()
-				return fmt.Errorf("tts: read: %w", rerr)
+			totalBytes += n
+			if flusher != nil {
+				flusher.Flush()
 			}
 		}
-		resp.Body.Close()
-		slog.InfoContext(ctx, "tts: segment",
-			"segment", segIdx+1,
-			"bytes", segBytes,
-			"elapsed", time.Since(startT),
-			"model", c.model)
+		if errors.Is(rerr, io.EOF) {
+			break
+		}
+		if rerr != nil {
+			return fmt.Errorf("tts: read: %w", rerr)
+		}
 	}
 	slog.InfoContext(ctx, "tts: stream done",
 		"bytes", totalBytes,
-		"segments", len(segments),
 		"total_latency", time.Since(startT))
-	if !started {
-		return errors.New("tts: no audio produced")
-	}
 	return nil
 }
