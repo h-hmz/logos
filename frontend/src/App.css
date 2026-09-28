@@ -292,10 +292,17 @@ button { font-family: inherit; }
 /* Topic suggestions — an even grid under the input (5 topics + shuffle = two rows of three) */
 .topic-suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
 .topic-suggestions .chip { padding: 8px 12px; text-align: center; }
+.topic-suggestions .chip.inspire {
+  background: var(--accent); color: var(--panel);
+  border-style: solid; border-color: var(--accent);
+  font-size: 13px; padding: 6px 12px;
+}
 .stage .chip.inspire {
   font-style: italic; text-transform: none; letter-spacing: 0.02em;
   color: var(--accent-ink); border-style: dashed; padding: 6px 10px;
 }
+
+.setup-top .chip.inspire { font-size: 14px; padding: 9px 16px; }
 
 /* Setup fields (settings rail) */
 .stage .field label { display: block; font-family: var(--sc); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px; }

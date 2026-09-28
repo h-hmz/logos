@@ -135,7 +135,7 @@ export function StagePage({ onDebateCreated }: Props) {
   const [modelA, setModelA] = useState(DEFAULT_MODEL)
   const [modelB, setModelB] = useState(DEFAULT_MODEL)
   const [modelRef, setModelRef] = useState(DEFAULT_MODEL)
-  const [rounds, setRounds] = useState(3)
+  const [rounds, setRounds] = useState(2)
   const [words, setWords] = useState(250)
   const [era, setEra] = useState<'All' | string>('All')
   const [slot, setSlot] = useState<'a' | 'b'>('a')

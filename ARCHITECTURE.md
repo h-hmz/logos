@@ -69,8 +69,8 @@ The mental model fits in **four nouns** and **two verbs**.
 | Type | Lives in | Lifetime | Purpose |
 |---|---|---|---|
 | [`debate.Persisted`](backend/internal/debate/debate.go) | Firestore (or `MemoryRepo`) | Forever, until the debate is deleted | The dumb snapshot. JSON/Firestore-shaped. `OwnerUID`, topic, debater names, `StepRecords` (each step's content, model, interjection, tokens, cost), `Version`. `Current()` is derived as `len(StepRecords)`. Knows nothing about agents or LLMs. |
-| [`debate.Runtime`](backend/internal/debate/debate.go) | One request | Built by `Hydrate`, discarded when the handler returns | The working copy. Embeds `*Persisted` and adds the unserializable bits: resolved philosopher data, the `[]Step` agent pipeline, the `agent.State` scratchpad. |
-| [`debate.Step`](backend/internal/debate/debate.go) | Inside `Runtime.Steps` | Same as Runtime | One stage of the pipeline. Holds the constructed `*agent.Agent` to run. The companion `StepMeta` is the same shape minus the agent — used wherever you need the *shape* of the pipeline cheaply, without paying to build agents. |
+| [`debate.Runtime`](backend/internal/debate/debate.go) | One request | Built by `Hydrate`, discarded when the handler returns | The working copy. Embeds `*Persisted` and adds the unserializable bits: resolved philosopher data and the `agent.State` scratchpad. Holds no agents — the one agent a turn runs is built on demand from `pipeline`. |
+| [`debate.step`](backend/internal/debate/debate.go) (unexported) | The slice returned by `pipeline(...)` | One request | One stage of the pipeline: its `Key`, `Label`, and a lazy `build` closure that constructs the stage's `*agent.Agent` only when invoked. A turn invokes it for exactly one step. The companion `StepMeta` is the same shape minus the builder — used wherever you need the *shape* of the pipeline (`BuildStepMeta`). |
 | [`agent.State`](backend/internal/agent/state.go) | Inside `Runtime.State` | Same as Runtime | A `map[string]string` scratchpad keyed by step key. Reseeded on every hydrate. The communication channel between agents. |
 
 The split that matters: **`Persisted` is for storage, `Runtime` is for work**. `Hydrate` is the bridge. Anything you can recompute from `Persisted` does *not* belong on `Persisted`.
@@ -96,7 +96,7 @@ Visually, the three layers and what flows between them:
 ├──────────────────────────────────────────────────────────────────────┤
 │  *Persisted       (embedded — Runtime and Persisted share fields)    │
 │  DebaterA, DebaterB    philosopher.Data  (resolved from catalog)     │
-│  Steps                 []Step  (full pipeline, one agent per step)   │
+│  (no agents — a turn builds its one agent from pipeline())           │
 │  State                 agent.State                                   │
 └──────────────────────────────────────────────────────────────────────┘
          │   Hydrate seeds State                ▲
@@ -132,8 +132,9 @@ End-to-end, the inter-step protocol traverses two HTTP requests. Watch how `socr
 │   Hydrate(p, philMap) →  Runtime + State                             │
 │       State = { topic: "...", kant_r1: "...rational ethics..." }     │
 │                                                                      │
-│   step = Runtime.Steps[3]              (the "socrates_r2" agent)     │
-│   step.Agent.Run(ctx, State, ...)                                    │
+│   step  = pipeline(...)[3]             (the "socrates_r2" step)      │
+│   agent = step.build(ctx, ...)         (builds only this agent)      │
+│   agent.Run(ctx, State, ...)                                         │
 │       ├─ system = Substitute(instruction, State)                     │
 │       │     "...{topic}..."     →  "...free will..."                 │
 │       │     "...{kant_r1}..."   →  "...rational ethics..."           │
@@ -160,8 +161,9 @@ End-to-end, the inter-step protocol traverses two HTTP requests. Watch how `socr
 │       State["socrates_r2"] ← p.StepOutputs["socrates_r2"]            │
 │                                              ◄── seeded for lookup   │
 │                                                                      │
-│   step = Runtime.Steps[4]              (the "kant_r2" agent)         │
-│   step.Agent.Run(ctx, State, ...)                                    │
+│   step  = pipeline(...)[4]             (the "kant_r2" step)          │
+│   agent = step.build(ctx, ...)         (builds only this agent)      │
+│   agent.Run(ctx, State, ...)                                         │
 │       └─ {socrates_r2} in kant_r2's instruction template now         │
 │          resolves to socrates' previous turn — without any explicit  │
 │          message-passing across requests.                            │
@@ -196,8 +198,8 @@ Before any generation work the service runs two gates: it checks the caller is t
 
 1. **Load.** `repo.Get(debateID)` returns a `*Persisted`.
 2. **Bounds check.** If `Current >= TotalSteps(NumRounds)`, return a validation error.
-3. **Hydrate.** [`Hydrate(p, philMap)`](backend/internal/debate/debate.go) builds the `Runtime`: resolves debater data and seeds `State` with `topic` and the content of every prior `StepRecord`. Agents are built lazily — only the one step the turn runs (the pipeline's other `build` closures are never invoked).
-4. **Run the agent.** `step.Agent.Run(ctx, rt.State, kickoffMessage(role))`. Inside, this:
+3. **Hydrate.** [`Hydrate(p, philMap)`](backend/internal/debate/debate.go) builds the `Runtime`: resolves debater data and seeds `State` with `topic` and the content of every prior `StepRecord`. It builds no agents.
+4. **Build and run the one agent.** `pipeline(...)[stepIndex]` picks the current step, and its `build` closure constructs that step's agent on the requested model — the other steps' closures are never invoked. Then `agent.Run(ctx, rt.State, kickoffMessage(role))`. Inside, this:
    - Substitutes `{key}` placeholders against `State`.
    - Builds a 2-message request (system + a role-specific kickoff user message, e.g. `"Open the debate now."`).
    - Calls `LLM.Generate`, which returns the full completion text and token usage.

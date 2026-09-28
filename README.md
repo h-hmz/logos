@@ -1,12 +1,84 @@
-# Logos — Multi-Agent Philosophical Debate
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/dark_owl.png">
+    <img src="frontend/public/warm_owl.png" alt="Logos owl" width="96">
+  </picture>
+</p>
 
-A structured debate system in Go. Two philosophers debate a topic head-to-head across configurable rounds. A critic intervenes with a logical analysis, each philosopher responds, and a judge delivers a structured verdict.
+<h1 align="center">Logos</h1>
 
-LLM and TTS calls go through any OpenAI-compatible endpoint — OpenRouter by default for its prepaid hard spend cap (see [ADR 0007](adr/0007-llm-tts-via-openrouter-for-spend-caps.md)). The agent layer is in-house (see [ADR 0008](adr/0008-in-house-agent-layer-replacing-adk.md)) — no framework dependency. Every generation runs on a client-selected, allowlisted model (see [ADR 0011](adr/0011-client-supplied-models.md)) and is metered against a per-user USD budget (see [ADR 0009](adr/0009-cost-based-per-user-quota.md)).
+<p align="center"><em>An arena for arguments.</em></p>
 
-**This README is the reference** — setup, configuration, the HTTP API, and the file-by-file map. For how the moving parts fit together and how a request flows, see [ARCHITECTURE.md](ARCHITECTURE.md); for the domain vocabulary, [CONTEXT.md](CONTEXT.md); for the rationale behind specific decisions, the [ADRs](adr/).
+Pick two thinkers, put a question on the table, and watch them fight it out. Socrates against Nietzsche on whether the unexamined life is worth living. Ibn Rushd against Al-Ghazali on whether reason can prove faith. Marx against Hayek on whether capitalism is inevitable. A critic calls out every fallacy, each side has to answer for theirs, and a judge settles it, with a scorecard to back the call.
+
+Behind the curtain, Logos is a multi-agent debate engine: a Go backend that orchestrates a moderator, two debaters, a critic and a judge over any OpenAI-compatible model, and a React front end that streams every word as it is written, reads each turn aloud in the speaker's own voice, and keeps an owl on hand to explain the hard parts.
 
 ---
+
+## A debate in five acts
+
+1. **The moderator** introduces the match-up and names the fault line the two are bound to collide on.
+2. **The rounds**, one to five of them. A opens, B answers, and every turn has to engage the one before it. The text arrives token by token, and before any turn you can **interject**, slipping the next speaker a note: *"Press him on the labour theory of value."*
+3. **The critic** reviews the whole exchange: each side's strongest point, its weakest link, the fallacies it committed, and one pointed challenge apiece. Citing your own scripture within your own tradition is not automatically an appeal to authority; expecting your opponent to accept it is flagged as an unargued premise.
+4. **The rebuttals.** Each debater must answer the critic's challenge and sharpen their position.
+5. **The judge** scores both sides from 1 to 5 on Rigor, Responsiveness, Depth and Persuasion, quotes the turning point verbatim, and closes with a synthesis that takes the best of both (a position of its own, not a diplomatic compromise) along with the questions left open.
+
+The winner falls out of the scorecard totals, so the judge can never crown a side its own scores contradict.
+
+## What's on stage
+
+- **23 thinkers across 2,500 years**, from Confucius, Laozi and Nagarjuna to Ibn Khaldun, Kant, Simone de Beauvoir and Frantz Fanon. Each one is a YAML file: a worldview, the thinkers they draw on and, for theological traditions, the scriptures they argue from. [Adding one](#adding-a-philosopher) takes no code.
+- **They speak.** Press *Recite* and a turn is read aloud in a voice and accent cast for its speaker: a soft Edinburgh burr for Hume, a heavy German accent for Marx, a near-whisper for Laozi. The debaters write their own stage directions (`[wearily]`, `[scoffs]`, `[laughs softly]`) and the narrator performs them. Each narration is synthesized once, then replayed from storage.
+- **Noctua, the resident owl.** Highlight any passage you don't follow and ask. Noctua explains it in context and suggests where to dig next.
+- **You pick the minds behind the masks.** Each debater runs on the model you choose (GPT, Gemini, DeepSeek, Qwen, GLM), and the referees on another. Marx on DeepSeek against Hayek on GPT-5.5 is a perfectly reasonable way to spend an evening.
+- **Re-roll** the last turn or the verdict, **auto-play** the whole debate hands-free, and **share** the verdict by link.
+- **Every token accounted for.** Each turn shows its tokens, cost, time to first token and generation time (Zen mode tucks them away), and every account has a hard spending budget.
+
+## Behind the curtain
+
+- **No agent framework.** A small in-house agent layer over the OpenAI-compatible API, which replaced Google ADK ([ADR 0008](adr/0008-in-house-agent-layer-replacing-adk.md)). LLM and TTS calls go through OpenRouter by default for its prepaid hard spend cap ([ADR 0007](adr/0007-llm-tts-via-openrouter-for-spend-caps.md)), but any compatible endpoint works: OpenAI, Together, Groq, vLLM, Ollama.
+- **Stateless by design.** Every step reloads the debate, rebuilds the agents' shared state from the saved turns, runs exactly one agent and writes back under optimistic locking. Any instance can serve any request, so it scales out on Cloud Run without sticky sessions ([ARCHITECTURE.md](ARCHITECTURE.md), [ADR 0001](adr/0001-debate-storage-repository-pattern.md), [ADR 0004](adr/0004-concurrency-repo-occ.md)).
+- **Referees on a schema.** The critic and the judge are constrained to JSON schemas, so the front end renders their output section by section instead of parsing prose.
+- **Spend is enforced, not just tracked.** Each generation takes a per-user lock and checks the budget before the first token streams ([ADR 0009](adr/0009-cost-based-per-user-quota.md)); narration is metered reserve-then-settle ([ADR 0013](adr/0013-tts-cost-metering.md)).
+- **Closed by default.** Firebase Auth sits behind an email/domain allowlist that denies everyone until configured ([ADR 0006](adr/0006-auth-firebase-verifier.md)). Debates are shareable by unguessable link, but only their owner can advance them.
+- **Observable.** Structured logs carry request, session and trace IDs ([ADR 0005](adr/0005-structured-logging-request-scoped-context.md)); OpenTelemetry metrics for tokens, cost, latency and errors, broken down by model and role, feed a Grafana dashboard ([monitoring/](monitoring/)).
+- **Go 1.25 · React 18 + Vite · Firestore + Cloud Storage**, or fully in memory for local development.
+
+## Quick start
+
+You need Go 1.25+, Node 20+ and an API key from [OpenRouter](https://openrouter.ai) or any other OpenAI-compatible provider. No Google Cloud account required.
+
+```bash
+# Backend, on http://localhost:8000
+cd backend
+cp .env.example .env
+# in .env: set LLM_API_KEY, and add AUTH_BACKEND=none to skip Firebase
+go run .
+```
+
+```bash
+# Frontend, on http://localhost:5173 (second terminal)
+cd frontend
+corepack enable      # provides the pinned Yarn 4 (on Node 25+, run `npm i -g corepack` first)
+yarn install
+yarn dev
+```
+
+Open http://localhost:5173, pick two thinkers and pose a question. Debates, budgets and narrations live in memory and vanish on restart. Narration is off by default; set `TTS_ENABLED=TRUE` in `backend/.env` to turn it on. For Firebase Auth, Firestore persistence and deployment, see [Running and deploying](#running-and-deploying).
+
+## Find your way around
+
+| Document | What it covers |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit together and how a request flows end to end |
+| [CONTEXT.md](CONTEXT.md) | The domain vocabulary used throughout the code and docs |
+| [adr/](adr/) | Architecture decision records: what was decided, and why |
+| [monitoring/](monitoring/) | Metrics, the Grafana dashboard, and cost-per-user queries |
+| [Reference](#reference), below | Project layout, agents, HTTP API, configuration |
+
+---
+
+# Reference
 
 ## Project layout
 
@@ -156,7 +228,7 @@ philosopher.Key("Simone de Beauvoir") // → "simone_de_beauvoir"
 This allows full display names in YAML while keeping state keys and agent names alphanumeric.
 
 ### Critic — `philosopher.MakeCritic()`
-Defined in [`internal/philosopher/critic.go`](backend/internal/philosopher/critic.go). Receives the full debate transcript via `{name_key}_r{n}` substitutions.
+Defined in [`internal/philosopher/critic.go`](backend/internal/philosopher/critic.go). Receives the full transcript of every round.
 
 Evaluates reasoning quality using a fallacy taxonomy:
 
@@ -169,21 +241,19 @@ Evaluates reasoning quality using a fallacy taxonomy:
 - **Contested cross-tradition premise** — citing scripture as if it should bind an opponent who doesn't share that revelation. Flagged as an unargued premise requiring independent justification.
 - **Still a fallacy** — citing a scholar or theologian (not scripture) as proof without engaging their argument.
 
-Output per debater: strongest argument, key weakness, detected fallacies, pointed challenge. Writes to `critic_feedback`.
+Output per debater: strongest argument, key weakness, detected fallacies, pointed challenge — framed by a one-line introduction and closed by an overall assessment of the debate's quality. Writes to `critic_feedback`.
 
 ### Judge — `philosopher.MakeJudge()`
-Defined in [`internal/philosopher/judge.go`](backend/internal/philosopher/judge.go). Receives the complete record: all rounds, critic feedback, and both critic responses.
+Defined in [`internal/philosopher/judge.go`](backend/internal/philosopher/judge.go). Receives the complete record: all rounds, critic feedback, and both critic responses. It judges the debate as a whole (the critic has already assessed each side's reasoning) and is told not to re-summarize what the reader has just read.
 
 Produces a structured verdict:
-1. **Summary of core positions**
-2. **Key points of clash** — sharpest moments of direct disagreement
-3. **Position shifts** — any concessions or evolution across rounds
-4. **Argument rankings** — who made the stronger case and why
-5. **Synthesis** — a genuine philosophical position integrating the best of both
-6. **Confidence assessment** — score 1–10 with explanation
-7. **Open questions** — unresolved threads for further inquiry
+1. **Scorecard** — four criteria, each scored 1–5 for both debaters with a one-sentence note on the gap: *Rigor* (soundness, freedom from fallacy), *Responsiveness* (engaging the opponent's actual argument and the critic's challenge), *Depth* (originality and insight), *Persuasion* (force, clarity, memorability)
+2. **Turning point** — the single decisive moment, quoted verbatim from the transcript, with who said it and why it mattered
+3. **Ranking note** — what the totals add up to: what tipped the balance, or why it was a draw
+4. **Synthesis** — a genuine philosophical position built from the strongest insights of both sides, not a diplomatic compromise
+5. **Open questions** — two or three threads the debate raised but did not settle
 
-Writes to `final_verdict`. The verdict is emitted as a structured JSON object — the model is constrained to the schema — and returned as the step's `content` for the frontend to render section by section.
+The judge never declares a winner: the client derives it from the scorecard column totals, so the result can't contradict the scores. Writes to `final_verdict`. The verdict is emitted as a structured JSON object — the model is constrained to the schema — and returned as the step's `content` for the frontend to render section by section.
 
 ### Tutor — `tutor.MakeTutor()`
 Defined in [`internal/tutor/tutor.go`](backend/internal/tutor/tutor.go). Out-of-band agent invoked from `/debates/{id}/tutor` to explain a passage the user highlighted. Receives the selected text plus the surrounding turn context and a short conversation history so the user can ask follow-ups.
@@ -373,7 +443,7 @@ Reports, per narratable step, whether a narration already exists in storage — 
 
 ### Environment Variables
 
-All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/.env.example)).
+All backend env vars are read from `backend/.env` (see [`backend/.env.example`](backend/.env.example)).
 
 **LLM + TTS provider — a single OpenAI-compatible endpoint** (both surfaces share it; TTS-specific knobs are in the next table)
 
@@ -399,7 +469,7 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 | `TTS_USD_PER_GB_EGRESS` | *(required)* | Price per GB for serving narration bytes; metered on every narration call, miss and hit (ADR 0013). |
 | `QUOTA_COLLECTION` | `quotas` | Firestore collection for per-user spend (only when `STORAGE_BACKEND=firestore`). |
 
-**Auth + storage** (Google Cloud only — LLM/TTS no longer use GCP)
+**Auth + storage** (Google Cloud, optional — LLM and TTS don't depend on it)
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -417,59 +487,62 @@ All env vars are read from `backend/.env` (see [`backend/.env.example`](backend/
 |---|---|---|
 | `PORT` | `8000` (`8080` in the Docker image) | HTTP listen port. |
 | `DATA_DIR` | *(binary directory)* | Path to the directory containing `agents/`. |
-| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins permitted by CORS. Set to the deployed frontend origin(s), e.g. `https://logos-5dw.pages.dev,https://*.logos-5dw.pages.dev` (the wildcard covers Cloudflare Pages preview deployments). Empty falls back to the local Vite dev origin. |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated browser origins permitted by CORS. Set to the deployed frontend origin(s), e.g. `https://your-app.pages.dev,https://*.your-app.pages.dev` (the wildcard covers Cloudflare Pages preview deployments). Empty falls back to the local Vite dev origin. |
 
-**Telemetry** (optional — OTel metrics push to any OTLP-compatible backend; Grafana Cloud free tier in our setup, see [`monitoring/README.md`](monitoring/README.md))
+**Telemetry** (optional — OTel metrics push to any OTLP-compatible backend, e.g. Grafana Cloud's free tier; see [`monitoring/README.md`](monitoring/README.md))
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | *(unset → SDK disabled)* | OTLP/HTTP base URL, e.g. `https://otlp-gateway-prod-eu-west-2.grafana.net/otlp`. When empty, the SDK is a no-op and the backend logs `telemetry disabled`. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | *(unset)* | Auth headers, e.g. `Authorization=Basic%20<base64>`. The `%20` (URL-encoded space) is mandatory — raw spaces break env-var parsing on Cloud Run. |
 
+**Frontend** (`frontend/.env.local` for development, `frontend/.env.production` for builds — both gitignored)
+
+| Variable | Purpose |
+|---|---|
+| `VITE_API_BASE` | Absolute backend origin (e.g. your Cloud Run URL) for production builds. Leave unset in development so requests go through Vite's proxy. |
+| `VITE_FIREBASE_API_KEY` | Firebase web config. When unset, Firebase is disabled: the app skips sign-in and sends a placeholder token, so pair it with `AUTH_BACKEND=none`. |
+| `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID` | Firebase web config, required alongside the API key. |
+| `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_MEASUREMENT_ID` | Optional. Setting the app ID also turns on Google Analytics. |
+
 ---
 
-## Running
+## Running and deploying
 
-### Backend — local
+The [Quick start](#quick-start) runs everything locally and in memory. To go further:
 
-```bash
-cd backend && go run .
-```
+### Firebase Auth and Firestore persistence
 
-Requires `LLM_API_KEY` and the other mandatory env vars — `QUOTA_USD_LIMIT`, `TTS_USD_PER_1M_AUDIO_TOKENS`, `TTS_USD_PER_GB_EGRESS` (the server won't start without them; see [`backend/.env.example`](backend/.env.example)). Set `AUTH_BACKEND=none` in `backend/.env` to skip Firebase init — that also bypasses the email/domain allowlist so dev callers aren't locked out.
-
-### Backend — against a real model
-
-Configure `backend/.env`:
+In `backend/.env`:
 
 ```ini
-LLM_API_KEY="sk-or-v1-..."
-# LLM_BASE_URL defaults to https://openrouter.ai/api/v1; override to use a different provider.
-
-# Required: per-user budget + narration pricing (ADR 0009, 0013)
-QUOTA_USD_LIMIT=1.0
-TTS_USD_PER_1M_AUDIO_TOKENS=20
-TTS_USD_PER_GB_EGRESS=0.12
-
-# Optional: enable Firebase auth + Firestore persistence
-# AUTH_BACKEND=firebase
-# STORAGE_BACKEND=firestore
-# GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+AUTH_BACKEND=firebase
+FIREBASE_PROJECT=your-firebase-project-id
+AUTH_ALLOWLIST=you@example.com          # emails and/or domains; empty denies everyone
+STORAGE_BACKEND=firestore
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+# TTS_BUCKET=your-narrations-bucket     # required if TTS_ENABLED=TRUE
 ```
 
-When using Firebase auth or Firestore, also authenticate locally:
+Authenticate locally with Application Default Credentials:
 
 ```bash
 gcloud auth application-default login
 ```
 
-### Frontend (development)
+Then give the frontend its Firebase web config (the `VITE_FIREBASE_*` [variables](#environment-variables)).
+
+### Frontend in development
+
+The Vite dev server proxies `/philosophers` and `/debates` to `localhost:8000` (the `BACKEND` constant in [`frontend/vite.config.ts`](frontend/vite.config.ts)), so no CORS configuration is needed in development.
+
+### Production build
 
 ```bash
-cd frontend && yarn dev
+cd frontend && yarn build     # outputs frontend/dist
 ```
 
-The Vite dev server proxies `/philosophers` and `/debates` to the target defined in `frontend/vite.config.ts` — no CORS configuration needed in development. The default target is `localhost:8000`; change `BACKEND` in that file to point at a deployed Cloud Run URL instead.
+Set `VITE_API_BASE` to the backend's URL at build time, and list the deployed origin in the backend's `CORS_ALLOWED_ORIGINS`. A Firebase Hosting config is included ([`frontend/firebase.json`](frontend/firebase.json); point `frontend/.firebaserc` at your own project), but any static host works.
 
 ### Docker (Cloud Run)
 
